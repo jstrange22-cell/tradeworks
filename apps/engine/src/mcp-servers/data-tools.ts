@@ -206,6 +206,7 @@ export async function getOrderBook(params: {
 
 /**
  * Get sentiment scores for an instrument.
+ * Uses Alternative.me Fear & Greed Index (free, no auth) and CryptoPanic (requires API key).
  */
 export async function getSentiment(params: {
   instrument: string;
@@ -214,48 +215,183 @@ export async function getSentiment(params: {
   const sources = params.sources ?? ['news', 'social', 'onchain'];
   console.log(`[DataTools] Fetching sentiment for ${params.instrument} from ${sources.join(', ')}`);
 
-  // TODO: Integrate with real sentiment providers:
-  //   News:     newsapi.org, CryptoPanic
-  //   Social:   Twitter/X API, Reddit API
-  //   On-chain: Glassnode, IntoTheBlock
+  let fearGreedIndex = 50;
+  let newsScore = 0;
+  const sentimentSources: SentimentData['sources'] = [];
+
+  // 1. Alternative.me Fear & Greed Index (free, no auth)
+  try {
+    const fgResponse = await fetch('https://api.alternative.me/fng/?limit=1');
+    if (fgResponse.ok) {
+      const fgData = await fgResponse.json() as { data: Array<{ value: string; value_classification: string }> };
+      if (fgData.data?.[0]) {
+        fearGreedIndex = parseInt(fgData.data[0].value, 10);
+        sentimentSources.push({
+          name: 'Fear & Greed Index',
+          score: (fearGreedIndex - 50) / 50, // normalize to -1..+1
+          articles: 0,
+          timestamp: new Date(),
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('[DataTools] Fear & Greed API failed:', err);
+  }
+
+  // 2. CryptoPanic news sentiment (requires API key)
+  const cryptoPanicKey = process.env.CRYPTOPANIC_API_KEY;
+  if (cryptoPanicKey && sources.includes('news')) {
+    try {
+      const symbol = params.instrument.split('_')[0]?.toUpperCase() ?? params.instrument;
+      const cpResponse = await fetch(
+        `https://cryptopanic.com/api/free/v1/posts/?auth_token=${cryptoPanicKey}&currencies=${symbol}&kind=news`
+      );
+      if (cpResponse.ok) {
+        const cpData = await cpResponse.json() as {
+          results: Array<{
+            votes: { positive: number; negative: number; important: number; liked: number; disliked: number };
+            title: string;
+            source: { title: string };
+          }>;
+        };
+
+        if (cpData.results?.length > 0) {
+          let totalSentiment = 0;
+          let counted = 0;
+          for (const post of cpData.results.slice(0, 20)) {
+            const pos = post.votes.positive + post.votes.liked;
+            const neg = post.votes.negative + post.votes.disliked;
+            const total = pos + neg;
+            if (total > 0) {
+              totalSentiment += (pos - neg) / total;
+              counted++;
+            }
+          }
+          newsScore = counted > 0 ? totalSentiment / counted : 0;
+          sentimentSources.push({
+            name: 'CryptoPanic',
+            score: newsScore,
+            articles: cpData.results.length,
+            timestamp: new Date(),
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('[DataTools] CryptoPanic API failed:', err);
+    }
+  }
+
+  // Compute overall score
+  const scores = sentimentSources.map(s => s.score);
+  const overallScore = scores.length > 0
+    ? scores.reduce((a, b) => a + b, 0) / scores.length
+    : 0;
 
   return {
     instrument: params.instrument,
-    overallScore: 0,
-    newsScore: 0,
-    socialScore: 0,
-    onChainScore: 0,
-    fearGreedIndex: 50,
-    sources: [],
+    overallScore,
+    newsScore,
+    socialScore: 0, // Would need Twitter/Reddit API
+    onChainScore: 0, // Would need Glassnode/IntoTheBlock API
+    fearGreedIndex,
+    sources: sentimentSources,
   };
 }
 
 /**
- * Get macroeconomic data.
+ * Fetch a single FRED series observation (most recent value).
+ */
+async function fetchFredSeries(seriesId: string, apiKey: string): Promise<number> {
+  try {
+    const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&api_key=${apiKey}&file_type=json&sort_order=desc&limit=1`;
+    const response = await fetch(url);
+    if (!response.ok) return 0;
+    const data = await response.json() as { observations: Array<{ value: string }> };
+    const val = parseFloat(data.observations?.[0]?.value ?? '0');
+    return isNaN(val) ? 0 : val;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Fetch CPI YoY percentage change from FRED (requires 13 monthly observations).
+ */
+async function fetchCpiYoY(apiKey: string): Promise<number> {
+  try {
+    const url = `https://api.stlouisfed.org/fred/series/observations?series_id=CPIAUCSL&api_key=${apiKey}&file_type=json&sort_order=desc&limit=13`;
+    const response = await fetch(url);
+    if (!response.ok) return 0;
+    const data = await response.json() as { observations: Array<{ value: string }> };
+    if (!data.observations || data.observations.length < 13) return 0;
+    const latest = parseFloat(data.observations[0].value);
+    const yearAgo = parseFloat(data.observations[12].value);
+    if (isNaN(latest) || isNaN(yearAgo) || yearAgo === 0) return 0;
+    return Math.round(((latest - yearAgo) / yearAgo) * 10000) / 100; // percentage with 2 decimals
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Get macroeconomic data from the FRED API.
+ * Requires FRED_API_KEY environment variable. Returns zeros if not set.
  */
 export async function getMacroData(): Promise<MacroData> {
   console.log('[DataTools] Fetching macro economic data...');
 
-  // TODO: Integrate with real macro data providers:
-  //   FRED API     - fed funds rate, CPI, PPI, unemployment, GDP, M2
-  //   Alpha Vantage - VIX, DXY
-  //   Treasury.gov  - yield curve data
+  const fredKey = process.env.FRED_API_KEY;
+  if (!fredKey) {
+    console.warn('[DataTools] FRED_API_KEY not set. Macro data will be unavailable.');
+    return {
+      fedFundsRate: 0,
+      cpiYoY: 0,
+      ppiYoY: 0,
+      unemploymentRate: 0,
+      gdpGrowth: 0,
+      pmiManufacturing: 0,
+      pmiServices: 0,
+      vix: 0,
+      dxyIndex: 0,
+      us10YYield: 0,
+      us2YYield: 0,
+      yieldCurveSpread: 0,
+      m2MoneySupply: 0,
+      consumerConfidence: 0,
+      timestamp: new Date(),
+    };
+  }
+
+  // Fetch all series in parallel
+  const [fedFunds, cpiYoY, unemployment, gdp, vix, dxy, us10y, us2y, m2, confidence] =
+    await Promise.all([
+      fetchFredSeries('FEDFUNDS', fredKey),
+      fetchCpiYoY(fredKey),
+      fetchFredSeries('UNRATE', fredKey),
+      fetchFredSeries('A191RL1Q225SBEA', fredKey),
+      fetchFredSeries('VIXCLS', fredKey),
+      fetchFredSeries('DTWEXBGS', fredKey),
+      fetchFredSeries('DGS10', fredKey),
+      fetchFredSeries('DGS2', fredKey),
+      fetchFredSeries('M2SL', fredKey),
+      fetchFredSeries('UMCSENT', fredKey),
+    ]);
 
   return {
-    fedFundsRate: 0,
-    cpiYoY: 0,
-    ppiYoY: 0,
-    unemploymentRate: 0,
-    gdpGrowth: 0,
-    pmiManufacturing: 0,
+    fedFundsRate: fedFunds,
+    cpiYoY,
+    ppiYoY: 0, // PPI YoY requires separate computation similar to CPI
+    unemploymentRate: unemployment,
+    gdpGrowth: gdp,
+    pmiManufacturing: 0, // ISM PMI not directly available on FRED
     pmiServices: 0,
-    vix: 0,
-    dxyIndex: 0,
-    us10YYield: 0,
-    us2YYield: 0,
-    yieldCurveSpread: 0,
-    m2MoneySupply: 0,
-    consumerConfidence: 0,
+    vix,
+    dxyIndex: dxy,
+    us10YYield: us10y,
+    us2YYield: us2y,
+    yieldCurveSpread: Math.round((us10y - us2y) * 100) / 100,
+    m2MoneySupply: m2,
+    consumerConfidence: confidence,
     timestamp: new Date(),
   };
 }
@@ -508,7 +644,7 @@ export const dataTools: MCPTool[] = [
   {
     name: 'get_news_sentiment',
     description:
-      'Get aggregated news sentiment for an instrument or topic. Returns individual headline sentiments and an overall score (-1.0 to +1.0). Currently returns mock data -- will be connected to news API providers.',
+      'Get aggregated news sentiment for an instrument or topic. Returns individual headline sentiments and an overall score (-1.0 to +1.0). Uses CryptoPanic API when CRYPTOPANIC_API_KEY is set, otherwise returns mock data.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -533,13 +669,77 @@ export const dataTools: MCPTool[] = [
 
       console.log(`[DataTools] get_news_sentiment: ${instrument}, limit=${limit}`);
 
-      // TODO: Integrate with real news sentiment providers:
-      //   CryptoPanic API - crypto-specific news with sentiment tags
-      //   NewsAPI.org     - general news articles
-      //   Twitter/X API   - social media sentiment
-      //   Santiment       - on-chain + social sentiment
+      // Try CryptoPanic API if key is available
+      const cryptoPanicKey = process.env.CRYPTOPANIC_API_KEY;
+      if (cryptoPanicKey) {
+        try {
+          const symbol = instrument.split('_')[0]?.toUpperCase() ?? instrument;
+          const cpResponse = await fetch(
+            `https://cryptopanic.com/api/free/v1/posts/?auth_token=${cryptoPanicKey}&currencies=${symbol}&kind=news`
+          );
 
-      // Mock data representing typical crypto news sentiment
+          if (cpResponse.ok) {
+            const cpData = await cpResponse.json() as {
+              results: Array<{
+                title: string;
+                published_at: string;
+                source: { title: string };
+                votes: { positive: number; negative: number; important: number; liked: number; disliked: number };
+              }>;
+            };
+
+            if (cpData.results && cpData.results.length > 0) {
+              const headlines: NewsSentiment[] = cpData.results.slice(0, limit).map((post) => {
+                const pos = post.votes.positive + post.votes.liked;
+                const neg = post.votes.negative + post.votes.disliked;
+                const total = pos + neg;
+                let score = 0;
+                if (total > 0) {
+                  score = (pos - neg) / total;
+                }
+                const sentiment: 'bullish' | 'bearish' | 'neutral' =
+                  score > 0.2 ? 'bullish' : score < -0.2 ? 'bearish' : 'neutral';
+
+                return {
+                  instrument,
+                  headline: post.title,
+                  source: post.source.title,
+                  sentiment,
+                  score: Math.round(score * 100) / 100,
+                  publishedAt: post.published_at,
+                };
+              });
+
+              const avgScore =
+                headlines.length > 0
+                  ? headlines.reduce((sum, h) => sum + h.score, 0) / headlines.length
+                  : 0;
+
+              const bullishCount = headlines.filter((h) => h.sentiment === 'bullish').length;
+              const bearishCount = headlines.filter((h) => h.sentiment === 'bearish').length;
+              const neutralCount = headlines.filter((h) => h.sentiment === 'neutral').length;
+
+              return {
+                instrument,
+                overallSentiment: avgScore > 0.2 ? 'bullish' : avgScore < -0.2 ? 'bearish' : 'neutral',
+                overallScore: Math.round(avgScore * 100) / 100,
+                headlines,
+                summary: {
+                  total: headlines.length,
+                  bullish: bullishCount,
+                  bearish: bearishCount,
+                  neutral: neutralCount,
+                },
+                source: 'cryptopanic',
+              };
+            }
+          }
+        } catch (err) {
+          console.warn('[DataTools] CryptoPanic API failed in get_news_sentiment handler:', err);
+        }
+      }
+
+      // Fallback: mock data when no API key or API call failed
       const now = new Date();
       const mockHeadlines: NewsSentiment[] = [
         {
@@ -613,7 +813,7 @@ export const dataTools: MCPTool[] = [
           bearish: bearishCount,
           neutral: neutralCount,
         },
-        source: 'mock', // Will change to 'live' when connected
+        source: 'mock', // No CRYPTOPANIC_API_KEY set
       };
     },
   },

@@ -1,3 +1,5 @@
+import { getRedisClient } from '@tradeworks/db';
+
 /**
  * Circuit breaker hook.
  * Monitors portfolio health and halts all trading when critical thresholds are breached.
@@ -126,8 +128,10 @@ function tripCircuitBreaker(reason: string): void {
 
   console.error(`[CircuitBreaker] Trading halted until ${state.canResumeAt.toISOString()}`);
 
-  // TODO: Send critical alert via notification system
-  // TODO: Publish circuit breaker event via Redis
+  // Publish circuit breaker event via Redis for real-time notifications
+  publishCircuitBreakerEvent(reason).catch((err) => {
+    console.error('[CircuitBreaker] Failed to publish Redis event:', err);
+  });
 }
 
 /**
@@ -162,4 +166,23 @@ export function getCircuitBreakerState(): CircuitBreakerState {
  */
 export function manualTrip(reason: string): void {
   tripCircuitBreaker(`Manual override: ${reason}`);
+}
+/**
+ * Publish circuit breaker event to Redis for real-time dashboard notifications.
+ */
+async function publishCircuitBreakerEvent(reason: string): Promise<void> {
+  try {
+    const redis = getRedisClient();
+    const event = {
+      type: 'circuit_breaker_tripped',
+      reason,
+      trippedAt: new Date().toISOString(),
+      stats: { ...state.stats },
+    };
+    await redis.publish('tradeworks:alerts', JSON.stringify(event));
+    await redis.publish('tradeworks:circuit_breaker', JSON.stringify(event));
+    console.log('[CircuitBreaker] Alert published to Redis');
+  } catch {
+    // Redis may not be available — that's OK, console logging is the primary alert
+  }
 }

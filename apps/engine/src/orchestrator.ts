@@ -12,6 +12,11 @@ import { MACRO_ANALYST_PROMPT } from './agents/macro-analyst.js';
 import { RISK_GUARDIAN_PROMPT } from './agents/risk-guardian.js';
 import { EXECUTION_SPECIALIST_PROMPT } from './agents/execution-specialist.js';
 import {
+  runClaudeQuantAnalyst,
+  runClaudeSentimentAnalyst,
+  runClaudeMacroAnalyst,
+} from './lib/claude-agents.js';
+import {
   getCandles,
   getOrderBook,
   getSentiment,
@@ -228,6 +233,8 @@ export interface OrchestratorConfig {
   maxTradesPerCycle: number;
   /** Portfolio equity for risk calculations (will come from DB in production) */
   initialEquity: number;
+  /** Use Claude AI for analysis agents (quant, sentiment, macro). Default: false */
+  useClaudeAgents: boolean;
 }
 
 function loadConfig(): OrchestratorConfig {
@@ -251,6 +258,7 @@ function loadConfig(): OrchestratorConfig {
     requireUnanimity: process.env.REQUIRE_UNANIMITY === 'true',
     maxTradesPerCycle: parseInt(process.env.MAX_TRADES_PER_CYCLE ?? '5', 10),
     initialEquity: parseFloat(process.env.INITIAL_EQUITY ?? '10000'),
+    useClaudeAgents: process.env.USE_CLAUDE_AGENTS === 'true',
   };
 }
 
@@ -281,12 +289,20 @@ export class Orchestrator {
     this.config = { ...defaults, ...config };
     this.equityPeak = this.config.initialEquity;
 
-    // Initialize agents with their tool functions.
-    // When Claude SDK is available, replace each `run` implementation with
-    // a Claude session invocation passing the system prompt and tool schemas.
-    this.quantAgent = this.createQuantAgent();
-    this.sentimentAgent = this.createSentimentAgent();
-    this.macroAgent = this.createMacroAgent();
+    // Initialize agents.
+    // When USE_CLAUDE_AGENTS=true, analysis agents use Claude for interpretation.
+    // Risk and execution agents always use deterministic logic (safety-critical).
+    if (this.config.useClaudeAgents) {
+      console.log('[Orchestrator] Claude AI agents ENABLED for analysis');
+      this.quantAgent = this.createClaudeQuantAgent();
+      this.sentimentAgent = this.createClaudeSentimentAgent();
+      this.macroAgent = this.createClaudeMacroAgent();
+    } else {
+      this.quantAgent = this.createQuantAgent();
+      this.sentimentAgent = this.createSentimentAgent();
+      this.macroAgent = this.createMacroAgent();
+    }
+    // Risk and execution are ALWAYS deterministic (non-negotiable safety rules)
     this.riskAgent = this.createRiskAgent();
     this.executionAgent = this.createExecutionAgent();
   }
@@ -307,6 +323,7 @@ export class Orchestrator {
     console.log('[Orchestrator] TradeWorks Trading Engine Starting');
     console.log('[Orchestrator] ====================================================');
     console.log(`[Orchestrator] Paper trading:    ${this.config.paperTrading}`);
+    console.log(`[Orchestrator] Claude agents:    ${this.config.useClaudeAgents}`);
     console.log(`[Orchestrator] Cycle interval:   ${this.config.cycleIntervalMs}ms (${(this.config.cycleIntervalMs / 60_000).toFixed(1)} min)`);
     console.log(`[Orchestrator] Enabled markets:  ${this.config.enabledMarkets.join(', ')}`);
     console.log(`[Orchestrator] Crypto symbols:   ${this.config.instruments.crypto.join(', ') || '(none)'}`);
@@ -1386,6 +1403,37 @@ export class Orchestrator {
 
         return executeTrade(order);
       },
+    };
+  }
+
+  // -----------------------------------------------------------------------
+  // Claude-backed agent factories (used when useClaudeAgents=true)
+  // -----------------------------------------------------------------------
+
+  private createClaudeQuantAgent(): Agent<QuantAgentContext, EngineQuantAnalysis> {
+    return {
+      name: AGENT_DEFINITIONS.quantAnalyst.name,
+      definition: AGENT_DEFINITIONS.quantAnalyst,
+      systemPrompt: QUANT_ANALYST_PROMPT,
+      run: (ctx) => runClaudeQuantAnalyst(ctx),
+    };
+  }
+
+  private createClaudeSentimentAgent(): Agent<SentimentAgentContext, EngineSentimentAnalysis> {
+    return {
+      name: AGENT_DEFINITIONS.sentimentAnalyst.name,
+      definition: AGENT_DEFINITIONS.sentimentAnalyst,
+      systemPrompt: SENTIMENT_ANALYST_PROMPT,
+      run: (ctx) => runClaudeSentimentAnalyst(ctx),
+    };
+  }
+
+  private createClaudeMacroAgent(): Agent<MacroAgentContext, EngineMacroAnalysis> {
+    return {
+      name: AGENT_DEFINITIONS.macroAnalyst.name,
+      definition: AGENT_DEFINITIONS.macroAnalyst,
+      systemPrompt: MACRO_ANALYST_PROMPT,
+      run: (ctx) => runClaudeMacroAnalyst(ctx),
     };
   }
 
