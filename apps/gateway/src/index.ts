@@ -13,6 +13,8 @@ import { strategiesRouter } from './routes/strategies.js';
 import { riskRouter } from './routes/risk.js';
 import { agentsRouter } from './routes/agents.js';
 import { backtestRouter } from './routes/backtest.js';
+import { marketDataRouter } from './routes/market-data.js';
+import { portfolioRouter } from './routes/portfolio.js';
 
 const app: Express = express();
 const PORT = parseInt(process.env.PORT ?? '4000', 10);
@@ -22,7 +24,7 @@ const HOST = process.env.HOST ?? '0.0.0.0';
 
 app.use(helmet());
 app.use(cors({
-  origin: process.env.CORS_ORIGIN ?? 'http://localhost:3000',
+  origin: process.env.CORS_ORIGIN ?? ['http://localhost:5173', 'http://localhost:3000'],
   credentials: true,
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -40,8 +42,11 @@ app.use((req, _res, next) => {
 // --- Public Routes ---
 
 app.use('/api/v1/health', healthRouter);
+app.use('/api/v1/market', marketDataRouter);
 
 // --- Authenticated Routes ---
+
+app.use('/api/v1/portfolio', authMiddleware, portfolioRouter);
 
 app.use('/api/v1/trades', authMiddleware, tradesRouter);
 app.use('/api/v1/positions', authMiddleware, positionsRouter);

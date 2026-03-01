@@ -11,5 +11,12 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    proxy: {
+      '/crypto-api': {
+        target: 'https://api.crypto.com/exchange/v1/public',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/crypto-api/, ''),
+      },
+    },
   },
 });
