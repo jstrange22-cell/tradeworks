@@ -44,16 +44,17 @@ app.use((req, _res, next) => {
 app.use('/api/v1/health', healthRouter);
 app.use('/api/v1/market', marketDataRouter);
 
-// --- Authenticated Routes ---
+// --- Development Routes (no auth for local dashboard) ---
+// TODO: Add authMiddleware back when JWT auth is configured
+const devAuth = process.env.NODE_ENV === 'production' ? authMiddleware : (_req: express.Request, _res: express.Response, next: express.NextFunction) => next();
 
-app.use('/api/v1/portfolio', authMiddleware, portfolioRouter);
-
-app.use('/api/v1/trades', authMiddleware, tradesRouter);
-app.use('/api/v1/positions', authMiddleware, positionsRouter);
-app.use('/api/v1/strategies', authMiddleware, strategiesRouter);
-app.use('/api/v1/risk', authMiddleware, riskRouter);
-app.use('/api/v1/agents', authMiddleware, agentsRouter);
-app.use('/api/v1/backtest', authMiddleware, backtestRouter);
+app.use('/api/v1/portfolio', devAuth, portfolioRouter);
+app.use('/api/v1/trades', devAuth, tradesRouter);
+app.use('/api/v1/positions', devAuth, positionsRouter);
+app.use('/api/v1/strategies', devAuth, strategiesRouter);
+app.use('/api/v1/risk', devAuth, riskRouter);
+app.use('/api/v1/agents', devAuth, agentsRouter);
+app.use('/api/v1/backtest', devAuth, backtestRouter);
 
 // --- Error Handling ---
 

@@ -160,5 +160,5 @@ export class WSClient {
   }
 }
 
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3000/ws';
+const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:4000/ws';
 export const wsClient = new WSClient(WS_URL);

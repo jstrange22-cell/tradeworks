@@ -17,6 +17,10 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/crypto-api/, ''),
       },
+      '/api/v1': {
+        target: 'http://localhost:4000',
+        changeOrigin: true,
+      },
     },
   },
 });
