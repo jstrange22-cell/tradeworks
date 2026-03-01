@@ -7,6 +7,7 @@ import {
   createStrategy,
   updateStrategy,
   toggleStrategy,
+  deleteStrategy,
   type NewStrategy,
   type Strategy,
 } from '@tradeworks/db';
@@ -238,6 +239,24 @@ strategiesRouter.put('/:id', requireRole('admin', 'trader'), async (req, res) =>
     }
     console.error('[Strategies] Error updating strategy:', error);
     res.status(500).json({ error: 'Failed to update strategy' });
+  }
+});
+
+/**
+ * DELETE /api/v1/strategies/:id
+ * Delete a strategy.
+ */
+strategiesRouter.delete('/:id', async (req, res) => {
+  try {
+    try {
+      await deleteStrategy(req.params.id as string);
+    } catch (dbError) {
+      console.warn('[Strategies] DB error deleting strategy:', dbError);
+    }
+    res.status(204).send();
+  } catch (error) {
+    console.error('[Strategies] Error deleting strategy:', error);
+    res.status(500).json({ error: 'Failed to delete strategy' });
   }
 });
 

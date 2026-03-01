@@ -1,90 +1,57 @@
 import { useState, useMemo } from 'react';
 import { ArrowLeftRight, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
-import { usePortfolioStore, type RecentTrade } from '@/stores/portfolio-store';
+import { useQuery } from '@tanstack/react-query';
+import { apiClient } from '@/lib/api-client';
 
 const PAGE_SIZE = 15;
 const MARKETS = ['All', 'crypto', 'prediction', 'equity'] as const;
 
-// Extended mock trades for history
-function generateMockTrades(): RecentTrade[] {
-  const instruments = {
-    crypto: ['BTC-USD', 'ETH-USD', 'SOL-USD', 'AVAX-USD', 'LINK-USD'],
-    equity: ['AAPL', 'MSFT', 'NVDA', 'SPY', 'QQQ', 'META', 'TSLA'],
-    prediction: ['POLYMARKET-1', 'POLYMARKET-2'],
-  };
-  const strategies = [
-    'trend-following',
-    'mean-reversion',
-    'breakout',
-    'momentum',
-    'arbitrage',
-  ];
-
-  const trades: RecentTrade[] = [];
-  for (let i = 0; i < 75; i++) {
-    const market = (['crypto', 'equity', 'prediction'] as const)[
-      Math.floor(Math.random() * 3)
-    ];
-    const instrumentList = instruments[market];
-    const instrument =
-      instrumentList[Math.floor(Math.random() * instrumentList.length)];
-    const side = Math.random() > 0.5 ? 'buy' : 'sell';
-    const price =
-      market === 'crypto'
-        ? 100 + Math.random() * 95000
-        : market === 'equity'
-          ? 50 + Math.random() * 900
-          : 0.1 + Math.random() * 0.9;
-    const pnl =
-      side === 'sell'
-        ? (Math.random() - 0.35) * 500
-        : 0;
-
-    trades.push({
-      id: `trade-${i}`,
-      instrument,
-      market,
-      side,
-      quantity: parseFloat((Math.random() * 100).toFixed(2)),
-      price: parseFloat(price.toFixed(2)),
-      pnl: parseFloat(pnl.toFixed(2)),
-      strategyId: strategies[Math.floor(Math.random() * strategies.length)],
-      executedAt: new Date(
-        Date.now() - i * 1200000 - Math.random() * 600000,
-      ).toISOString(),
-    });
-  }
-  return trades;
+interface Trade {
+  id: string;
+  instrument: string;
+  market: 'crypto' | 'prediction' | 'equity';
+  side: 'buy' | 'sell';
+  quantity: number;
+  price: number;
+  pnl: number;
+  strategyId: string;
+  executedAt: string;
 }
 
-const allTrades = generateMockTrades();
+interface TradesResponse {
+  data: Trade[];
+  total: number;
+}
 
 export function TradesPage() {
-  const storeTrades = usePortfolioStore((s) => s.recentTrades);
   const [marketFilter, setMarketFilter] = useState<string>('All');
   const [strategyFilter, setStrategyFilter] = useState<string>('All');
   const [page, setPage] = useState(0);
 
-  const combinedTrades = useMemo(
-    () => [...storeTrades, ...allTrades],
-    [storeTrades],
-  );
+  // Fetch trades from the real API
+  const { data: tradesData, isLoading } = useQuery<TradesResponse>({
+    queryKey: ['trades-history'],
+    queryFn: () => apiClient.get<TradesResponse>('/trades?limit=200'),
+    refetchInterval: 30_000,
+  });
+
+  const allTrades: Trade[] = tradesData?.data ?? [];
 
   const strategies = useMemo(() => {
-    const set = new Set(combinedTrades.map((t) => t.strategyId));
+    const set = new Set(allTrades.map((t) => t.strategyId).filter(Boolean));
     return ['All', ...Array.from(set).sort()];
-  }, [combinedTrades]);
+  }, [allTrades]);
 
   const filtered = useMemo(() => {
-    return combinedTrades.filter((t) => {
+    return allTrades.filter((t) => {
       if (marketFilter !== 'All' && t.market !== marketFilter) return false;
       if (strategyFilter !== 'All' && t.strategyId !== strategyFilter)
         return false;
       return true;
     });
-  }, [combinedTrades, marketFilter, strategyFilter]);
+  }, [allTrades, marketFilter, strategyFilter]);
 
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   return (
@@ -157,6 +124,20 @@ export function TradesPage() {
               </tr>
             </thead>
             <tbody>
+              {isLoading && (
+                <tr>
+                  <td colSpan={8} className="py-8 text-center text-sm text-slate-500">
+                    Loading trades...
+                  </td>
+                </tr>
+              )}
+              {!isLoading && paginated.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="py-8 text-center text-sm text-slate-500">
+                    No trades yet. Place your first trade from the Charts page.
+                  </td>
+                </tr>
+              )}
               {paginated.map((trade) => (
                 <tr key={trade.id} className="table-row">
                   <td className="py-2.5 pr-4 text-slate-400">
@@ -215,27 +196,29 @@ export function TradesPage() {
         </div>
 
         {/* Pagination */}
-        <div className="mt-4 flex items-center justify-between border-t border-slate-700/50 pt-4">
-          <div className="text-xs text-slate-500">
-            Page {page + 1} of {totalPages}
+        {filtered.length > 0 && (
+          <div className="mt-4 flex items-center justify-between border-t border-slate-700/50 pt-4">
+            <div className="text-xs text-slate-500">
+              Page {page + 1} of {totalPages}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={page === 0}
+                className="btn-ghost p-1.5"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                disabled={page >= totalPages - 1}
+                className="btn-ghost p-1.5"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setPage((p) => Math.max(0, p - 1))}
-              disabled={page === 0}
-              className="btn-ghost p-1.5"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-              disabled={page >= totalPages - 1}
-              className="btn-ghost p-1.5"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );

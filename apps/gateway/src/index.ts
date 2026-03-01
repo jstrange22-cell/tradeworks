@@ -15,6 +15,10 @@ import { agentsRouter } from './routes/agents.js';
 import { backtestRouter } from './routes/backtest.js';
 import { marketDataRouter } from './routes/market-data.js';
 import { portfolioRouter } from './routes/portfolio.js';
+import { apiKeysRouter } from './routes/api-keys.js';
+import { ordersRouter } from './routes/orders.js';
+import { engineRouter } from './routes/engine.js';
+import { settingsRouter } from './routes/settings.js';
 
 const app: Express = express();
 const PORT = parseInt(process.env.PORT ?? '4000', 10);
@@ -55,6 +59,10 @@ app.use('/api/v1/strategies', devAuth, strategiesRouter);
 app.use('/api/v1/risk', devAuth, riskRouter);
 app.use('/api/v1/agents', devAuth, agentsRouter);
 app.use('/api/v1/backtest', devAuth, backtestRouter);
+app.use('/api/v1/settings/api-keys', devAuth, apiKeysRouter);
+app.use('/api/v1/orders', devAuth, ordersRouter);
+app.use('/api/v1/engine', devAuth, engineRouter);
+app.use('/api/v1/settings', devAuth, settingsRouter);
 
 // --- Error Handling ---
 

@@ -36,7 +36,8 @@ export function DashboardPage() {
     equityCurve,
   } = usePortfolio();
 
-  const totalReturn = ((equity - initialCapital) / initialCapital) * 100;
+  const totalReturn = initialCapital > 0 ? ((equity - initialCapital) / initialCapital) * 100 : 0;
+  const isEmpty = equity === 0 && totalTrades === 0 && openPositions.length === 0;
 
   // Compute allocation by market
   const allocationData = (() => {
@@ -52,15 +53,27 @@ export function DashboardPage() {
   })();
 
   // Portfolio heat (sum of unrealized P&L as % of equity)
-  const portfolioHeat =
-    openPositions.reduce(
-      (sum, p) => sum + Math.abs(p.unrealizedPnl),
-      0,
-    ) / equity;
+  const portfolioHeat = equity > 0
+    ? openPositions.reduce((sum, p) => sum + Math.abs(p.unrealizedPnl), 0) / equity
+    : 0;
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-slate-100">Portfolio Overview</h1>
+
+      {isEmpty && (
+        <div className="card border-blue-500/30 bg-blue-500/5 py-8 text-center">
+          <h2 className="text-lg font-semibold text-slate-200">Welcome to TradeWorks</h2>
+          <p className="mt-2 text-sm text-slate-400">
+            Add your exchange API keys in{' '}
+            <a href="/settings" className="text-blue-400 underline hover:text-blue-300">Settings</a>{' '}
+            to get started with trading.
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            Once configured, you can place trades from the Charts page or start the AI trading engine from the Agents page.
+          </p>
+        </div>
+      )}
 
       {/* Top stats cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -282,6 +295,13 @@ export function DashboardPage() {
               </tr>
             </thead>
             <tbody>
+              {recentTrades.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-8 text-center text-sm text-slate-500">
+                    No trades yet. Place your first trade from the Charts page.
+                  </td>
+                </tr>
+              )}
               {recentTrades.slice(0, 10).map((trade) => (
                 <tr key={trade.id} className="table-row">
                   <td className="py-2.5 pr-4 text-slate-400">
@@ -350,6 +370,13 @@ export function DashboardPage() {
               </tr>
             </thead>
             <tbody>
+              {openPositions.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-8 text-center text-sm text-slate-500">
+                    No open positions.
+                  </td>
+                </tr>
+              )}
               {openPositions.map((pos) => (
                 <tr key={pos.id} className="table-row">
                   <td className="py-2.5 pr-4 font-medium text-slate-200">

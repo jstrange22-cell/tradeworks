@@ -70,3 +70,10 @@ export async function toggleStrategy(
     .returning();
   return updated!;
 }
+
+/**
+ * Delete a strategy by ID.
+ */
+export async function deleteStrategy(id: string): Promise<void> {
+  await db.delete(strategies).where(eq(strategies.id, id));
+}

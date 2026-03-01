@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { CandlestickChart, Loader2 } from 'lucide-react';
+import { CandlestickChart, Loader2, ShoppingCart } from 'lucide-react';
+import { TradePanel } from '@/components/trade/TradePanel';
 import { useQuery } from '@tanstack/react-query';
 import {
   createChart,
@@ -100,6 +101,7 @@ export function ChartsPage() {
   const [instrument, setInstrument] = useState('BTC-USD');
   const [timeframe, setTimeframe] = useState<string>('1h');
   const [activeIndicators, setActiveIndicators] = useState<Set<IndicatorId>>(new Set());
+  const [showTradePanel, setShowTradePanel] = useState(false);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const indicatorSeriesRef = useRef<Map<string, ISeriesApi<'Line' | 'Histogram'>>>(new Map());
@@ -283,9 +285,18 @@ export function ChartsPage() {
         <CandlestickChart className="h-6 w-6 text-blue-400" />
         <h1 className="text-2xl font-bold text-slate-100">Charts</h1>
         {isLoading && <Loader2 className="h-4 w-4 animate-spin text-blue-400" />}
-        <span className="ml-auto rounded bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-400">
-          LIVE
-        </span>
+        <div className="ml-auto flex items-center gap-2">
+          <span className="rounded bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-400">
+            LIVE
+          </span>
+          <button
+            onClick={() => setShowTradePanel(true)}
+            className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-blue-500"
+          >
+            <ShoppingCart className="h-4 w-4" />
+            Trade
+          </button>
+        </div>
       </div>
 
       {/* Controls */}
@@ -474,6 +485,14 @@ export function ChartsPage() {
           )}
         </div>
       </div>
+
+      {/* Trade Panel */}
+      {showTradePanel && (
+        <TradePanel
+          instrument={instrument}
+          onClose={() => setShowTradePanel(false)}
+        />
+      )}
     </div>
   );
 }

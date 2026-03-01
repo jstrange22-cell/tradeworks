@@ -28,6 +28,7 @@ export {
   backtestRuns,
   apiKeys,
   guardrails,
+  userSettings,
   // Relations
   portfoliosRelations,
   strategiesRelations,
@@ -56,6 +57,8 @@ export {
   type NewApiKey,
   type Guardrail,
   type NewGuardrail,
+  type UserSetting,
+  type NewUserSetting,
 } from './postgres/schema.js';
 
 export {
@@ -83,7 +86,16 @@ export {
   createStrategy,
   updateStrategy,
   toggleStrategy,
+  deleteStrategy,
 } from './postgres/queries/strategies.js';
+
+export {
+  getApiKeys,
+  getApiKey,
+  getApiKeysByService,
+  createApiKey,
+  deleteApiKey,
+} from './postgres/queries/api-keys.js';
 
 export {
   insertAgentLog,
@@ -109,6 +121,20 @@ export {
   getBacktestsByStrategy,
   getBacktest,
 } from './postgres/queries/backtests.js';
+
+export {
+  getGuardrails,
+  getGuardrailByType,
+  upsertGuardrail,
+  deleteGuardrail,
+} from './postgres/queries/guardrails.js';
+
+export {
+  getSetting,
+  getAllSettings,
+  setSetting,
+  deleteSetting,
+} from './postgres/queries/user-settings.js';
 
 // ---------------------------------------------------------------------------
 // ClickHouse

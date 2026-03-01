@@ -277,6 +277,12 @@ export const guardrails = pgTable('guardrails', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const userSettings = pgTable('user_settings', {
+  key: varchar('key', { length: 255 }).primaryKey(),
+  value: jsonb('value').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 // ---------------------------------------------------------------------------
 // Relations
 // ---------------------------------------------------------------------------
@@ -367,3 +373,6 @@ export type NewApiKey = typeof apiKeys.$inferInsert;
 
 export type Guardrail = typeof guardrails.$inferSelect;
 export type NewGuardrail = typeof guardrails.$inferInsert;
+
+export type UserSetting = typeof userSettings.$inferSelect;
+export type NewUserSetting = typeof userSettings.$inferInsert;
