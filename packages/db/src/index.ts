@@ -152,3 +152,15 @@ export {
   cacheSet,
   cacheDel,
 } from './redis/cache.js';
+
+// ---------------------------------------------------------------------------
+// Crypto (API key encryption)
+// ---------------------------------------------------------------------------
+
+export {
+  encrypt,
+  decrypt,
+  deriveKey,
+  encryptApiKey,
+  decryptApiKey,
+} from './crypto.js';
