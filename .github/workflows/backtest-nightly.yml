@@ -1,0 +1,48 @@
+name: Backtest Regression
+
+on:
+  schedule:
+    - cron: '0 4 * * *' # 4 AM UTC daily
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  backtest:
+    name: Nightly Backtest Regression
+    runs-on: ubuntu-latest
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:24
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Seed test data
+        env:
+          CLICKHOUSE_URL: http://localhost:8123
+        run: echo "Seed historical data for backtesting (configure when ready)"
+
+      - name: Run backtest regression
+        env:
+          CLICKHOUSE_URL: http://localhost:8123
+        run: echo "Run backtest regression suite (configure when ready)"

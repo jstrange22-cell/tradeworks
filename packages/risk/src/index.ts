@@ -1,0 +1,10 @@
+export { calculatePositionSize, calculatePositionSizeWithRR, kellyCriterion, maxAffordableUnits } from './position-sizer.js';
+export { calculateVaR, calculateReturns, rollingVaR } from './var-calculator.js';
+export type { VaRResult } from './var-calculator.js';
+export { DrawdownMonitor, calculateMaxDrawdown } from './drawdown-monitor.js';
+export type { DrawdownState } from './drawdown-monitor.js';
+export { CircuitBreaker } from './circuit-breaker.js';
+export { pearsonCorrelation, buildCorrelationMatrix, checkCorrelationExposure } from './correlation-matrix.js';
+export type { CorrelationResult } from './correlation-matrix.js';
+export { calculateExposure, checkMarketAllocation } from './exposure-tracker.js';
+export type { ExposureMetrics } from './exposure-tracker.js';
