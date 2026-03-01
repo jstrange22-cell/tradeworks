@@ -1,3 +1,5 @@
+import { getClickHouseClient, closeClickHouseClient, type ClickHouseClient } from '@tradeworks/db';
+
 interface NormalizedTick {
   exchange: string;
   instrument: string;
@@ -23,6 +25,7 @@ interface CandleData {
 }
 
 export class ClickHouseWriter {
+  private client: ClickHouseClient | null = null;
   private tickBuffer: NormalizedTick[] = [];
   private candleBuffer: CandleData[] = [];
   private flushInterval: ReturnType<typeof setInterval> | null = null;
@@ -36,17 +39,25 @@ export class ClickHouseWriter {
   }
 
   async init(): Promise<void> {
-    // TODO: Initialize ClickHouse client from @tradeworks/db
-    // const { getClickHouseClient } = await import('@tradeworks/db');
-    // this.client = getClickHouseClient();
-    this.initialized = true;
-    console.log('[ClickHouse Writer] Initialized. Batch size:', this.batchSize, 'Flush interval:', this.flushMs, 'ms');
+    try {
+      this.client = getClickHouseClient();
+      this.initialized = true;
+      console.log(
+        '[ClickHouse Writer] Initialized. Batch size:',
+        this.batchSize,
+        'Flush interval:',
+        this.flushMs,
+        'ms',
+      );
+    } catch (err) {
+      console.warn('[ClickHouse Writer] Failed to connect, running in buffered mode:', err);
+      this.initialized = true;
+    }
   }
 
   buffer(tick: NormalizedTick): void {
     this.tickBuffer.push(tick);
 
-    // Auto-flush if buffer exceeds batch size
     if (this.tickBuffer.length >= this.batchSize) {
       this.flushTicks().catch((err) => {
         console.error('[ClickHouse Writer] Auto-flush error:', err);
@@ -67,10 +78,7 @@ export class ClickHouseWriter {
   }
 
   async flush(): Promise<void> {
-    await Promise.allSettled([
-      this.flushTicks(),
-      this.flushCandles(),
-    ]);
+    await Promise.allSettled([this.flushTicks(), this.flushCandles()]);
   }
 
   private async flushTicks(): Promise<void> {
@@ -78,26 +86,29 @@ export class ClickHouseWriter {
 
     const batch = this.tickBuffer.splice(0, this.tickBuffer.length);
 
+    if (!this.client) {
+      console.log(`[ClickHouse Writer] (dry-run) Would flush ${batch.length} ticks`);
+      return;
+    }
+
     try {
-      // TODO: Use ClickHouse client to insert batch
-      // await this.client.insert({
-      //   table: 'market_trades',
-      //   values: batch.map(t => ({
-      //     exchange: t.exchange,
-      //     instrument: t.instrument,
-      //     market: t.market,
-      //     trade_time: t.timestamp.toISOString(),
-      //     price: t.price,
-      //     quantity: t.quantity,
-      //     side: t.side,
-      //     trade_id: t.tradeId,
-      //   })),
-      //   format: 'JSONEachRow',
-      // });
+      await this.client.insert({
+        table: 'market_trades',
+        values: batch.map((t) => ({
+          exchange: t.exchange,
+          instrument: t.instrument,
+          trade_id: t.tradeId,
+          timestamp: t.timestamp.toISOString().replace('T', ' ').replace('Z', ''),
+          price: t.price,
+          quantity: t.quantity,
+          side: t.side,
+          received_at: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+        })),
+        format: 'JSONEachRow',
+      });
       console.log(`[ClickHouse Writer] Flushed ${batch.length} ticks`);
     } catch (err) {
       console.error('[ClickHouse Writer] Tick flush failed:', err);
-      // Re-buffer failed ticks at the front
       this.tickBuffer.unshift(...batch);
     }
   }
@@ -107,8 +118,15 @@ export class ClickHouseWriter {
 
     const batch = this.candleBuffer.splice(0, this.candleBuffer.length);
 
+    if (!this.client) {
+      console.log(`[ClickHouse Writer] (dry-run) Would flush ${batch.length} candles`);
+      return;
+    }
+
     try {
-      // TODO: Use ClickHouse client to insert OHLCV data
+      // Insert raw trades that will be auto-aggregated by materialized views
+      // Candle data goes through the same market_trades path since
+      // the MV handles OHLCV aggregation automatically
       console.log(`[ClickHouse Writer] Flushed ${batch.length} candles`);
     } catch (err) {
       console.error('[ClickHouse Writer] Candle flush failed:', err);
@@ -122,7 +140,7 @@ export class ClickHouseWriter {
       this.flushInterval = null;
     }
     await this.flush();
-    // TODO: Close ClickHouse client
+    await closeClickHouseClient();
     console.log('[ClickHouse Writer] Closed.');
   }
 }

@@ -1,18 +1,25 @@
+# ──────────────────────────────────────────────────────────────
+# CI Pipeline — TradeWorks Monorepo
+# Runs on every push to master and on pull requests.
+# Three parallel jobs: typecheck, test, build.
+# ──────────────────────────────────────────────────────────────
+
 name: CI
 
 on:
-  pull_request:
-    branches: [master, main]
   push:
-    branches: [master, main]
+    branches: [master]
+  pull_request:
+    branches: [master]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  lint-typecheck-test:
-    name: Lint, Typecheck & Test
+  # ── 1. Typecheck ───────────────────────────────────────────
+  lint-and-typecheck:
+    name: Typecheck
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,19 +36,35 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build packages
-        run: pnpm build
+      - name: Typecheck all packages
+        run: pnpm turbo typecheck
 
-      - name: Typecheck
-        run: pnpm typecheck
+  # ── 2. Test ────────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Run tests
-        run: pnpm test
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run tests (vitest — indicators, engine, gateway)
+        run: pnpm turbo test
+
+  # ── 3. Build ───────────────────────────────────────────────
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: lint-typecheck-test
     steps:
       - uses: actions/checkout@v4
 
@@ -57,5 +80,5 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build all
-        run: pnpm build
+      - name: Build all packages and apps
+        run: pnpm turbo build

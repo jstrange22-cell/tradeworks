@@ -70,6 +70,46 @@ export {
   closePosition,
 } from './postgres/queries/positions.js';
 
+export {
+  getPortfolio,
+  getDefaultPortfolio,
+  createPortfolio,
+  updatePortfolio,
+} from './postgres/queries/portfolios.js';
+
+export {
+  getStrategies,
+  getStrategy,
+  createStrategy,
+  updateStrategy,
+  toggleStrategy,
+} from './postgres/queries/strategies.js';
+
+export {
+  insertAgentLog,
+  getAgentLogs,
+  getRecentAgentActivity,
+} from './postgres/queries/agent-logs.js';
+
+export {
+  insertCycle,
+  completeCycle,
+  getRecentCycles,
+} from './postgres/queries/trading-cycles.js';
+
+export {
+  insertRiskSnapshot,
+  getLatestRiskSnapshot,
+  getRiskHistory,
+} from './postgres/queries/risk-snapshots.js';
+
+export {
+  createBacktest,
+  updateBacktest,
+  getBacktestsByStrategy,
+  getBacktest,
+} from './postgres/queries/backtests.js';
+
 // ---------------------------------------------------------------------------
 // ClickHouse
 // ---------------------------------------------------------------------------

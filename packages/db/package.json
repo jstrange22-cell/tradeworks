@@ -18,7 +18,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "db:seed": "tsx ../../scripts/seed.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.38.0",
@@ -32,6 +33,7 @@
     "@tradeworks/config": "workspace:*",
     "@tradeworks/shared": "workspace:*",
     "@types/pg": "^8.11.0",
+    "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }
 }

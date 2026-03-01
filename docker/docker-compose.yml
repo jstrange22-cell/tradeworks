@@ -1,6 +1,12 @@
+version: "3.9"
+
 services:
+  # ─── Infrastructure ────────────────────────────────────────────────
+
   postgres:
     image: postgres:16-alpine
+    container_name: tw-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_DB: tradeworks
       POSTGRES_USER: tradeworks
@@ -8,43 +14,109 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      - tw-postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tradeworks"]
+      test: ["CMD-SHELL", "pg_isready -U tradeworks -d tradeworks"]
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
   clickhouse:
     image: clickhouse/clickhouse-server:24
+    container_name: tw-clickhouse
+    restart: unless-stopped
     environment:
       CLICKHOUSE_DB: tradeworks
       CLICKHOUSE_USER: default
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     ports:
-      - "8123:8123"
-      - "9000:9000"
+      - "8123:8123"   # HTTP interface
+      - "9000:9000"   # Native protocol
     volumes:
-      - ch_data:/var/lib/clickhouse
+      - tw-clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 15s
 
   redis:
     image: redis:7-alpine
+    container_name: tw-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
     ports:
       - "6379:6379"
     volumes:
-      - redis_data:/data
+      - tw-redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 5s
+
+  # ─── Application Services ──────────────────────────────────────────
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gateway
+    container_name: tw-gateway
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      DATABASE_URL: postgres://tradeworks:tradeworks_dev@postgres:5432/tradeworks
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  engine:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.engine
+    container_name: tw-engine
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://tradeworks:tradeworks_dev@postgres:5432/tradeworks
+      REDIS_URL: redis://redis:6379
+      CLICKHOUSE_URL: http://clickhouse:8123
+      PAPER_TRADING: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+
+  ingest:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ingest
+    container_name: tw-ingest
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      REDIS_URL: redis://redis:6379
+      CLICKHOUSE_URL: http://clickhouse:8123
+    depends_on:
+      redis:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
 
 volumes:
-  pg_data:
-  ch_data:
-  redis_data:
+  tw-postgres-data:
+  tw-clickhouse-data:
+  tw-redis-data:

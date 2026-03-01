@@ -1,8 +1,10 @@
+# ── Stage 1: Base with pnpm ──────────────────────────────────────────
 FROM node:20-alpine AS base
 RUN corepack enable && corepack prepare pnpm@9 --activate
-
-FROM base AS deps
 WORKDIR /app
+
+# ── Stage 2: Install dependencies ────────────────────────────────────
+FROM base AS deps
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY packages/config/package.json packages/config/
 COPY packages/shared/package.json packages/shared/
@@ -13,16 +15,26 @@ COPY packages/db/package.json packages/db/
 COPY apps/engine/package.json apps/engine/
 RUN pnpm install --frozen-lockfile
 
+# ── Stage 3: Build the app and its workspace deps ────────────────────
 FROM base AS build
-WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/packages/config/node_modules ./packages/config/node_modules
+COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
+COPY --from=deps /app/packages/indicators/node_modules ./packages/indicators/node_modules
+COPY --from=deps /app/packages/strategies/node_modules ./packages/strategies/node_modules
+COPY --from=deps /app/packages/risk/node_modules ./packages/risk/node_modules
+COPY --from=deps /app/packages/db/node_modules ./packages/db/node_modules
+COPY --from=deps /app/apps/engine/node_modules ./apps/engine/node_modules
 COPY . .
 RUN pnpm build --filter=@tradeworks/engine...
 
-FROM base AS runner
+# ── Stage 4: Production image ────────────────────────────────────────
+FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=build /app/node_modules ./node_modules
+
+# Copy only the built artifacts and production node_modules
+COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/packages/config ./packages/config
 COPY --from=build /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build /app/packages/shared/package.json ./packages/shared/
@@ -36,5 +48,7 @@ COPY --from=build /app/packages/db/dist ./packages/db/dist
 COPY --from=build /app/packages/db/package.json ./packages/db/
 COPY --from=build /app/apps/engine/dist ./apps/engine/dist
 COPY --from=build /app/apps/engine/package.json ./apps/engine/
+COPY --from=build /app/package.json ./
+COPY --from=build /app/pnpm-workspace.yaml ./
 
 CMD ["node", "apps/engine/dist/index.js"]

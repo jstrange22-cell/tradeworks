@@ -1,26 +1,36 @@
+import { lazy, Suspense } from 'react';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { AppShell } from '@/components/layout/AppShell';
-import { DashboardPage } from '@/pages/DashboardPage';
-import { TradesPage } from '@/pages/TradesPage';
-import { AgentsPage } from '@/pages/AgentsPage';
-import { RiskPage } from '@/pages/RiskPage';
-import { StrategiesPage } from '@/pages/StrategiesPage';
-import { ChartsPage } from '@/pages/ChartsPage';
-import { MarketsPage } from '@/pages/MarketsPage';
-import { SettingsPage } from '@/pages/SettingsPage';
+
+const DashboardPage = lazy(() => import('@/pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
+const TradesPage = lazy(() => import('@/pages/TradesPage').then(m => ({ default: m.TradesPage })));
+const AgentsPage = lazy(() => import('@/pages/AgentsPage').then(m => ({ default: m.AgentsPage })));
+const RiskPage = lazy(() => import('@/pages/RiskPage').then(m => ({ default: m.RiskPage })));
+const StrategiesPage = lazy(() => import('@/pages/StrategiesPage').then(m => ({ default: m.StrategiesPage })));
+const ChartsPage = lazy(() => import('@/pages/ChartsPage').then(m => ({ default: m.ChartsPage })));
+const MarketsPage = lazy(() => import('@/pages/MarketsPage').then(m => ({ default: m.MarketsPage })));
+const SettingsPage = lazy(() => import('@/pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
+
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center h-64">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" />
+    </div>
+  );
+}
 
 const router = createBrowserRouter([
   {
     element: <AppShell />,
     children: [
-      { path: '/', element: <DashboardPage /> },
-      { path: '/trades', element: <TradesPage /> },
-      { path: '/agents', element: <AgentsPage /> },
-      { path: '/risk', element: <RiskPage /> },
-      { path: '/strategies', element: <StrategiesPage /> },
-      { path: '/charts', element: <ChartsPage /> },
-      { path: '/markets', element: <MarketsPage /> },
-      { path: '/settings', element: <SettingsPage /> },
+      { path: '/', element: <Suspense fallback={<PageLoader />}><DashboardPage /></Suspense> },
+      { path: '/trades', element: <Suspense fallback={<PageLoader />}><TradesPage /></Suspense> },
+      { path: '/agents', element: <Suspense fallback={<PageLoader />}><AgentsPage /></Suspense> },
+      { path: '/risk', element: <Suspense fallback={<PageLoader />}><RiskPage /></Suspense> },
+      { path: '/strategies', element: <Suspense fallback={<PageLoader />}><StrategiesPage /></Suspense> },
+      { path: '/charts', element: <Suspense fallback={<PageLoader />}><ChartsPage /></Suspense> },
+      { path: '/markets', element: <Suspense fallback={<PageLoader />}><MarketsPage /></Suspense> },
+      { path: '/settings', element: <Suspense fallback={<PageLoader />}><SettingsPage /></Suspense> },
     ],
   },
 ]);

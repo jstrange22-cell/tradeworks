@@ -1,8 +1,10 @@
+# ── Stage 1: Base with pnpm ──────────────────────────────────────────
 FROM node:20-alpine AS base
 RUN corepack enable && corepack prepare pnpm@9 --activate
-
-FROM base AS deps
 WORKDIR /app
+
+# ── Stage 2: Install dependencies ────────────────────────────────────
+FROM base AS deps
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY packages/config/package.json packages/config/
 COPY packages/shared/package.json packages/shared/
@@ -10,16 +12,23 @@ COPY packages/db/package.json packages/db/
 COPY apps/ingest/package.json apps/ingest/
 RUN pnpm install --frozen-lockfile
 
+# ── Stage 3: Build the app and its workspace deps ────────────────────
 FROM base AS build
-WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/packages/config/node_modules ./packages/config/node_modules
+COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
+COPY --from=deps /app/packages/db/node_modules ./packages/db/node_modules
+COPY --from=deps /app/apps/ingest/node_modules ./apps/ingest/node_modules
 COPY . .
 RUN pnpm build --filter=@tradeworks/ingest...
 
-FROM base AS runner
+# ── Stage 4: Production image ────────────────────────────────────────
+FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=build /app/node_modules ./node_modules
+
+# Copy only the built artifacts and production node_modules
+COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/packages/config ./packages/config
 COPY --from=build /app/packages/shared/dist ./packages/shared/dist
 COPY --from=build /app/packages/shared/package.json ./packages/shared/
@@ -27,5 +36,7 @@ COPY --from=build /app/packages/db/dist ./packages/db/dist
 COPY --from=build /app/packages/db/package.json ./packages/db/
 COPY --from=build /app/apps/ingest/dist ./apps/ingest/dist
 COPY --from=build /app/apps/ingest/package.json ./apps/ingest/
+COPY --from=build /app/package.json ./
+COPY --from=build /app/pnpm-workspace.yaml ./
 
 CMD ["node", "apps/ingest/dist/index.js"]

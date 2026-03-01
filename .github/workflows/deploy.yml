@@ -1,0 +1,115 @@
+# ──────────────────────────────────────────────────────────────
+# Deploy Workflow — TradeWorks Monorepo
+# Manual trigger only (workflow_dispatch).
+# Select "staging" or "production" environment when dispatching.
+# ──────────────────────────────────────────────────────────────
+
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  # ── Build ──────────────────────────────────────────────────
+  build:
+    name: Build (${{ github.event.inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build all packages and apps
+        run: pnpm turbo build
+
+  # ── Deploy backend services to Railway ─────────────────────
+  deploy-railway:
+    name: Deploy Railway (${{ github.event.inputs.environment }})
+    runs-on: ubuntu-latest
+    needs: build
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # TODO: Install Railway CLI and authenticate
+      # - name: Install Railway CLI
+      #   run: npm install -g @railway/cli
+
+      # ── Engine service ──────────────────────────────────────
+      # TODO: Deploy apps/engine to Railway
+      # Uses @tradeworks/engine Docker service.
+      # Secrets needed: RAILWAY_TOKEN
+      - name: Deploy Engine
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          echo "::notice::Deploy @tradeworks/engine to Railway (${{ github.event.inputs.environment }})"
+          echo "Placeholder — configure 'railway up --service engine' when ready"
+
+      # ── Gateway service ─────────────────────────────────────
+      # TODO: Deploy apps/gateway to Railway
+      # Uses @tradeworks/gateway Docker service.
+      # Secrets needed: RAILWAY_TOKEN
+      - name: Deploy Gateway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          echo "::notice::Deploy @tradeworks/gateway to Railway (${{ github.event.inputs.environment }})"
+          echo "Placeholder — configure 'railway up --service gateway' when ready"
+
+      # ── Ingest service ──────────────────────────────────────
+      # TODO: Deploy apps/ingest to Railway
+      # Uses @tradeworks/ingest Docker service.
+      # Secrets needed: RAILWAY_TOKEN
+      - name: Deploy Ingest
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          echo "::notice::Deploy @tradeworks/ingest to Railway (${{ github.event.inputs.environment }})"
+          echo "Placeholder — configure 'railway up --service ingest' when ready"
+
+  # ── Deploy dashboard to Vercel ─────────────────────────────
+  deploy-vercel:
+    name: Deploy Dashboard (${{ github.event.inputs.environment }})
+    runs-on: ubuntu-latest
+    needs: build
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # TODO: Deploy apps/dashboard to Vercel
+      # This is a Vite + React SPA.
+      # Secrets needed: VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
+      # For production: vercel --prod
+      # For staging:    vercel (preview deployment)
+      - name: Deploy Dashboard
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          echo "::notice::Deploy @tradeworks/dashboard to Vercel (${{ github.event.inputs.environment }})"
+          echo "Placeholder — configure 'vercel deploy' when ready"

@@ -1,3 +1,5 @@
+import { getRedisClient, closeRedisClient, REDIS_CHANNELS } from '@tradeworks/db';
+
 interface NormalizedTick {
   exchange: string;
   instrument: string;
@@ -23,15 +25,19 @@ interface CandleData {
 }
 
 export class RedisPublisher {
+  private redis: ReturnType<typeof getRedisClient> | null = null;
   private initialized = false;
   private tickCount = 0;
   private logInterval: ReturnType<typeof setInterval> | null = null;
 
   async init(): Promise<void> {
-    // TODO: Initialize Redis client from @tradeworks/db
-    // const { getRedisClient } = await import('@tradeworks/db');
-    // this.redis = getRedisClient();
-    this.initialized = true;
+    try {
+      this.redis = getRedisClient();
+      this.initialized = true;
+    } catch (err) {
+      console.warn('[Redis Publisher] Failed to connect, running in silent mode:', err);
+      this.initialized = true;
+    }
 
     // Log throughput every 30s
     this.logInterval = setInterval(() => {
@@ -45,29 +51,50 @@ export class RedisPublisher {
   }
 
   publishTick(tick: NormalizedTick): void {
-    if (!this.initialized) return;
+    if (!this.initialized || !this.redis) return;
 
     this.tickCount++;
 
-    // TODO: Publish to Redis channel
-    // const channel = `tw:market-data`;
-    // this.redis.publish(channel, JSON.stringify({
-    //   type: 'tick',
-    //   data: tick,
-    // }));
-    void tick;
+    this.redis
+      .publish(
+        REDIS_CHANNELS.MARKET_DATA,
+        JSON.stringify({
+          type: 'tick',
+          instrument: tick.instrument,
+          market: tick.market,
+          price: tick.price,
+          quantity: tick.quantity,
+          side: tick.side,
+          timestamp: tick.timestamp.toISOString(),
+        }),
+      )
+      .catch(() => {
+        // Swallow publish errors — non-critical path
+      });
   }
 
   publishCandle(candle: CandleData): void {
-    if (!this.initialized) return;
+    if (!this.initialized || !this.redis) return;
 
-    // TODO: Publish to Redis channel
-    // const channel = `tw:market-data`;
-    // this.redis.publish(channel, JSON.stringify({
-    //   type: 'candle',
-    //   data: candle,
-    // }));
-    void candle;
+    this.redis
+      .publish(
+        REDIS_CHANNELS.MARKET_DATA,
+        JSON.stringify({
+          type: 'candle',
+          instrument: candle.instrument,
+          market: candle.market,
+          timestamp: candle.timestamp.toISOString(),
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+          volume: candle.volume,
+          tradeCount: candle.tradeCount,
+        }),
+      )
+      .catch(() => {
+        // Swallow publish errors — non-critical path
+      });
   }
 
   async close(): Promise<void> {
@@ -75,7 +102,7 @@ export class RedisPublisher {
       clearInterval(this.logInterval);
       this.logInterval = null;
     }
-    // TODO: Close Redis client
+    await closeRedisClient();
     console.log('[Redis Publisher] Closed.');
   }
 }
