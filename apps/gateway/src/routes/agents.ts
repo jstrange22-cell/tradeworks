@@ -1,12 +1,52 @@
 import { Router, type Router as RouterType } from 'express';
+import { eq } from 'drizzle-orm';
+import {
+  db,
+  tradingCycles,
+  getAgentLogs,
+  getRecentAgentActivity,
+  getRecentCycles,
+  type AgentLog,
+} from '@tradeworks/db';
 
 /**
  * Agent routes.
- * GET /api/v1/agents/status  - Get status of all agents
- * GET /api/v1/agents/cycles  - Get recent cycle history
+ * GET /api/v1/agents/status        - Get status of all agents
+ * GET /api/v1/agents/cycles        - Get recent cycle history
+ * GET /api/v1/agents/cycles/:cycleId - Get details of a specific cycle
+ * GET /api/v1/agents/logs          - Get recent agent log entries
  */
 
 export const agentsRouter: RouterType = Router();
+
+/** Static agent definitions (model, tools). */
+const AGENT_DEFINITIONS = [
+  {
+    name: 'Quant Analyst',
+    model: 'sonnet',
+    tools: ['computeIndicators', 'detectPatterns', 'getSignalScore', 'getCandles', 'getOrderBook'],
+  },
+  {
+    name: 'Sentiment Analyst',
+    model: 'sonnet',
+    tools: ['getSentiment', 'getCandles'],
+  },
+  {
+    name: 'Macro Analyst',
+    model: 'haiku',
+    tools: ['getMacroData', 'getCandles'],
+  },
+  {
+    name: 'Risk Guardian',
+    model: 'sonnet',
+    tools: ['checkRisk', 'getPortfolioHeat', 'calculatePositionSize', 'getVaR', 'getPositions'],
+  },
+  {
+    name: 'Execution Specialist',
+    model: 'sonnet',
+    tools: ['executeTrade', 'cancelOrder', 'getPositions', 'closePosition', 'getOrderBook'],
+  },
+];
 
 /**
  * GET /api/v1/agents/status
@@ -14,68 +54,78 @@ export const agentsRouter: RouterType = Router();
  */
 agentsRouter.get('/status', async (_req, res) => {
   try {
-    // TODO: Integrate with engine service for real-time agent status
-    const agents = [
-      {
-        name: 'Quant Analyst',
-        model: 'sonnet',
-        status: 'idle',
-        lastRunAt: null as string | null,
-        lastDurationMs: null as number | null,
-        totalRuns: 0,
-        errorCount: 0,
-        tools: ['computeIndicators', 'detectPatterns', 'getSignalScore', 'getCandles', 'getOrderBook'],
-      },
-      {
-        name: 'Sentiment Analyst',
-        model: 'sonnet',
-        status: 'idle',
-        lastRunAt: null,
-        lastDurationMs: null,
-        totalRuns: 0,
-        errorCount: 0,
-        tools: ['getSentiment', 'getCandles'],
-      },
-      {
-        name: 'Macro Analyst',
-        model: 'haiku',
-        status: 'idle',
-        lastRunAt: null,
-        lastDurationMs: null,
-        totalRuns: 0,
-        errorCount: 0,
-        tools: ['getMacroData', 'getCandles'],
-      },
-      {
-        name: 'Risk Guardian',
-        model: 'sonnet',
-        status: 'idle',
-        lastRunAt: null,
-        lastDurationMs: null,
-        totalRuns: 0,
-        errorCount: 0,
-        tools: ['checkRisk', 'getPortfolioHeat', 'calculatePositionSize', 'getVaR', 'getPositions'],
-      },
-      {
-        name: 'Execution Specialist',
-        model: 'sonnet',
-        status: 'idle',
-        lastRunAt: null,
-        lastDurationMs: null,
-        totalRuns: 0,
-        errorCount: 0,
-        tools: ['executeTrade', 'cancelOrder', 'getPositions', 'closePosition', 'getOrderBook'],
-      },
-    ];
+    // Start with static agent definitions, then enhance with DB data
+    let recentActivity: AgentLog[] = [];
+    let cycleCount = 0;
+    let lastCycleAt: string | null = null;
+
+    try {
+      recentActivity = await getRecentAgentActivity(50);
+      const recentCycles = await getRecentCycles(1);
+      if (recentCycles.length > 0) {
+        const latestCycle = recentCycles[0]!;
+        cycleCount = latestCycle.cycleNumber;
+        lastCycleAt = latestCycle.startedAt.toISOString();
+      }
+    } catch (dbError) {
+      console.warn('[Agents] DB unavailable for agent status, using static defaults:', dbError);
+    }
+
+    // Build a lookup of per-agent stats from recent activity
+    const agentStats = new Map<
+      string,
+      { lastRunAt: string | null; lastDurationMs: number | null; totalRuns: number; errorCount: number }
+    >();
+
+    for (const log of recentActivity) {
+      const key = log.agentType;
+      if (!agentStats.has(key)) {
+        agentStats.set(key, {
+          lastRunAt: log.createdAt.toISOString(),
+          lastDurationMs: log.durationMs,
+          totalRuns: 0,
+          errorCount: 0,
+        });
+      }
+      const stats = agentStats.get(key)!;
+      stats.totalRuns += 1;
+      if (log.action.toLowerCase().includes('error')) {
+        stats.errorCount += 1;
+      }
+    }
+
+    const agents = AGENT_DEFINITIONS.map((def) => {
+      // Try to match the agent definition name to agentType in logs
+      // Agent types in logs may use snake_case or different casing
+      const normalizedName = def.name.toLowerCase().replace(/\s+/g, '_');
+      const stats = agentStats.get(normalizedName) ??
+        agentStats.get(def.name) ??
+        { lastRunAt: null, lastDurationMs: null, totalRuns: 0, errorCount: 0 };
+
+      return {
+        name: def.name,
+        model: def.model,
+        status: 'idle' as const,
+        lastRunAt: stats.lastRunAt,
+        lastDurationMs: stats.lastDurationMs,
+        totalRuns: stats.totalRuns,
+        errorCount: stats.errorCount,
+        tools: def.tools,
+      };
+    });
+
+    const cycleIntervalMs = parseInt(process.env.CYCLE_INTERVAL_MS ?? '300000', 10);
 
     res.json({
       data: agents,
       orchestrator: {
         status: 'idle',
-        cycleCount: 0,
-        cycleIntervalMs: parseInt(process.env.CYCLE_INTERVAL_MS ?? '300000', 10),
-        lastCycleAt: null,
-        nextCycleAt: null,
+        cycleCount,
+        cycleIntervalMs,
+        lastCycleAt,
+        nextCycleAt: lastCycleAt
+          ? new Date(new Date(lastCycleAt).getTime() + cycleIntervalMs).toISOString()
+          : null,
       },
     });
   } catch (error) {
@@ -93,16 +143,27 @@ agentsRouter.get('/cycles', async (req, res) => {
     const limit = parseInt(req.query.limit as string, 10) || 20;
     const page = parseInt(req.query.page as string, 10) || 1;
 
-    // TODO: Integrate with @tradeworks/db for cycle history
-    const cycles: unknown[] = [];
+    let cycles: unknown[] = [];
+    let total = 0;
+
+    try {
+      // Fetch one extra page worth to estimate if there are more
+      const allCycles = await getRecentCycles(limit * page);
+      total = allCycles.length;
+      // Slice to the requested page
+      const startIdx = (page - 1) * limit;
+      cycles = allCycles.slice(startIdx, startIdx + limit);
+    } catch (dbError) {
+      console.warn('[Agents] DB unavailable for cycle history, returning empty:', dbError);
+    }
 
     res.json({
       data: cycles,
       pagination: {
         page,
         limit,
-        total: 0,
-        totalPages: 0,
+        total,
+        totalPages: Math.ceil(total / limit) || 0,
       },
     });
   } catch (error) {
@@ -119,8 +180,18 @@ agentsRouter.get('/cycles/:cycleId', async (req, res) => {
   try {
     const { cycleId } = req.params;
 
-    // TODO: Integrate with @tradeworks/db
-    const cycle = null;
+    let cycle = null;
+
+    try {
+      const [found] = await db
+        .select()
+        .from(tradingCycles)
+        .where(eq(tradingCycles.id, cycleId))
+        .limit(1);
+      cycle = found ?? null;
+    } catch (dbError) {
+      console.warn('[Agents] DB unavailable for cycle detail:', dbError);
+    }
 
     if (!cycle) {
       res.status(404).json({ error: `Cycle ${cycleId} not found` });
@@ -144,8 +215,16 @@ agentsRouter.get('/logs', async (req, res) => {
     const level = req.query.level as string | undefined;
     const limit = parseInt(req.query.limit as string, 10) || 50;
 
-    // TODO: Integrate with logging system
-    const logs: unknown[] = [];
+    let logs: unknown[] = [];
+
+    try {
+      logs = await getAgentLogs({
+        agentType: agentName,
+        limit,
+      });
+    } catch (dbError) {
+      console.warn('[Agents] DB unavailable for agent logs, returning empty:', dbError);
+    }
 
     res.json({
       data: logs,

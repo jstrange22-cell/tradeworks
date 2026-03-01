@@ -2,10 +2,20 @@ import { Router, type Router as RouterType } from 'express';
 import { z } from 'zod';
 import { requireRole } from '../middleware/auth.js';
 import { createBacktestRateLimiter } from '../middleware/rate-limit.js';
+import { desc } from 'drizzle-orm';
+import {
+  createBacktest,
+  getBacktest,
+  getBacktestsByStrategy,
+  db,
+  backtestRuns,
+  type BacktestRun,
+} from '@tradeworks/db';
 
 /**
  * Backtest routes.
  * POST /api/v1/backtest      - Submit a new backtest
+ * GET  /api/v1/backtest      - List backtests
  * GET  /api/v1/backtest/:id  - Get backtest results
  */
 
@@ -47,27 +57,64 @@ backtestRouter.post('/', requireRole('admin', 'trader'), createBacktestRateLimit
   try {
     const body = BacktestRequestSchema.parse(req.body);
 
-    // TODO: Integrate with @tradeworks/backtester package
-    // Submit the backtest job to a queue for processing
-    const backtestJob = {
-      id: `bt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      status: 'queued' as const,
-      submittedBy: req.user!.id,
-      submittedAt: new Date().toISOString(),
-      config: {
-        instruments: body.instruments,
-        startDate: body.startDate.toISOString(),
-        endDate: body.endDate.toISOString(),
-        initialCapital: body.initialCapital,
-        commission: body.commission,
-        slippage: body.slippage,
-        riskSettings: body.riskSettings,
-      },
-      progress: 0,
-      estimatedDurationMs: null as number | null,
-    };
+    let backtestJob;
+    try {
+      const record = await createBacktest({
+        strategyId: body.strategyId!,
+        startDate: body.startDate,
+        endDate: body.endDate,
+        initialCapital: String(body.initialCapital),
+        status: 'queued',
+        params: {
+          instruments: body.instruments,
+          commission: body.commission,
+          slippage: body.slippage,
+          riskSettings: body.riskSettings,
+          strategy: body.strategy,
+        },
+      });
 
-    console.log(`[Backtest] Job submitted: ${backtestJob.id} by ${req.user!.email}`);
+      console.log(`[Backtest] Job submitted: ${record.id} by ${req.user!.email}`);
+
+      backtestJob = {
+        id: record.id,
+        status: record.status,
+        submittedBy: req.user!.id,
+        submittedAt: record.createdAt,
+        config: {
+          instruments: body.instruments,
+          startDate: body.startDate.toISOString(),
+          endDate: body.endDate.toISOString(),
+          initialCapital: body.initialCapital,
+          commission: body.commission,
+          slippage: body.slippage,
+          riskSettings: body.riskSettings,
+        },
+        progress: 0,
+        estimatedDurationMs: null as number | null,
+      };
+    } catch (dbError) {
+      console.warn('[Backtest] DB error creating backtest, using stub fallback:', dbError);
+      backtestJob = {
+        id: `bt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        status: 'queued' as const,
+        submittedBy: req.user!.id,
+        submittedAt: new Date().toISOString(),
+        config: {
+          instruments: body.instruments,
+          startDate: body.startDate.toISOString(),
+          endDate: body.endDate.toISOString(),
+          initialCapital: body.initialCapital,
+          commission: body.commission,
+          slippage: body.slippage,
+          riskSettings: body.riskSettings,
+        },
+        progress: 0,
+        estimatedDurationMs: null as number | null,
+      };
+
+      console.log(`[Backtest] Job submitted (stub): ${backtestJob.id} by ${req.user!.email}`);
+    }
 
     res.status(202).json({
       data: backtestJob,
@@ -89,11 +136,31 @@ backtestRouter.post('/', requireRole('admin', 'trader'), createBacktestRateLimit
 /**
  * GET /api/v1/backtest
  * List all backtests for the authenticated user.
+ * Supports optional query params: ?strategyId=<uuid>&limit=<number>
  */
-backtestRouter.get('/', async (_req, res) => {
+backtestRouter.get('/', async (req, res) => {
   try {
-    // TODO: Integrate with @tradeworks/db, use req.query.status and req.query.limit
-    const backtests: unknown[] = [];
+    let backtests: BacktestRun[] = [];
+    try {
+      const { strategyId, limit } = req.query;
+      const maxRows = Math.min(Number(limit) || 50, 100);
+
+      if (typeof strategyId === 'string' && strategyId.length > 0) {
+        // Filter by strategy
+        backtests = await getBacktestsByStrategy(strategyId);
+        backtests = backtests.slice(0, maxRows);
+      } else {
+        // Return recent backtests across all strategies
+        backtests = await db
+          .select()
+          .from(backtestRuns)
+          .orderBy(desc(backtestRuns.createdAt))
+          .limit(maxRows);
+      }
+    } catch (dbError) {
+      console.warn('[Backtest] DB error listing backtests, falling back to empty list:', dbError);
+      backtests = [];
+    }
 
     res.json({
       data: backtests,
@@ -113,17 +180,18 @@ backtestRouter.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    // TODO: Integrate with @tradeworks/db
-    // Check if backtest belongs to the user or user is admin
-    const backtest = null as unknown;
+    let backtest;
+    try {
+      backtest = await getBacktest(id);
+    } catch (dbError) {
+      console.warn('[Backtest] DB error fetching backtest, returning 404:', dbError);
+      backtest = undefined;
+    }
 
     if (!backtest) {
       res.status(404).json({ error: `Backtest ${id} not found` });
       return;
     }
-
-    // If backtest is complete, include full results
-    // If still running, include progress percentage
 
     res.json({ data: backtest });
   } catch (error) {

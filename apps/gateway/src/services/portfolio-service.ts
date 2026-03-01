@@ -1,4 +1,26 @@
-import type { Position, ExecutionResult } from '@tradeworks/shared';
+import type { Position as SharedPosition, ExecutionResult, MarketType } from '@tradeworks/shared';
+import {
+  getOpenPositions,
+  getDefaultPortfolio,
+  closePosition as dbClosePosition,
+  db,
+  positions,
+  type Position as DbPosition,
+} from '@tradeworks/db';
+import { eq, and, desc } from 'drizzle-orm';
+
+/**
+ * Map DB market enum values to shared MarketType.
+ * DB uses: 'crypto', 'equities', 'forex', 'futures', 'options'
+ * Shared uses: 'crypto', 'prediction', 'equity'
+ */
+const DB_MARKET_TO_SHARED: Record<string, MarketType> = {
+  crypto: 'crypto',
+  equities: 'equity',
+  forex: 'equity',
+  futures: 'equity',
+  options: 'equity',
+};
 
 /**
  * Portfolio calculation service.
@@ -34,31 +56,106 @@ export interface ClosePositionResult {
   error?: string;
 }
 
+/**
+ * Map a DB Position (with numeric strings) to the shared Position type (with numbers).
+ */
+function mapDbPosition(p: DbPosition): SharedPosition {
+  return {
+    id: p.id,
+    portfolioId: p.portfolioId,
+    instrument: p.instrument,
+    market: DB_MARKET_TO_SHARED[p.market] ?? 'crypto',
+    side: p.side,
+    quantity: parseFloat(p.quantity),
+    averageEntry: parseFloat(p.averageEntry),
+    currentPrice: p.currentPrice ? parseFloat(p.currentPrice) : 0,
+    unrealizedPnl: p.unrealizedPnl ? parseFloat(p.unrealizedPnl) : 0,
+    realizedPnl: p.realizedPnl ? parseFloat(p.realizedPnl) : 0,
+    stopLoss: p.stopLoss ? parseFloat(p.stopLoss) : null,
+    takeProfit: p.takeProfit ? parseFloat(p.takeProfit) : null,
+    openedAt: p.openedAt,
+    closedAt: p.closedAt ?? null,
+    status: p.status,
+    strategyId: p.strategyId ?? null,
+    metadata: (p.metadata as Record<string, unknown>) ?? {},
+    createdAt: p.createdAt,
+    updatedAt: p.updatedAt,
+  };
+}
+
+/**
+ * Map a DB closed Position to the ClosedPosition interface.
+ */
+function mapDbClosedPosition(p: DbPosition): ClosedPosition {
+  const entryPrice = parseFloat(p.averageEntry);
+  const exitPrice = p.currentPrice ? parseFloat(p.currentPrice) : entryPrice;
+  const realizedPnl = p.realizedPnl ? parseFloat(p.realizedPnl) : 0;
+  const quantity = parseFloat(p.quantity);
+  const costBasis = entryPrice * quantity;
+  const openedAt = p.openedAt.toISOString();
+  const closedAt = p.closedAt ? p.closedAt.toISOString() : new Date().toISOString();
+  const holdingPeriodMs = (p.closedAt ? p.closedAt.getTime() : Date.now()) - p.openedAt.getTime();
+
+  return {
+    instrument: p.instrument,
+    side: p.side === 'long' ? 'buy' : 'sell',
+    quantity,
+    entryPrice,
+    exitPrice,
+    realizedPnl,
+    realizedPnlPercent: costBasis > 0 ? (realizedPnl / costBasis) * 100 : 0,
+    openedAt,
+    closedAt,
+    holdingPeriodMs,
+  };
+}
+
 export class PortfolioService {
   /**
    * Get all open positions, optionally filtered by exchange.
    */
-  async getPositions(userId: string, exchange?: string): Promise<Position[]> {
+  async getPositions(userId: string, exchange?: string): Promise<SharedPosition[]> {
     console.log(`[PortfolioService] Fetching positions for user ${userId}, exchange: ${exchange ?? 'all'}`);
 
-    // TODO: Integrate with @tradeworks/db
-    // SELECT * FROM positions
-    //   WHERE userId = userId
-    //   AND status = 'open'
-    //   AND (exchange = exchange OR exchange IS NULL)
-    //   ORDER BY timestamp DESC
+    try {
+      const portfolio = await getDefaultPortfolio();
+      if (!portfolio) {
+        console.warn('[PortfolioService] No default portfolio found');
+        return [];
+      }
 
-    return [];
+      const dbPositions = await getOpenPositions(portfolio.id);
+      return dbPositions.map(mapDbPosition);
+    } catch (error) {
+      console.error('[PortfolioService] Error fetching positions:', error);
+      return [];
+    }
   }
 
   /**
    * Get a specific position by instrument.
    */
-  async getPosition(userId: string, instrument: string): Promise<Position | null> {
+  async getPosition(userId: string, instrument: string): Promise<SharedPosition | null> {
     console.log(`[PortfolioService] Fetching position: ${instrument} for user ${userId}`);
 
-    // TODO: Integrate with @tradeworks/db
-    return null;
+    try {
+      const rows = await db
+        .select()
+        .from(positions)
+        .where(
+          and(
+            eq(positions.instrument, instrument),
+            eq(positions.status, 'open'),
+          ),
+        )
+        .limit(1);
+
+      if (rows.length === 0) return null;
+      return mapDbPosition(rows[0]!);
+    } catch (error) {
+      console.error('[PortfolioService] Error fetching position by instrument:', error);
+      return null;
+    }
   }
 
   /**
@@ -77,17 +174,28 @@ export class PortfolioService {
       `[PortfolioService] Closing position ${positionId} for user ${userId}`,
     );
 
-    // TODO: Integrate with engine for trade execution
-    // 1. Fetch the position
-    // 2. Validate the close request
-    // 3. Submit close order to the engine
-    // 4. Wait for execution
-    // 5. Update position record
-
-    return {
-      success: false,
-      error: 'Position closing not yet implemented - engine integration pending',
-    };
+    try {
+      const closed = await dbClosePosition(positionId);
+      return {
+        success: true,
+        execution: {
+          filled: true,
+          orderId: `close-${positionId}`,
+          fillPrice: closed.currentPrice ? parseFloat(closed.currentPrice) : null,
+          fillQuantity: parseFloat(closed.quantity),
+          slippage: 0,
+          fees: 0,
+          exchangeRef: null,
+          errorMessage: null,
+        },
+      };
+    } catch (error) {
+      console.error('[PortfolioService] Error closing position:', error);
+      return {
+        success: false,
+        error: `Failed to close position: ${String(error)}`,
+      };
+    }
   }
 
   /**
@@ -96,8 +204,19 @@ export class PortfolioService {
   async getClosedPositions(userId: string, limit: number): Promise<ClosedPosition[]> {
     console.log(`[PortfolioService] Fetching closed positions for user ${userId}, limit: ${limit}`);
 
-    // TODO: Integrate with @tradeworks/db
-    return [];
+    try {
+      const rows = await db
+        .select()
+        .from(positions)
+        .where(eq(positions.status, 'closed'))
+        .orderBy(desc(positions.closedAt))
+        .limit(limit);
+
+      return rows.map(mapDbClosedPosition);
+    } catch (error) {
+      console.error('[PortfolioService] Error fetching closed positions:', error);
+      return [];
+    }
   }
 
   /**
@@ -106,46 +225,79 @@ export class PortfolioService {
   async getPortfolioSummary(userId: string): Promise<PortfolioSummary> {
     console.log(`[PortfolioService] Computing portfolio summary for user ${userId}`);
 
-    const positions = await this.getPositions(userId);
+    try {
+      const portfolio = await getDefaultPortfolio();
+      const openPositions = await this.getPositions(userId);
 
-    const positionsValue = positions.reduce(
-      (sum, p) => sum + p.quantity * p.currentPrice,
-      0,
-    );
+      const cashBalance = portfolio ? parseFloat(portfolio.currentCapital) : 0;
 
-    const unrealizedPnl = positions.reduce(
-      (sum, p) => sum + (p.unrealizedPnl ?? 0),
-      0,
-    );
+      const positionsValue = openPositions.reduce(
+        (sum, p) => sum + p.quantity * p.currentPrice,
+        0,
+      );
 
-    // TODO: Get cash balance and realized P&L from database
-    const cashBalance = 0;
-    const realizedPnlToday = 0;
-    const totalEquity = cashBalance + positionsValue;
+      const unrealizedPnl = openPositions.reduce(
+        (sum, p) => sum + (p.unrealizedPnl ?? 0),
+        0,
+      );
 
-    return {
-      totalEquity,
-      cashBalance,
-      positionsValue,
-      unrealizedPnl,
-      realizedPnlToday,
-      dailyPnlPercent: totalEquity > 0 ? ((unrealizedPnl + realizedPnlToday) / totalEquity) * 100 : 0,
-      openPositionCount: positions.length,
-    };
+      // Compute today's realized P&L from closed positions today
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      let realizedPnlToday = 0;
+      try {
+        const closedToday = await db
+          .select()
+          .from(positions)
+          .where(
+            and(
+              eq(positions.status, 'closed'),
+            ),
+          );
+        realizedPnlToday = closedToday
+          .filter(p => p.closedAt && p.closedAt >= todayStart)
+          .reduce((sum, p) => sum + (p.realizedPnl ? parseFloat(p.realizedPnl) : 0), 0);
+      } catch {
+        // Ignore - use 0
+      }
+
+      const totalEquity = cashBalance + positionsValue;
+
+      return {
+        totalEquity,
+        cashBalance,
+        positionsValue,
+        unrealizedPnl,
+        realizedPnlToday,
+        dailyPnlPercent: totalEquity > 0 ? ((unrealizedPnl + realizedPnlToday) / totalEquity) * 100 : 0,
+        openPositionCount: openPositions.length,
+      };
+    } catch (error) {
+      console.error('[PortfolioService] Error computing portfolio summary:', error);
+      return {
+        totalEquity: 0,
+        cashBalance: 0,
+        positionsValue: 0,
+        unrealizedPnl: 0,
+        realizedPnlToday: 0,
+        dailyPnlPercent: 0,
+        openPositionCount: 0,
+      };
+    }
   }
 
   /**
    * Calculate portfolio allocation breakdown.
    */
   async getAllocation(userId: string): Promise<Record<string, { value: number; percent: number }>> {
-    const positions = await this.getPositions(userId);
-    const totalValue = positions.reduce((sum, p) => sum + p.quantity * p.currentPrice, 0);
+    const openPositions = await this.getPositions(userId);
+    const totalValue = openPositions.reduce((sum, p) => sum + p.quantity * p.currentPrice, 0);
 
     if (totalValue === 0) return {};
 
     const allocation: Record<string, { value: number; percent: number }> = {};
 
-    for (const position of positions) {
+    for (const position of openPositions) {
       const category = this.categorizeInstrument(position.instrument);
       if (!allocation[category]) {
         allocation[category] = { value: 0, percent: 0 };

@@ -1,14 +1,68 @@
 import { Router, type Router as RouterType } from 'express';
 import { z } from 'zod';
 import { requireRole } from '../middleware/auth.js';
+import {
+  getLatestRiskSnapshot,
+  getRiskHistory,
+  getDefaultPortfolio,
+  getOpenPositions,
+} from '@tradeworks/db';
 
 /**
  * Risk routes.
  * GET  /api/v1/risk/metrics          - Get current risk metrics
+ * GET  /api/v1/risk/history          - Get historical risk metrics
+ * GET  /api/v1/risk/limits           - Get risk limit configuration
  * POST /api/v1/risk/circuit-breaker  - Toggle circuit breaker
  */
 
 export const riskRouter: RouterType = Router();
+
+/** Placeholder metrics returned when DB is unavailable or no data exists. */
+function emptyMetrics() {
+  return {
+    timestamp: new Date().toISOString(),
+    portfolio: {
+      equity: 0,
+      cash: 0,
+      marginUsed: 0,
+      marginAvailable: 0,
+      buyingPower: 0,
+    },
+    risk: {
+      portfolioHeat: 0,
+      portfolioHeatLimit: 6.0,
+      dailyPnl: 0,
+      dailyPnlPercent: 0,
+      dailyLossLimit: 3.0,
+      maxDrawdown: 0,
+      maxDrawdownLimit: 10.0,
+      valueAtRisk1Day: 0,
+      valueAtRisk5Day: 0,
+      sharpeRatio: 0,
+      sortinoRatio: 0,
+    },
+    positions: {
+      totalOpen: 0,
+      totalValue: 0,
+      unrealizedPnl: 0,
+      biggestWinner: null as string | null,
+      biggestLoser: null as string | null,
+    },
+    circuitBreaker: {
+      tripped: false,
+      reason: null as string | null,
+      trippedAt: null as string | null,
+      canResumeAt: null as string | null,
+    },
+    exposure: {
+      crypto: 0,
+      equities: 0,
+      predictions: 0,
+      cash: 0,
+    },
+  };
+}
 
 /**
  * GET /api/v1/risk/metrics
@@ -16,49 +70,109 @@ export const riskRouter: RouterType = Router();
  */
 riskRouter.get('/metrics', async (_req, res) => {
   try {
-    // TODO: Integrate with @tradeworks/risk and @tradeworks/db
-    const metrics = {
-      timestamp: new Date().toISOString(),
-      portfolio: {
-        equity: 0,
-        cash: 0,
-        marginUsed: 0,
-        marginAvailable: 0,
-        buyingPower: 0,
-      },
-      risk: {
-        portfolioHeat: 0,
-        portfolioHeatLimit: 6.0,
-        dailyPnl: 0,
-        dailyPnlPercent: 0,
-        dailyLossLimit: 3.0,
-        maxDrawdown: 0,
-        maxDrawdownLimit: 10.0,
-        valueAtRisk1Day: 0,
-        valueAtRisk5Day: 0,
-        sharpeRatio: 0,
-        sortinoRatio: 0,
-      },
-      positions: {
-        totalOpen: 0,
-        totalValue: 0,
-        unrealizedPnl: 0,
-        biggestWinner: null as string | null,
-        biggestLoser: null as string | null,
-      },
-      circuitBreaker: {
-        tripped: false,
-        reason: null as string | null,
-        trippedAt: null as string | null,
-        canResumeAt: null as string | null,
-      },
-      exposure: {
-        crypto: 0,
-        equities: 0,
-        predictions: 0,
-        cash: 0,
-      },
-    };
+    let metrics = emptyMetrics();
+
+    try {
+      const portfolio = await getDefaultPortfolio();
+
+      if (portfolio) {
+        const [snapshot, openPositions] = await Promise.all([
+          getLatestRiskSnapshot(portfolio.id),
+          getOpenPositions(portfolio.id),
+        ]);
+
+        const equity = snapshot ? Number(snapshot.totalEquity) : Number(portfolio.currentCapital);
+        const cash = snapshot ? Number(snapshot.cashBalance) : Number(portfolio.currentCapital);
+
+        // Compute position-level aggregates
+        let totalPositionValue = 0;
+        let totalUnrealizedPnl = 0;
+        let biggestWinner: string | null = null;
+        let biggestWinnerPnl = -Infinity;
+        let biggestLoser: string | null = null;
+        let biggestLoserPnl = Infinity;
+
+        for (const pos of openPositions) {
+          const pnl = Number(pos.unrealizedPnl ?? 0);
+          const qty = Number(pos.quantity);
+          const price = Number(pos.currentPrice ?? pos.averageEntry);
+          totalPositionValue += qty * price;
+          totalUnrealizedPnl += pnl;
+
+          if (pnl > biggestWinnerPnl) {
+            biggestWinnerPnl = pnl;
+            biggestWinner = pos.instrument;
+          }
+          if (pnl < biggestLoserPnl) {
+            biggestLoserPnl = pnl;
+            biggestLoser = pos.instrument;
+          }
+        }
+
+        // Only set winner/loser if we actually have positions
+        if (openPositions.length === 0) {
+          biggestWinner = null;
+          biggestLoser = null;
+        }
+
+        // Bucket positions by market for exposure breakdown
+        const exposureBuckets: Record<string, number> = { crypto: 0, equities: 0, predictions: 0 };
+        for (const pos of openPositions) {
+          const val = Number(pos.quantity) * Number(pos.currentPrice ?? pos.averageEntry);
+          if (pos.market in exposureBuckets) {
+            exposureBuckets[pos.market] += val;
+          }
+        }
+
+        const dailyPnl = snapshot ? Number(snapshot.dailyPnl ?? 0) : 0;
+        const dailyPnlPercent = equity > 0 ? (dailyPnl / equity) * 100 : 0;
+
+        metrics = {
+          timestamp: snapshot ? snapshot.timestamp.toISOString() : new Date().toISOString(),
+          portfolio: {
+            equity,
+            cash,
+            marginUsed: Number(snapshot?.grossExposure ?? 0),
+            marginAvailable: equity - Number(snapshot?.grossExposure ?? 0),
+            buyingPower: equity, // simplified; adjust with leverage factor if needed
+          },
+          risk: {
+            portfolioHeat: Number(snapshot?.portfolioHeat ?? 0),
+            portfolioHeatLimit: 6.0,
+            dailyPnl,
+            dailyPnlPercent,
+            dailyLossLimit: 3.0,
+            maxDrawdown: Number(snapshot?.maxDrawdown ?? 0),
+            maxDrawdownLimit: 10.0,
+            valueAtRisk1Day: Number(snapshot?.var95 ?? 0),
+            valueAtRisk5Day: Number(snapshot?.var99 ?? 0),
+            sharpeRatio: Number(snapshot?.sharpe30d ?? 0),
+            sortinoRatio: 0, // not stored in snapshot; leave as 0 for now
+          },
+          positions: {
+            totalOpen: openPositions.length,
+            totalValue: totalPositionValue,
+            unrealizedPnl: totalUnrealizedPnl,
+            biggestWinner,
+            biggestLoser,
+          },
+          circuitBreaker: {
+            tripped: snapshot?.circuitBreaker ?? false,
+            reason: null,
+            trippedAt: null,
+            canResumeAt: null,
+          },
+          exposure: {
+            crypto: exposureBuckets['crypto'] ?? 0,
+            equities: exposureBuckets['equities'] ?? 0,
+            predictions: exposureBuckets['predictions'] ?? 0,
+            cash,
+          },
+        };
+      }
+    } catch (dbError) {
+      console.warn('[Risk] DB unavailable for metrics, returning zeros:', dbError);
+    }
 
     res.json({ data: metrics });
   } catch (error) {
@@ -76,8 +190,27 @@ riskRouter.get('/history', async (req, res) => {
     const period = (req.query.period as string) ?? '7d';
     const interval = (req.query.interval as string) ?? '1h';
 
-    // TODO: Integrate with @tradeworks/db time-series data
-    const history: unknown[] = [];
+    // Parse period string to number of days
+    const periodMatch = period.match(/^(\d+)([dhm])$/);
+    let days = 7; // default
+    if (periodMatch) {
+      const value = parseInt(periodMatch[1]!, 10);
+      const unit = periodMatch[2];
+      if (unit === 'd') days = value;
+      else if (unit === 'm') days = value * 30;
+      else if (unit === 'h') days = Math.max(1, Math.round(value / 24));
+    }
+
+    let history: unknown[] = [];
+
+    try {
+      const portfolio = await getDefaultPortfolio();
+      if (portfolio) {
+        history = await getRiskHistory(portfolio.id, days);
+      }
+    } catch (dbError) {
+      console.warn('[Risk] DB unavailable for risk history, returning empty:', dbError);
+    }
 
     res.json({
       data: history,
