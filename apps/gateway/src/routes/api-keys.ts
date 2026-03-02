@@ -283,90 +283,64 @@ apiKeysRouter.post('/:id/test', async (req, res) => {
     try {
       switch (key.service) {
         case 'coinbase': {
-          // Coinbase CDP API keys use JWT Bearer auth (ES256)
-          // Legacy HMAC keys were deprecated Feb 2025
+          // Coinbase CDP keys — JWT Bearer auth (Ed25519 or ES256, auto-detected)
           const cbMethod = 'GET';
           const cbPath = '/api/v3/brokerage/accounts';
-          const isCdp = decryptedKey.includes('organizations/');
 
-          let response: globalThis.Response;
+          const { SignJWT, importJWK, importPKCS8 } = await import('jose');
+          const { randomBytes: rb } = await import('node:crypto');
+          const now = Math.floor(Date.now() / 1000);
+          const nonce = rb(16).toString('hex');
+          const uri = `${cbMethod} api.coinbase.com${cbPath}`;
+          const secretStr = (decryptedSecret ?? '').trim();
 
-          if (isCdp) {
-            // CDP key — build JWT (auto-detect Ed25519 vs ECDSA)
-            const { SignJWT, importJWK, importPKCS8 } = await import('jose');
-            const { randomBytes: rb } = await import('node:crypto');
-            const now = Math.floor(Date.now() / 1000);
-            const nonce = rb(16).toString('hex');
-            const uri = `${cbMethod} api.coinbase.com${cbPath}`;
-            const secretStr = (decryptedSecret ?? '').trim();
+          // Detect key type: Ed25519 (base64 → 64 bytes) vs ECDSA (PEM)
+          let isEd25519 = false;
+          try {
+            const decoded = Buffer.from(secretStr, 'base64');
+            isEd25519 = !secretStr.includes('BEGIN') && decoded.length === 64;
+          } catch { /* not base64 */ }
 
-            // Detect key type: Ed25519 (base64 → 64 bytes) vs ECDSA (PEM)
-            let isEd25519 = false;
-            try {
-              const decoded = Buffer.from(secretStr, 'base64');
-              isEd25519 = !secretStr.includes('BEGIN') && decoded.length === 64;
-            } catch { /* not base64 */ }
+          let signingKey: CryptoKey;
+          let alg: string;
 
-            let signingKey: CryptoKey;
-            let alg: string;
-
-            if (isEd25519) {
-              const keyBytes = Buffer.from(secretStr, 'base64');
-              const jwk = {
-                kty: 'OKP' as const,
-                crv: 'Ed25519' as const,
-                d: Buffer.from(keyBytes.subarray(0, 32)).toString('base64url'),
-                x: Buffer.from(keyBytes.subarray(32, 64)).toString('base64url'),
-              };
-              signingKey = (await importJWK(jwk, 'EdDSA')) as CryptoKey;
-              alg = 'EdDSA';
-            } else {
-              const pem = secretStr.replace(/\\n/g, '\n');
-              signingKey = (await importPKCS8(pem, 'ES256')) as CryptoKey;
-              alg = 'ES256';
-            }
-
-            const token = await new SignJWT({ iss: 'cdp', sub: decryptedKey, nbf: now, exp: now + 120, uri })
-              .setProtectedHeader({ alg, typ: 'JWT', kid: decryptedKey, nonce })
-              .sign(signingKey);
-
-            response = await fetch(`https://api.coinbase.com${cbPath}`, {
-              method: cbMethod,
-              headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json',
-              },
-            });
+          if (isEd25519) {
+            const keyBytes = Buffer.from(secretStr, 'base64');
+            const jwk = {
+              kty: 'OKP' as const,
+              crv: 'Ed25519' as const,
+              d: Buffer.from(keyBytes.subarray(0, 32)).toString('base64url'),
+              x: Buffer.from(keyBytes.subarray(32, 64)).toString('base64url'),
+            };
+            signingKey = (await importJWK(jwk, 'EdDSA')) as CryptoKey;
+            alg = 'EdDSA';
           } else {
-            // Legacy key fallback (deprecated Feb 2025)
-            const { createHmac } = await import('node:crypto');
-            const cbTimestamp = Math.floor(Date.now() / 1000).toString();
-            const cbMessage = cbTimestamp + cbMethod + cbPath;
-            const cbSignature = createHmac('sha256', decryptedSecret ?? '')
-              .update(cbMessage)
-              .digest('hex');
-
-            response = await fetch(`https://api.coinbase.com${cbPath}`, {
-              method: cbMethod,
-              headers: {
-                'CB-ACCESS-KEY': decryptedKey,
-                'CB-ACCESS-SIGN': cbSignature,
-                'CB-ACCESS-TIMESTAMP': cbTimestamp,
-                'Content-Type': 'application/json',
-              },
-            });
+            const pem = secretStr.replace(/\\n/g, '\n');
+            signingKey = (await importPKCS8(pem, 'ES256')) as CryptoKey;
+            alg = 'ES256';
           }
+
+          const token = await new SignJWT({ iss: 'cdp', sub: decryptedKey, nbf: now, exp: now + 120, uri })
+            .setProtectedHeader({ alg, typ: 'JWT', kid: decryptedKey, nonce })
+            .sign(signingKey);
+
+          const response = await fetch(`https://api.coinbase.com${cbPath}`, {
+            method: cbMethod,
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+          });
 
           if (response.ok) {
             const cbData = (await response.json()) as { accounts?: unknown[] };
             const accountCount = cbData.accounts?.length ?? 0;
             success = true;
-            message = `Coinbase connected (${isCdp ? 'CDP' : 'Legacy'}) — ${accountCount} account(s) found`;
+            message = `Coinbase connected (${alg}) — ${accountCount} account(s) found`;
           } else {
             success = false;
             const errBody = await response.text().catch(() => '');
-            const hint = !isCdp ? ' (Legacy keys were deprecated Feb 2025 — use a CDP key from portal.cdp.coinbase.com)' : '';
-            message = `Coinbase returned ${response.status}: ${response.statusText}${errBody ? ` — ${errBody.slice(0, 200)}` : ''}${hint}`;
+            message = `Coinbase returned ${response.status}: ${response.statusText}${errBody ? ` — ${errBody.slice(0, 200)}` : ''}`;
           }
           break;
         }

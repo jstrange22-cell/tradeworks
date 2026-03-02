@@ -68,71 +68,50 @@ async function fetchCoinbaseBalances(apiKey: string, apiSecret: string): Promise
     // Coinbase Advanced Trade API — list accounts
     const method = 'GET';
     const path = '/api/v3/brokerage/accounts';
-    const isCdp = apiKey.includes('organizations/');
+    // CDP keys — JWT Bearer auth (Ed25519 or ES256, auto-detected by secret format)
+    const { SignJWT, importJWK, importPKCS8 } = await import('jose');
+    const { randomBytes } = await import('node:crypto');
+    const now = Math.floor(Date.now() / 1000);
+    const nonce = randomBytes(16).toString('hex');
+    const uri = `${method} api.coinbase.com${path}`;
+    const secretStr = apiSecret.trim();
 
-    let response: globalThis.Response;
+    // Detect key type: Ed25519 (base64 → 64 bytes) vs ECDSA (PEM)
+    let isEd25519 = false;
+    try {
+      const decoded = Buffer.from(secretStr, 'base64');
+      isEd25519 = !secretStr.includes('BEGIN') && decoded.length === 64;
+    } catch { /* not base64 */ }
 
-    if (isCdp) {
-      // CDP key — JWT Bearer auth (auto-detect Ed25519 vs ECDSA)
-      const { SignJWT, importJWK, importPKCS8 } = await import('jose');
-      const { randomBytes } = await import('node:crypto');
-      const now = Math.floor(Date.now() / 1000);
-      const nonce = randomBytes(16).toString('hex');
-      const uri = `${method} api.coinbase.com${path}`;
-      const secretStr = apiSecret.trim();
+    let signingKey: CryptoKey;
+    let alg: string;
 
-      // Detect key type: Ed25519 (base64 → 64 bytes) vs ECDSA (PEM)
-      let isEd25519 = false;
-      try {
-        const decoded = Buffer.from(secretStr, 'base64');
-        isEd25519 = !secretStr.includes('BEGIN') && decoded.length === 64;
-      } catch { /* not base64 */ }
-
-      let signingKey: CryptoKey;
-      let alg: string;
-
-      if (isEd25519) {
-        const keyBytes = Buffer.from(secretStr, 'base64');
-        const jwk = {
-          kty: 'OKP' as const,
-          crv: 'Ed25519' as const,
-          d: Buffer.from(keyBytes.subarray(0, 32)).toString('base64url'),
-          x: Buffer.from(keyBytes.subarray(32, 64)).toString('base64url'),
-        };
-        signingKey = (await importJWK(jwk, 'EdDSA')) as CryptoKey;
-        alg = 'EdDSA';
-      } else {
-        const pem = secretStr.replace(/\\n/g, '\n');
-        signingKey = (await importPKCS8(pem, 'ES256')) as CryptoKey;
-        alg = 'ES256';
-      }
-
-      const token = await new SignJWT({ iss: 'cdp', sub: apiKey, nbf: now, exp: now + 120, uri })
-        .setProtectedHeader({ alg, typ: 'JWT', kid: apiKey, nonce })
-        .sign(signingKey);
-
-      response = await fetch(`https://api.coinbase.com${path}?limit=50`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
+    if (isEd25519) {
+      const keyBytes = Buffer.from(secretStr, 'base64');
+      const jwk = {
+        kty: 'OKP' as const,
+        crv: 'Ed25519' as const,
+        d: Buffer.from(keyBytes.subarray(0, 32)).toString('base64url'),
+        x: Buffer.from(keyBytes.subarray(32, 64)).toString('base64url'),
+      };
+      signingKey = (await importJWK(jwk, 'EdDSA')) as CryptoKey;
+      alg = 'EdDSA';
     } else {
-      // Legacy key fallback — HMAC-SHA256 (deprecated Feb 2025)
-      const timestamp = Math.floor(Date.now() / 1000).toString();
-      const message = timestamp + method + path;
-      const { createHmac } = await import('node:crypto');
-      const signature = createHmac('sha256', apiSecret).update(message).digest('hex');
-
-      response = await fetch(`https://api.coinbase.com${path}?limit=50`, {
-        headers: {
-          'CB-ACCESS-KEY': apiKey,
-          'CB-ACCESS-SIGN': signature,
-          'CB-ACCESS-TIMESTAMP': timestamp,
-          'Content-Type': 'application/json',
-        },
-      });
+      const pem = secretStr.replace(/\\n/g, '\n');
+      signingKey = (await importPKCS8(pem, 'ES256')) as CryptoKey;
+      alg = 'ES256';
     }
+
+    const token = await new SignJWT({ iss: 'cdp', sub: apiKey, nbf: now, exp: now + 120, uri })
+      .setProtectedHeader({ alg, typ: 'JWT', kid: apiKey, nonce })
+      .sign(signingKey);
+
+    const response = await fetch(`https://api.coinbase.com${path}?limit=50`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
 
     if (!response.ok) {
       throw new Error(`Coinbase API error: ${response.status}`);
