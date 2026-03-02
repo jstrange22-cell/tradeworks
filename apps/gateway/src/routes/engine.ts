@@ -2,7 +2,7 @@ import { Router, type Router as RouterType } from 'express';
 import { z } from 'zod';
 import { getMemoryKeysByService } from './api-keys.js';
 import { decryptApiKey } from '@tradeworks/db';
-import jwt from 'jsonwebtoken';
+import { SignJWT, importJWK, importPKCS8 } from 'jose';
 import { randomBytes } from 'node:crypto';
 
 /**
@@ -106,47 +106,72 @@ const MAX_CYCLE_HISTORY = 100;
 let cycleTimer: ReturnType<typeof setInterval> | null = null;
 
 // ---------------------------------------------------------------------------
-// Coinbase Advanced Trade API — CDP JWT Auth (ES256) + Execution
+// Coinbase Advanced Trade API — CDP JWT Auth (ES256 + Ed25519) + Execution
 // ---------------------------------------------------------------------------
+
+/**
+ * Detect whether a CDP secret is an Ed25519 key (base64, 64 bytes)
+ * vs an ECDSA PEM key (has BEGIN marker).
+ */
+function isEd25519Secret(secret: string): boolean {
+  if (secret.includes('BEGIN')) return false;
+  try {
+    const decoded = Buffer.from(secret.trim(), 'base64');
+    return decoded.length === 64; // 32-byte seed + 32-byte pubkey
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Build a JWT for Coinbase CDP API authentication.
  *
- * CDP keys use ES256 (ECDSA P-256) JWT tokens instead of HMAC signing.
- * Legacy API keys were deprecated by Coinbase in February 2025.
+ * Supports two signing algorithms:
+ *   - Ed25519 (EdDSA) — default for new CDP keys since Feb 2025
+ *   - ECDSA (ES256) — older CDP keys with PEM private key
  *
  * JWT structure:
- *   Header: { alg: "ES256", typ: "JWT", kid: keyName, nonce: randomHex }
+ *   Header: { alg: "ES256"|"EdDSA", typ: "JWT", kid: keyName, nonce: randomHex }
  *   Payload: { iss: "cdp", sub: keyName, nbf: now, exp: now+120, uri: "METHOD host+path" }
  */
-function buildCoinbaseJwt(
+async function buildCoinbaseJwt(
   keyName: string,
-  privateKeyPem: string,
+  secretRaw: string,
   method: string,
   path: string,
-): string {
+): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const nonce = randomBytes(16).toString('hex');
   const uri = `${method} api.coinbase.com${path}`;
 
-  const payload = {
-    iss: 'cdp',
-    sub: keyName,
-    nbf: now,
-    exp: now + 120,
-    uri,
-  };
+  if (isEd25519Secret(secretRaw)) {
+    // ── Ed25519 (EdDSA) signing ──
+    const keyBytes = Buffer.from(secretRaw.trim(), 'base64');
+    const seed = keyBytes.subarray(0, 32);
+    const pub = keyBytes.subarray(32, 64);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return jwt.sign(payload, privateKeyPem, {
-    algorithm: 'ES256',
-    header: {
-      alg: 'ES256',
-      typ: 'JWT',
-      kid: keyName,
-      nonce,
-    } as any,
-  });
+    const jwk = {
+      kty: 'OKP' as const,
+      crv: 'Ed25519' as const,
+      d: Buffer.from(seed).toString('base64url'),
+      x: Buffer.from(pub).toString('base64url'),
+    };
+    const key = await importJWK(jwk, 'EdDSA');
+
+    console.log('[Engine] Building JWT with EdDSA (Ed25519)');
+    return new SignJWT({ iss: 'cdp', sub: keyName, nbf: now, exp: now + 120, uri })
+      .setProtectedHeader({ alg: 'EdDSA', typ: 'JWT', kid: keyName, nonce })
+      .sign(key);
+  } else {
+    // ── ECDSA (ES256) signing ──
+    const pem = secretRaw.replace(/\\n/g, '\n');
+    const key = await importPKCS8(pem, 'ES256');
+
+    console.log('[Engine] Building JWT with ES256 (ECDSA)');
+    return new SignJWT({ iss: 'cdp', sub: keyName, nbf: now, exp: now + 120, uri })
+      .setProtectedHeader({ alg: 'ES256', typ: 'JWT', kid: keyName, nonce })
+      .sign(key);
+  }
 }
 
 /** Check if a key is in CDP format (organizations/...) vs legacy UUID */
@@ -172,8 +197,9 @@ function getCoinbaseKeys(): { apiKey: string; apiSecret: string } | null {
 
     // Debug logging — masked values for troubleshooting
     const keyType = isCdpKey(apiKey) ? 'CDP' : 'Legacy';
+    const sigType = isEd25519Secret(apiSecret) ? 'Ed25519' : apiSecret.includes('BEGIN') ? 'ECDSA-PEM' : 'HMAC/unknown';
     console.log(`[Engine] Coinbase key decrypted: ${apiKey.slice(0, 20)}..., length: ${apiKey.length}, type: ${keyType}`);
-    console.log(`[Engine] Coinbase secret decrypted: length: ${apiSecret.length}, isPEM: ${apiSecret.includes('BEGIN')}`);
+    console.log(`[Engine] Coinbase secret decrypted: length: ${apiSecret.length}, sigType: ${sigType}`);
 
     if (!apiKey || !apiSecret) return null;
 
@@ -204,15 +230,13 @@ async function coinbaseSignedRequest(
   body?: string,
 ): Promise<Response> {
   if (isCdpKey(apiKey)) {
-    // CDP key — use JWT Bearer auth (ES256)
-    // The secret should be a PEM EC private key. Normalize escaped newlines.
-    const pem = apiSecret.replace(/\\n/g, '\n');
-    const jwt = buildCoinbaseJwt(apiKey, pem, method, path.split('?')[0]);
+    // CDP key — use JWT Bearer auth (Ed25519 or ES256, auto-detected)
+    const token = await buildCoinbaseJwt(apiKey, apiSecret, method, path.split('?')[0]);
 
     return fetch(`https://api.coinbase.com${path}`, {
       method,
       headers: {
-        'Authorization': `Bearer ${jwt}`,
+        'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
       ...(body ? { body } : {}),

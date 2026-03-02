@@ -292,29 +292,48 @@ apiKeysRouter.post('/:id/test', async (req, res) => {
           let response: globalThis.Response;
 
           if (isCdp) {
-            // CDP key — build JWT with ES256
-            const jwtMod = await import('jsonwebtoken');
-            const jwtSignFn = jwtMod.default?.sign ?? jwtMod.sign;
+            // CDP key — build JWT (auto-detect Ed25519 vs ECDSA)
+            const { SignJWT, importJWK, importPKCS8 } = await import('jose');
             const { randomBytes: rb } = await import('node:crypto');
             const now = Math.floor(Date.now() / 1000);
             const nonce = rb(16).toString('hex');
             const uri = `${cbMethod} api.coinbase.com${cbPath}`;
-            const pem = (decryptedSecret ?? '').replace(/\\n/g, '\n');
+            const secretStr = (decryptedSecret ?? '').trim();
 
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const jwt = jwtSignFn(
-              { iss: 'cdp', sub: decryptedKey, nbf: now, exp: now + 120, uri },
-              pem,
-              {
-                algorithm: 'ES256',
-                header: { alg: 'ES256', typ: 'JWT', kid: decryptedKey, nonce } as any,
-              },
-            );
+            // Detect key type: Ed25519 (base64 → 64 bytes) vs ECDSA (PEM)
+            let isEd25519 = false;
+            try {
+              const decoded = Buffer.from(secretStr, 'base64');
+              isEd25519 = !secretStr.includes('BEGIN') && decoded.length === 64;
+            } catch { /* not base64 */ }
+
+            let signingKey: CryptoKey;
+            let alg: string;
+
+            if (isEd25519) {
+              const keyBytes = Buffer.from(secretStr, 'base64');
+              const jwk = {
+                kty: 'OKP' as const,
+                crv: 'Ed25519' as const,
+                d: Buffer.from(keyBytes.subarray(0, 32)).toString('base64url'),
+                x: Buffer.from(keyBytes.subarray(32, 64)).toString('base64url'),
+              };
+              signingKey = (await importJWK(jwk, 'EdDSA')) as CryptoKey;
+              alg = 'EdDSA';
+            } else {
+              const pem = secretStr.replace(/\\n/g, '\n');
+              signingKey = (await importPKCS8(pem, 'ES256')) as CryptoKey;
+              alg = 'ES256';
+            }
+
+            const token = await new SignJWT({ iss: 'cdp', sub: decryptedKey, nbf: now, exp: now + 120, uri })
+              .setProtectedHeader({ alg, typ: 'JWT', kid: decryptedKey, nonce })
+              .sign(signingKey);
 
             response = await fetch(`https://api.coinbase.com${cbPath}`, {
               method: cbMethod,
               headers: {
-                'Authorization': `Bearer ${jwt}`,
+                'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
               },
             });
