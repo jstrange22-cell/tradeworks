@@ -71,7 +71,7 @@ async function fetchCoinbaseBalances(apiKey: string, apiSecret: string): Promise
     const path = '/api/v3/brokerage/accounts';
     const message = timestamp + method + path;
 
-    // Sign with HMAC SHA-256
+    // Sign with HMAC SHA-256 — Advanced Trade Legacy Keys: secret as-is, hex output
     const { createHmac } = await import('node:crypto');
     const signature = createHmac('sha256', apiSecret).update(message).digest('hex');
 

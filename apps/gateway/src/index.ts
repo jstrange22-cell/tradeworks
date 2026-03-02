@@ -18,7 +18,7 @@ import { instrumentsRouter } from './routes/instruments.js';
 import { portfolioRouter } from './routes/portfolio.js';
 import { apiKeysRouter } from './routes/api-keys.js';
 import { ordersRouter } from './routes/orders.js';
-import { engineRouter } from './routes/engine.js';
+import { engineRouter, initEngine } from './routes/engine.js';
 import { settingsRouter } from './routes/settings.js';
 import { balancesRouter } from './routes/balances.js';
 
@@ -99,6 +99,9 @@ server.listen(PORT, HOST, () => {
   console.log(`[TradeWorks Gateway] Running on http://${HOST}:${PORT}`);
   console.log(`[TradeWorks Gateway] Environment: ${process.env.NODE_ENV ?? 'development'}`);
   console.log(`[TradeWorks Gateway] WebSocket available at ws://${HOST}:${PORT}/ws`);
+
+  // Auto-start the AI trading engine — runs 24/7 with zero intervention
+  initEngine();
 });
 
 // Graceful shutdown

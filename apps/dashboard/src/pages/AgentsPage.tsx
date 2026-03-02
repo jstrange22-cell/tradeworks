@@ -46,6 +46,8 @@ interface EngineStatus {
     markets: string[];
     paperMode: boolean;
   };
+  coinbaseConnected: boolean;
+  coinbaseAccounts: number;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -166,7 +168,7 @@ export function AgentsPage() {
           <div>
             <h2 className="text-sm font-semibold text-blue-300">How the AI Engine Works</h2>
             <p className="mt-1 text-sm leading-relaxed text-slate-400">
-              When you start the engine, <span className="text-slate-200">5 AI agents work together in automated research-and-trade cycles</span>.
+              The engine <span className="text-slate-200">starts automatically and runs 24/7</span> — 5 AI agents work together in automated research-and-trade cycles.
               Each cycle: the Quant Analyst studies patterns → the Sentiment Analyst reads market mood → the Macro Analyst
               evaluates conditions → the Risk Guardian enforces your limits → the Execution Specialist routes approved trades.
               Cycles repeat every {((engine?.config?.cycleIntervalMs ?? 300000) / 60000).toFixed(0)} minutes.
@@ -208,6 +210,13 @@ export function AgentsPage() {
                   : 'bg-green-500/20 text-green-400'
               }`}>
                 {engine?.config?.paperMode !== false ? 'PAPER' : 'LIVE'}
+              </span>
+              <span className={`rounded-full px-2 py-0.5 ${
+                engine?.coinbaseConnected
+                  ? 'bg-green-500/20 text-green-400'
+                  : 'bg-red-500/20 text-red-400'
+              }`}>
+                Coinbase: {engine?.coinbaseConnected ? 'Connected' : 'Not Connected'}
               </span>
             </div>
           </div>

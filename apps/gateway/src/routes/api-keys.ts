@@ -283,17 +283,37 @@ apiKeysRouter.post('/:id/test', async (req, res) => {
     try {
       switch (key.service) {
         case 'coinbase': {
-          const response = await fetch('https://api.coinbase.com/api/v3/brokerage/accounts', {
-            method: 'GET',
+          // Coinbase Advanced Trade API requires HMAC-SHA256 signing
+          const { createHmac } = await import('node:crypto');
+          const cbTimestamp = Math.floor(Date.now() / 1000).toString();
+          const cbMethod = 'GET';
+          const cbPath = '/api/v3/brokerage/accounts';
+          const cbMessage = cbTimestamp + cbMethod + cbPath;
+          // Advanced Trade Legacy Keys: use secret as-is (UTF-8 string), hex signature
+          const cbSignature = createHmac('sha256', decryptedSecret ?? '')
+            .update(cbMessage)
+            .digest('hex');
+
+          const response = await fetch(`https://api.coinbase.com${cbPath}`, {
+            method: cbMethod,
             headers: {
-              'Authorization': `Bearer ${decryptedKey}`,
+              'CB-ACCESS-KEY': decryptedKey,
+              'CB-ACCESS-SIGN': cbSignature,
+              'CB-ACCESS-TIMESTAMP': cbTimestamp,
               'Content-Type': 'application/json',
             },
           });
-          success = response.ok;
-          message = success
-            ? 'Coinbase connection successful'
-            : `Coinbase returned ${response.status}: ${response.statusText}`;
+
+          if (response.ok) {
+            const cbData = (await response.json()) as { accounts?: unknown[] };
+            const accountCount = cbData.accounts?.length ?? 0;
+            success = true;
+            message = `Coinbase connected — ${accountCount} account(s) found`;
+          } else {
+            success = false;
+            const errBody = await response.text().catch(() => '');
+            message = `Coinbase returned ${response.status}: ${response.statusText}${errBody ? ` — ${errBody.slice(0, 200)}` : ''}`;
+          }
           break;
         }
 
