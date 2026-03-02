@@ -99,7 +99,7 @@ export function AgentActivityFeed() {
   const { data } = useQuery<CyclesResponse>({
     queryKey: ['engine-cycles'],
     queryFn: () => apiClient.get<CyclesResponse>('/engine/cycles', { limit: 30 }),
-    refetchInterval: 10_000,
+    refetchInterval: 30_000,
   });
 
   const cycles = data?.data ?? [];

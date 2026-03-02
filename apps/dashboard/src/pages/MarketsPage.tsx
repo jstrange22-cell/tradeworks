@@ -207,7 +207,7 @@ export function MarketsPage() {
   const { data: tickers, isLoading, refetch } = useQuery({
     queryKey: ['market-tickers', cryptoSymbols],
     queryFn: () => getMultipleTickers(cryptoSymbols),
-    refetchInterval: 10_000,
+    refetchInterval: 60_000,
     enabled: tab === 'crypto' && cryptoSymbols.length > 0,
   });
 

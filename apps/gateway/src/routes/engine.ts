@@ -97,122 +97,349 @@ const MAX_CYCLE_HISTORY = 100;
 let cycleTimer: ReturnType<typeof setInterval> | null = null;
 
 // ---------------------------------------------------------------------------
-// Cycle simulation
+// Real Market Data — Crypto.com Public API
 // ---------------------------------------------------------------------------
 
-const INSTRUMENTS = ['BTC-USD', 'ETH-USD', 'SOL-USD', 'AVAX-USD', 'LINK-USD'];
-const INDICATORS = ['EMA Crossover', 'RSI Divergence', 'MACD Signal', 'Bollinger Breakout', 'Volume Surge', 'Smart Money OB'];
-const BIASES: Array<'bullish' | 'bearish' | 'neutral'> = ['bullish', 'bearish', 'neutral'];
-const REGIMES: Array<'risk-on' | 'risk-off' | 'transition' | 'neutral'> = ['risk-on', 'risk-off', 'transition', 'neutral'];
-const RISK_LEVELS: Array<'low' | 'normal' | 'elevated' | 'extreme'> = ['low', 'normal', 'elevated', 'extreme'];
+const CRYPTO_API_BASE = 'https://api.crypto.com/exchange/v1/public';
 
-function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
-function rand(min: number, max: number): number { return min + Math.random() * (max - min); }
+const INSTRUMENT_MAP: Record<string, string> = {
+  'BTC-USD': 'BTC_USDT',
+  'ETH-USD': 'ETH_USDT',
+  'SOL-USD': 'SOL_USDT',
+  'AVAX-USD': 'AVAX_USDT',
+  'LINK-USD': 'LINK_USDT',
+};
 
-function generateCycle(): CycleResult {
-  engineState.cycleCount += 1;
-  const cycleNum = engineState.cycleCount;
+const TRACKED_INSTRUMENTS = ['BTC-USD', 'ETH-USD', 'SOL-USD'];
 
-  const quantBias = pick(BIASES);
-  const quantConfidence = Math.round(rand(0.4, 0.95) * 100) / 100;
-  const sentimentScore = Math.round(rand(-0.8, 0.8) * 100) / 100;
-  const macroRegime = pick(REGIMES);
-  const macroRiskLevel = macroRegime === 'risk-off' ? pick(['elevated', 'extreme'] as const) :
-    macroRegime === 'risk-on' ? pick(['low', 'normal'] as const) : pick(RISK_LEVELS);
+interface TickerData {
+  instrument: string;
+  last: number;
+  change24h: number;
+  high24h: number;
+  low24h: number;
+  volume: number;
+}
 
-  const signalCount = Math.floor(rand(1, 4));
-  const quantSignals = Array.from({ length: signalCount }, () => ({
-    instrument: pick(INSTRUMENTS),
-    direction: quantBias === 'bearish' ? 'short' as const : quantBias === 'bullish' ? 'long' as const : pick(['long', 'short'] as const),
-    indicator: pick(INDICATORS),
-    confidence: Math.round(rand(0.5, 0.9) * 100) / 100,
-  }));
+// Inline SMA — average of last N values
+function calcSma(values: number[], period: number): number {
+  if (values.length < period) return NaN;
+  const slice = values.slice(-period);
+  return slice.reduce((a, b) => a + b, 0) / period;
+}
 
-  const decisions: CycleDecision[] = quantSignals
-    .filter(s => s.confidence >= 0.6)
-    .map(s => {
-      const riskOk = macroRiskLevel !== 'extreme' && Math.random() > 0.25;
-      return {
-        instrument: s.instrument,
-        direction: s.direction,
-        confidence: s.confidence,
-        approved: riskOk,
-        rejectionReason: !riskOk
-          ? macroRiskLevel === 'extreme' ? 'Macro risk extreme — all trades halted' : 'Portfolio heat limit exceeded'
-          : undefined,
-      };
-    });
+// Inline RSI — relative strength index
+function calcRsi(values: number[], period: number): number {
+  if (values.length < period + 1) return 50;
+  let gains = 0;
+  let losses = 0;
+  for (let i = values.length - period; i < values.length; i++) {
+    const change = values[i] - values[i - 1];
+    if (change > 0) gains += change;
+    else losses -= change;
+  }
+  const avgGain = gains / period;
+  const avgLoss = losses / period;
+  if (avgLoss === 0) return 100;
+  return 100 - 100 / (1 + avgGain / avgLoss);
+}
 
-  const approved = decisions.filter(d => d.approved);
-  const rejected = decisions.filter(d => !d.approved);
-
-  const executions: CycleExecution[] = approved.map(d => {
-    const basePrice = d.instrument.includes('BTC') ? rand(90000, 105000) :
-      d.instrument.includes('ETH') ? rand(3000, 4000) :
-        d.instrument.includes('SOL') ? rand(100, 250) : rand(10, 80);
-    return {
-      instrument: d.instrument,
-      side: d.direction === 'long' ? 'buy' as const : 'sell' as const,
-      quantity: Math.round(rand(0.01, 1) * 1000) / 1000,
-      price: Math.round(basePrice * 100) / 100,
-      status: 'simulated' as const,
-      slippage: Math.round(rand(0.5, 5) * 10) / 10,
+async function fetchTicker(instrument: string): Promise<TickerData | null> {
+  const apiName = INSTRUMENT_MAP[instrument];
+  if (!apiName) return null;
+  try {
+    const res = await fetch(`${CRYPTO_API_BASE}/get-tickers?instrument_name=${apiName}`);
+    const json = await res.json() as {
+      code: number;
+      result?: { data?: Array<{ a: string; c: string; h: string; l: string; vv: string }> };
     };
-  });
+    if (json.code !== 0 || !json.result?.data?.length) return null;
+    const d = json.result.data[0];
+    return {
+      instrument,
+      last: parseFloat(d.a),
+      change24h: parseFloat(d.c),
+      high24h: parseFloat(d.h),
+      low24h: parseFloat(d.l),
+      volume: parseFloat(d.vv),
+    };
+  } catch (err) {
+    console.warn(`[Engine] Ticker fetch failed for ${instrument}:`, err);
+    return null;
+  }
+}
 
-  const durationMs = Math.round(rand(800, 4500));
-  const status: CycleResult['status'] = macroRiskLevel === 'extreme' ? 'circuit_breaker' :
-    decisions.length === 0 ? 'no_signals' : 'completed';
+async function fetchCandles(instrument: string): Promise<number[]> {
+  const apiName = INSTRUMENT_MAP[instrument];
+  if (!apiName) return [];
+  try {
+    const res = await fetch(`${CRYPTO_API_BASE}/get-candlestick?instrument_name=${apiName}&timeframe=1h`);
+    const json = await res.json() as {
+      code: number;
+      result?: { data?: Array<{ c: string; t: number }> };
+    };
+    if (json.code !== 0 || !json.result?.data?.length) return [];
+    // API returns newest first; reverse for indicator calculation
+    return json.result.data
+      .slice(0, 50)
+      .reverse()
+      .map((c) => parseFloat(c.c));
+  } catch (err) {
+    console.warn(`[Engine] Candle fetch failed for ${instrument}:`, err);
+    return [];
+  }
+}
 
-  let summary = '';
-  if (status === 'circuit_breaker') {
-    summary = `Circuit breaker — macro risk extreme. No trades.`;
-  } else if (status === 'no_signals') {
-    summary = `No signals. Quant ${quantBias} (${(quantConfidence * 100).toFixed(0)}%), Sentiment ${sentimentScore > 0 ? '+' : ''}${sentimentScore.toFixed(2)}.`;
-  } else if (executions.length > 0) {
-    const exec = executions[0];
-    const more = executions.length > 1 ? ` (+${executions.length - 1} more)` : '';
-    summary = `${exec.side.toUpperCase()} ${exec.quantity} ${exec.instrument} @ $${exec.price.toLocaleString()}${more} — Quant ${quantBias}, Sentiment ${sentimentScore.toFixed(2)}, ${macroRegime}`;
-  } else {
-    summary = `${rejected.length} signal(s) risk-rejected.`;
+// ---------------------------------------------------------------------------
+// Instrument Analysis
+// ---------------------------------------------------------------------------
+
+interface InstrumentAnalysis {
+  instrument: string;
+  price: number;
+  change24h: number;
+  sma20: number;
+  rsiValue: number;
+  priceAboveSma: boolean;
+  signals: Array<{ indicator: string; direction: 'long' | 'short'; confidence: number }>;
+}
+
+async function analyzeInstrument(instrument: string): Promise<InstrumentAnalysis | null> {
+  const [ticker, closes] = await Promise.all([
+    fetchTicker(instrument),
+    fetchCandles(instrument),
+  ]);
+
+  if (!ticker || closes.length < 25) return null;
+
+  const currentPrice = ticker.last;
+  const sma20 = calcSma(closes, 20);
+  const rsiValue = calcRsi(closes, 14);
+  const priceAboveSma = currentPrice > sma20;
+
+  const signals: InstrumentAnalysis['signals'] = [];
+
+  // SMA 20 Trend signal
+  const smaDistance = (currentPrice - sma20) / sma20;
+  if (Math.abs(smaDistance) > 0.005) {
+    signals.push({
+      indicator: 'SMA 20 Trend',
+      direction: smaDistance > 0 ? 'long' : 'short',
+      confidence: Math.round(Math.min(0.5 + Math.abs(smaDistance) * 8, 0.9) * 100) / 100,
+    });
   }
 
-  const cycle: CycleResult = {
-    id: `cycle-${cycleNum}-${Date.now()}`,
-    cycleNumber: cycleNum,
-    timestamp: new Date().toISOString(),
-    status,
-    durationMs,
-    agents: {
-      quantBias, quantConfidence, quantSignals,
-      sentimentScore,
-      sentimentLabel: sentimentScore > 0.3 ? 'bullish' : sentimentScore < -0.3 ? 'bearish' : 'neutral',
-      macroRegime, macroRiskLevel,
-    },
-    decisions,
-    riskAssessment: {
-      portfolioHeat: Math.round(rand(0, 6) * 100) / 100,
-      drawdownPercent: Math.round(rand(0, 3) * 100) / 100,
-      approved: approved.length,
-      rejected: rejected.length,
-    },
-    executions,
-    summary,
-  };
+  // RSI signal
+  if (rsiValue < 30) {
+    signals.push({
+      indicator: 'RSI Oversold',
+      direction: 'long',
+      confidence: Math.round(Math.min(0.6 + (30 - rsiValue) / 80, 0.85) * 100) / 100,
+    });
+  } else if (rsiValue > 70) {
+    signals.push({
+      indicator: 'RSI Overbought',
+      direction: 'short',
+      confidence: Math.round(Math.min(0.6 + (rsiValue - 70) / 80, 0.85) * 100) / 100,
+    });
+  }
 
+  // 24h Momentum signal
+  if (Math.abs(ticker.change24h) > 0.02) {
+    signals.push({
+      indicator: '24h Momentum',
+      direction: ticker.change24h > 0 ? 'long' : 'short',
+      confidence: Math.round(Math.min(0.5 + Math.abs(ticker.change24h) * 3, 0.85) * 100) / 100,
+    });
+  }
+
+  return { instrument, price: currentPrice, change24h: ticker.change24h, sma20, rsiValue, priceAboveSma, signals };
+}
+
+// ---------------------------------------------------------------------------
+// Run Analysis Cycle (fetches real data from Crypto.com)
+// ---------------------------------------------------------------------------
+
+function pushCycle(cycle: CycleResult): void {
   cycleHistory.unshift(cycle);
   if (cycleHistory.length > MAX_CYCLE_HISTORY) cycleHistory.pop();
   engineState.lastCycleAt = cycle.timestamp;
-
-  console.log(`[Engine] Cycle #${cycleNum}: ${status} — ${summary}`);
-  return cycle;
 }
+
+async function runAnalysisCycle(): Promise<CycleResult> {
+  const startTime = Date.now();
+  engineState.cycleCount += 1;
+  const cycleNum = engineState.cycleCount;
+
+  try {
+    // ── Phase 1: Quant Analysis ──
+    const analyses = await Promise.all(TRACKED_INSTRUMENTS.map(analyzeInstrument));
+    const valid = analyses.filter((a): a is InstrumentAnalysis => a !== null);
+
+    if (valid.length === 0) {
+      const cycle: CycleResult = {
+        id: `cycle-${cycleNum}-${Date.now()}`, cycleNumber: cycleNum,
+        timestamp: new Date().toISOString(), status: 'error',
+        durationMs: Date.now() - startTime,
+        agents: { quantBias: 'neutral', quantConfidence: 0, quantSignals: [], sentimentScore: 0, sentimentLabel: 'neutral', macroRegime: 'neutral', macroRiskLevel: 'normal' },
+        decisions: [], riskAssessment: { portfolioHeat: 0, drawdownPercent: 0, approved: 0, rejected: 0 },
+        executions: [], summary: 'Failed to fetch market data — retrying next cycle.',
+      };
+      pushCycle(cycle);
+      return cycle;
+    }
+
+    // Overall bias from SMA position
+    const bullishCount = valid.filter(a => a.priceAboveSma).length;
+    const quantBias: CycleAgentOutput['quantBias'] =
+      bullishCount > valid.length / 2 ? 'bullish' :
+      bullishCount < valid.length / 2 ? 'bearish' : 'neutral';
+
+    // Aggregate signals
+    const allSignals = valid.flatMap(a =>
+      a.signals.map(s => ({ instrument: a.instrument, direction: s.direction, indicator: s.indicator, confidence: s.confidence }))
+    );
+    const avgConfidence = allSignals.length > 0
+      ? allSignals.reduce((sum, s) => sum + s.confidence, 0) / allSignals.length
+      : 0;
+
+    // ── Phase 2: Sentiment (24h change proxy) ──
+    const avgChange = valid.reduce((sum, a) => sum + a.change24h, 0) / valid.length;
+    const sentimentScore = Math.round(Math.max(-1, Math.min(1, avgChange * 5)) * 100) / 100;
+    const sentimentLabel: CycleAgentOutput['sentimentLabel'] =
+      sentimentScore > 0.2 ? 'bullish' : sentimentScore < -0.2 ? 'bearish' : 'neutral';
+
+    // ── Phase 3: Macro Regime ──
+    const avgRsi = valid.reduce((sum, a) => sum + a.rsiValue, 0) / valid.length;
+    let macroRegime: CycleAgentOutput['macroRegime'] = 'neutral';
+    let macroRiskLevel: CycleAgentOutput['macroRiskLevel'] = 'normal';
+
+    if (avgRsi > 65 && avgChange > 0.02) {
+      macroRegime = 'risk-on'; macroRiskLevel = 'low';
+    } else if (avgRsi < 25 && avgChange < -0.05) {
+      macroRegime = 'risk-off'; macroRiskLevel = 'extreme';
+    } else if (avgRsi < 35 && avgChange < -0.02) {
+      macroRegime = 'risk-off'; macroRiskLevel = 'elevated';
+    } else if (Math.abs(avgChange) > 0.01) {
+      macroRegime = 'transition'; macroRiskLevel = 'normal';
+    }
+
+    // ── Phase 4: Risk Assessment & Decisions ──
+    const maxRisk = 1.0; // 1% per trade
+    const maxHeat = 6.0;
+    let heat = 0;
+    const decisions: CycleDecision[] = [];
+
+    for (const sig of allSignals) {
+      if (sig.confidence < 0.6) continue;
+      let approved = true;
+      let rejectionReason: string | undefined;
+
+      if (macroRiskLevel === 'extreme') {
+        approved = false;
+        rejectionReason = 'Macro risk extreme — all trades halted';
+      } else if (heat + maxRisk > maxHeat) {
+        approved = false;
+        rejectionReason = `Portfolio heat would exceed ${maxHeat}% limit`;
+      }
+
+      decisions.push({ instrument: sig.instrument, direction: sig.direction, confidence: sig.confidence, approved, rejectionReason });
+      if (approved) heat += maxRisk;
+    }
+
+    const approvedD = decisions.filter(d => d.approved);
+    const rejectedD = decisions.filter(d => !d.approved);
+
+    // ── Phase 5: Paper Execution at real prices ──
+    const executions: CycleExecution[] = approvedD.map(d => {
+      const analysis = valid.find(a => a.instrument === d.instrument);
+      const price = analysis?.price ?? 0;
+      return {
+        instrument: d.instrument,
+        side: (d.direction === 'long' ? 'buy' : 'sell') as 'buy' | 'sell',
+        quantity: Math.round((100 / Math.max(price, 1)) * 1000) / 1000,
+        price: Math.round(price * 100) / 100,
+        status: 'simulated' as const,
+        slippage: Math.round(Math.random() * 3 * 10) / 10,
+      };
+    });
+
+    // ── Build Result ──
+    const durationMs = Date.now() - startTime;
+    const status: CycleResult['status'] =
+      macroRiskLevel === 'extreme' ? 'circuit_breaker' :
+      allSignals.length === 0 ? 'no_signals' : 'completed';
+
+    let summary = '';
+    const prices = valid.map(a => `${a.instrument} $${a.price.toLocaleString()}`).join(', ');
+
+    if (status === 'circuit_breaker') {
+      summary = `Circuit breaker — extreme risk (RSI avg ${avgRsi.toFixed(0)}, 24h ${(avgChange * 100).toFixed(1)}%). ${prices}.`;
+    } else if (status === 'no_signals') {
+      summary = `No signals. ${prices}. RSI avg ${avgRsi.toFixed(0)}, ${macroRegime}.`;
+    } else if (executions.length > 0) {
+      const e = executions[0];
+      const more = executions.length > 1 ? ` (+${executions.length - 1} more)` : '';
+      summary = `${e.side.toUpperCase()} ${e.quantity} ${e.instrument} @ $${e.price.toLocaleString()}${more} — ${quantBias}, RSI ${avgRsi.toFixed(0)}, ${macroRegime}`;
+    } else {
+      summary = `${rejectedD.length} signal(s) risk-rejected. ${quantBias} bias, ${prices}.`;
+    }
+
+    const cycle: CycleResult = {
+      id: `cycle-${cycleNum}-${Date.now()}`,
+      cycleNumber: cycleNum,
+      timestamp: new Date().toISOString(),
+      status,
+      durationMs,
+      agents: {
+        quantBias,
+        quantConfidence: Math.round(avgConfidence * 100) / 100,
+        quantSignals: allSignals,
+        sentimentScore,
+        sentimentLabel,
+        macroRegime,
+        macroRiskLevel,
+      },
+      decisions,
+      riskAssessment: {
+        portfolioHeat: Math.round(heat * 100) / 100,
+        drawdownPercent: 0,
+        approved: approvedD.length,
+        rejected: rejectedD.length,
+      },
+      executions,
+      summary,
+    };
+
+    pushCycle(cycle);
+    console.log(`[Engine] Cycle #${cycleNum}: ${status} — ${summary}`);
+    return cycle;
+  } catch (err) {
+    const cycle: CycleResult = {
+      id: `cycle-${cycleNum}-${Date.now()}`, cycleNumber: cycleNum,
+      timestamp: new Date().toISOString(), status: 'error',
+      durationMs: Date.now() - startTime,
+      agents: { quantBias: 'neutral', quantConfidence: 0, quantSignals: [], sentimentScore: 0, sentimentLabel: 'neutral', macroRegime: 'neutral', macroRiskLevel: 'normal' },
+      decisions: [], riskAssessment: { portfolioHeat: 0, drawdownPercent: 0, approved: 0, rejected: 0 },
+      executions: [], summary: `Error: ${(err as Error).message}`,
+    };
+    pushCycle(cycle);
+    console.error(`[Engine] Cycle #${cycleNum} error:`, err);
+    return cycle;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cycle Loop
+// ---------------------------------------------------------------------------
 
 function startCycleLoop(): void {
   if (cycleTimer) return;
-  generateCycle();
+  runAnalysisCycle().catch(err => console.error('[Engine] First cycle error:', err));
   cycleTimer = setInterval(() => {
-    if (engineState.status === 'running') generateCycle();
+    if (engineState.status === 'running') {
+      runAnalysisCycle().catch(err => console.error('[Engine] Cycle error:', err));
+    }
   }, engineState.config.cycleIntervalMs);
 }
 

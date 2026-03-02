@@ -13,15 +13,22 @@ class ApiClient {
   }
 
   private buildUrl(path: string, params?: Record<string, string | number | boolean | undefined>): string {
-    const url = new URL(path, this.baseUrl);
+    // Build path by joining baseUrl + path (handles relative base like '/api/v1')
+    const base = this.baseUrl.endsWith('/') ? this.baseUrl.slice(0, -1) : this.baseUrl;
+    const suffix = path.startsWith('/') ? path : `/${path}`;
+    let fullUrl = `${base}${suffix}`;
+
     if (params) {
+      const searchParams = new URLSearchParams();
       Object.entries(params).forEach(([key, value]) => {
         if (value !== undefined) {
-          url.searchParams.set(key, String(value));
+          searchParams.set(key, String(value));
         }
       });
+      const qs = searchParams.toString();
+      if (qs) fullUrl += `?${qs}`;
     }
-    return url.toString();
+    return fullUrl;
   }
 
   async request<T>(path: string, options: RequestOptions = {}): Promise<T> {

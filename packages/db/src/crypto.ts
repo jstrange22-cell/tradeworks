@@ -96,10 +96,14 @@ export function decrypt(encrypted: Buffer, masterKey: string): string {
 function getEncryptionSecret(): string {
   const secret = process.env.API_KEY_ENCRYPTION_SECRET;
   if (!secret) {
-    throw new Error(
-      'API_KEY_ENCRYPTION_SECRET environment variable is not set. ' +
-        'Cannot encrypt or decrypt API keys without it.',
-    );
+    // Use a dev-only default in non-production environments
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'API_KEY_ENCRYPTION_SECRET environment variable is not set. ' +
+          'Cannot encrypt or decrypt API keys without it.',
+      );
+    }
+    return 'tradeworks-dev-encryption-key-not-for-production';
   }
   return secret;
 }

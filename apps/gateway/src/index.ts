@@ -53,7 +53,13 @@ app.use('/api/v1/market/instruments', instrumentsRouter);
 
 // --- Development Routes (no auth for local dashboard) ---
 // TODO: Add authMiddleware back when JWT auth is configured
-const devAuth = process.env.NODE_ENV === 'production' ? authMiddleware : (_req: express.Request, _res: express.Response, next: express.NextFunction) => next();
+const devAuth = process.env.NODE_ENV === 'production'
+  ? authMiddleware
+  : (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+      // Inject a dev user so requireRole() passes in development
+      req.user = { id: 'dev-user', email: 'dev@tradeworks.local', role: 'admin', iat: 0, exp: 0 };
+      next();
+    };
 
 app.use('/api/v1/portfolio', devAuth, portfolioRouter);
 app.use('/api/v1/trades', devAuth, tradesRouter);

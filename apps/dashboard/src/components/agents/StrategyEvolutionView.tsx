@@ -25,7 +25,7 @@ export function StrategyEvolutionView() {
   const { data } = useQuery<CyclesResponse>({
     queryKey: ['engine-cycles'],
     queryFn: () => apiClient.get<CyclesResponse>('/engine/cycles', { limit: 50 }),
-    refetchInterval: 15_000,
+    refetchInterval: 60_000,
   });
 
   const cycles = data?.data ?? [];

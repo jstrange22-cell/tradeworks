@@ -23,6 +23,26 @@ import {
 
 export const strategiesRouter: RouterType = Router();
 
+// ---------------------------------------------------------------------------
+// In-memory fallback store (used when PostgreSQL is unavailable)
+// ---------------------------------------------------------------------------
+interface MemoryStrategy {
+  id: string;
+  name: string;
+  market: string;
+  strategyType: string;
+  enabled: boolean;
+  params: Record<string, unknown>;
+  riskPerTrade: string | null;
+  maxAllocation: string | null;
+  minRiskReward: string | null;
+  createdAt: string;
+  updatedAt: string;
+  [key: string]: unknown;
+}
+
+const memoryStrategies = new Map<string, MemoryStrategy>();
+
 /**
  * Strategy schema.
  */
@@ -101,9 +121,17 @@ strategiesRouter.get('/', async (_req, res) => {
     let strategies: Strategy[] = [];
     try {
       strategies = await getStrategies();
-    } catch (dbError) {
-      console.warn('[Strategies] DB error listing strategies, falling back to empty list:', dbError);
-      strategies = [];
+    } catch {
+      // DB unavailable — use in-memory store
+      strategies = [...memoryStrategies.values()] as unknown as Strategy[];
+    }
+
+    // Merge in-memory strategies that aren't in the DB result
+    const dbIds = new Set(strategies.map(s => s.id));
+    for (const memStrat of memoryStrategies.values()) {
+      if (!dbIds.has(memStrat.id)) {
+        strategies.push(memStrat as unknown as Strategy);
+      }
     }
 
     res.json({
@@ -116,6 +144,165 @@ strategiesRouter.get('/', async (_req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Strategy Templates
+// ---------------------------------------------------------------------------
+
+const STRATEGY_TEMPLATES = [
+  {
+    id: 'tpl-btc-trend',
+    name: 'BTC Trend Follower',
+    description: 'Follows Bitcoin momentum using SMA crossovers. Goes long when price crosses above SMA 20 with SMA 50 confirming the trend direction.',
+    type: 'momentum',
+    strategyType: 'momentum',
+    market: 'crypto',
+    instruments: ['BTC-USD'],
+    timeframes: ['1h', '4h'],
+    parameters: { fastPeriod: 20, slowPeriod: 50, threshold: 0.02, rsiOverbought: 75, rsiOversold: 30 },
+    riskOverrides: { maxRiskPercent: 1.0, maxPositionSize: 0.5 },
+    difficulty: 'beginner' as const,
+  },
+  {
+    id: 'tpl-eth-mean-reversion',
+    name: 'ETH Mean Reversion',
+    description: 'Buys ETH when price dips below the lower Bollinger Band and sells when it returns to the mean. Profits from price snapping back to average.',
+    type: 'mean_reversion',
+    strategyType: 'mean_reversion',
+    market: 'crypto',
+    instruments: ['ETH-USD'],
+    timeframes: ['1h', '4h'],
+    parameters: { period: 20, stdDev: 2.0, entryDeviation: -2.0, exitDeviation: 0 },
+    riskOverrides: { maxRiskPercent: 0.8, maxPositionSize: 0.3 },
+    difficulty: 'beginner' as const,
+  },
+  {
+    id: 'tpl-large-cap-momentum',
+    name: 'Large Cap Momentum',
+    description: 'Identifies top US stocks by 90-day price momentum. Buys the strongest performers and rides the trend. Ideal for capturing equity rallies.',
+    type: 'momentum',
+    strategyType: 'momentum',
+    market: 'equities',
+    instruments: ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA'],
+    timeframes: ['1d'],
+    parameters: { lookbackDays: 90, topN: 5, rebalanceFrequency: '7d', minMomentum: 0.05 },
+    riskOverrides: { maxRiskPercent: 1.0, maxPositionSize: 0.15 },
+    difficulty: 'intermediate' as const,
+  },
+  {
+    id: 'tpl-blue-chip-value',
+    name: 'Blue Chip Value',
+    description: 'Buys undervalued S&P 500 stocks with low P/E ratios and high dividend yields. Conservative strategy for steady returns and income.',
+    type: 'mean_reversion',
+    strategyType: 'mean_reversion',
+    market: 'equities',
+    instruments: ['SPY', 'VTI', 'JNJ', 'PG', 'KO', 'PEP'],
+    timeframes: ['1d'],
+    parameters: { maxPERatio: 15, minDividendYield: 2.0, rebalanceFrequency: '30d' },
+    riskOverrides: { maxRiskPercent: 1.5, maxPositionSize: 0.2 },
+    difficulty: 'beginner' as const,
+  },
+  {
+    id: 'tpl-crypto-breakout',
+    name: 'Crypto Breakout',
+    description: 'Detects consolidation breakouts using ATR volatility channels. Enters when price breaks out of a tight range with volume confirmation.',
+    type: 'breakout',
+    strategyType: 'custom',
+    market: 'crypto',
+    instruments: ['BTC-USD', 'ETH-USD', 'SOL-USD'],
+    timeframes: ['15m', '1h'],
+    parameters: { atrPeriod: 14, atrMultiplier: 1.5, consolidationPeriod: 20, volumeThreshold: 1.5 },
+    riskOverrides: { maxRiskPercent: 0.8, maxPositionSize: 0.3 },
+    difficulty: 'intermediate' as const,
+  },
+  {
+    id: 'tpl-multi-asset-balanced',
+    name: 'Multi-Asset Balanced',
+    description: 'Diversified 60/40 across crypto and equities with automatic rebalancing. Lower risk through diversification across asset classes.',
+    type: 'custom',
+    strategyType: 'custom',
+    market: 'all',
+    instruments: ['BTC-USD', 'ETH-USD', 'SPY', 'QQQ'],
+    timeframes: ['1d'],
+    parameters: { cryptoAllocation: 0.4, equityAllocation: 0.6, rebalancePeriod: '7d', rebalanceThreshold: 0.05 },
+    riskOverrides: { maxRiskPercent: 1.0, maxPositionSize: 0.3 },
+    difficulty: 'beginner' as const,
+  },
+];
+
+/**
+ * GET /api/v1/strategies/templates
+ * Returns pre-built strategy templates.
+ */
+strategiesRouter.get('/templates', (_req, res) => {
+  res.json({ data: STRATEGY_TEMPLATES });
+});
+
+/**
+ * POST /api/v1/strategies/from-template
+ * Clone a template as a new user strategy.
+ */
+strategiesRouter.post('/from-template', requireRole('admin', 'trader'), async (req, res) => {
+  try {
+    const { templateId, name: overrideName } = req.body as { templateId: string; name?: string };
+    const template = STRATEGY_TEMPLATES.find(t => t.id === templateId);
+    if (!template) {
+      res.status(404).json({ error: 'Template not found' });
+      return;
+    }
+
+    const stratName = overrideName?.trim() || template.name;
+
+    let strategy;
+    try {
+      strategy = await createStrategy({
+        name: stratName,
+        market: (template.market === 'all' ? 'crypto' : template.market) as 'crypto' | 'equities' | 'forex' | 'futures' | 'options',
+        strategyType: template.strategyType as NewStrategy['strategyType'],
+        params: {
+          ...template.parameters,
+          instruments: template.instruments,
+          timeframes: template.timeframes,
+          description: template.description,
+          zodType: template.type,
+          templateId: template.id,
+        },
+        enabled: true,
+        riskPerTrade: template.riskOverrides.maxRiskPercent != null
+          ? String(template.riskOverrides.maxRiskPercent)
+          : undefined,
+      });
+    } catch (dbError) {
+      console.warn('[Strategies] DB unavailable, saving to in-memory store');
+      strategy = {
+        id: `strat-${Date.now()}`,
+        name: stratName,
+        market: template.market,
+        strategyType: template.strategyType,
+        enabled: true,
+        params: {
+          ...template.parameters,
+          instruments: template.instruments,
+          timeframes: template.timeframes,
+          description: template.description,
+          zodType: template.type,
+          templateId: template.id,
+        },
+        riskPerTrade: String(template.riskOverrides.maxRiskPercent),
+        maxAllocation: null,
+        minRiskReward: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      memoryStrategies.set(strategy.id, strategy as MemoryStrategy);
+    }
+
+    res.status(201).json({ data: strategy, message: `Strategy "${stratName}" created from template` });
+  } catch (error) {
+    console.error('[Strategies] Error creating from template:', error);
+    res.status(500).json({ error: 'Failed to create strategy from template' });
+  }
+});
+
 /**
  * GET /api/v1/strategies/:id
  * Get a single strategy by ID.
@@ -125,9 +312,9 @@ strategiesRouter.get('/:id', async (req, res) => {
     let strategy;
     try {
       strategy = await getStrategy(req.params.id as string);
-    } catch (dbError) {
-      console.warn('[Strategies] DB error fetching strategy, returning 404:', dbError);
-      strategy = undefined;
+    } catch {
+      // DB unavailable — check in-memory store
+      strategy = memoryStrategies.get(req.params.id as string) as unknown as Strategy | undefined;
     }
 
     if (!strategy) {
@@ -163,20 +350,22 @@ strategiesRouter.post('/', requireRole('admin', 'trader'), async (req, res) => {
           : undefined,
       });
     } catch (dbError) {
-      console.warn('[Strategies] DB error creating strategy, using stub fallback:', dbError);
+      console.warn('[Strategies] DB unavailable, saving to in-memory store');
       strategy = {
         id: `strat-${Date.now()}`,
-        ...body,
-        createdBy: req.user!.id,
+        name: body.name,
+        market: 'crypto',
+        strategyType: mapStrategyType(body.type),
+        enabled: body.active,
+        params: buildParams(body),
+        riskPerTrade: body.riskOverrides?.maxRiskPercent != null
+          ? String(body.riskOverrides.maxRiskPercent) : null,
+        maxAllocation: null,
+        minRiskReward: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        performance: {
-          totalTrades: 0,
-          winRate: 0,
-          totalPnl: 0,
-          sharpeRatio: 0,
-        },
       };
+      memoryStrategies.set(strategy.id, strategy as MemoryStrategy);
     }
 
     res.status(201).json({
@@ -215,14 +404,21 @@ strategiesRouter.put('/:id', requireRole('admin', 'trader'), async (req, res) =>
           ? String(body.riskOverrides.maxRiskPercent)
           : undefined,
       });
-    } catch (dbError) {
-      console.warn('[Strategies] DB error updating strategy, using stub fallback:', dbError);
+    } catch {
+      console.warn('[Strategies] DB unavailable, updating in-memory store');
+      const existing = memoryStrategies.get(req.params.id as string);
       updatedStrategy = {
+        ...(existing ?? {}),
         id: req.params.id as string,
-        ...body,
+        name: body.name,
+        strategyType: mapStrategyType(body.type),
+        enabled: body.active,
+        params: buildParams(body),
+        riskPerTrade: body.riskOverrides?.maxRiskPercent != null
+          ? String(body.riskOverrides.maxRiskPercent) : null,
         updatedAt: new Date().toISOString(),
-        updatedBy: req.user!.id,
       };
+      memoryStrategies.set(req.params.id as string, updatedStrategy as MemoryStrategy);
     }
 
     res.json({
@@ -250,9 +446,10 @@ strategiesRouter.delete('/:id', async (req, res) => {
   try {
     try {
       await deleteStrategy(req.params.id as string);
-    } catch (dbError) {
-      console.warn('[Strategies] DB error deleting strategy:', dbError);
+    } catch {
+      // DB unavailable — just remove from memory
     }
+    memoryStrategies.delete(req.params.id as string);
     res.status(204).send();
   } catch (error) {
     console.error('[Strategies] Error deleting strategy:', error);
@@ -301,13 +498,20 @@ strategiesRouter.patch('/:id', requireRole('admin', 'trader'), async (req, res) 
 
         updatedStrategy = await updateStrategy(req.params.id as string, updateData);
       }
-    } catch (dbError) {
-      console.warn('[Strategies] DB error patching strategy, using stub fallback:', dbError);
-      updatedStrategy = {
+    } catch {
+      console.warn('[Strategies] DB unavailable, patching in-memory store');
+      const existing = memoryStrategies.get(req.params.id as string);
+      if (existing) {
+        if (body.active !== undefined) existing.enabled = body.active;
+        if (body.name !== undefined) existing.name = body.name;
+        if (body.parameters) existing.params = { ...existing.params, ...body.parameters };
+        existing.updatedAt = new Date().toISOString();
+        memoryStrategies.set(existing.id, existing);
+      }
+      updatedStrategy = existing ?? {
         id: req.params.id as string,
         ...body,
         updatedAt: new Date().toISOString(),
-        updatedBy: req.user!.id,
       };
     }
 

@@ -19,6 +19,21 @@ import {
 
 export const apiKeysRouter: RouterType = Router();
 
+// ---------------------------------------------------------------------------
+// In-memory fallback store (used when PostgreSQL is unavailable)
+// ---------------------------------------------------------------------------
+interface MemoryApiKey {
+  id: string;
+  service: string;
+  keyName: string;
+  encryptedKey: ReturnType<typeof encryptApiKey>;
+  encryptedSecret?: ReturnType<typeof encryptApiKey>;
+  environment: string;
+  createdAt: string;
+}
+
+const memoryApiKeys = new Map<string, MemoryApiKey>();
+
 /**
  * API Key creation schema.
  */
@@ -58,9 +73,17 @@ apiKeysRouter.get('/', async (_req, res) => {
     let keys: Awaited<ReturnType<typeof getApiKeys>> = [];
     try {
       keys = await getApiKeys();
-    } catch (dbError) {
-      console.warn('[ApiKeys] DB error listing keys, falling back to empty list:', dbError);
-      keys = [];
+    } catch {
+      // DB unavailable — use in-memory store
+      keys = [...memoryApiKeys.values()] as unknown as Awaited<ReturnType<typeof getApiKeys>>;
+    }
+
+    // Merge in-memory keys not already in DB results
+    const dbIds = new Set(keys.map(k => k.id));
+    for (const memKey of memoryApiKeys.values()) {
+      if (!dbIds.has(memKey.id)) {
+        keys.push(memKey as unknown as (typeof keys)[number]);
+      }
     }
 
     const masked = keys.map((key) => ({
@@ -99,16 +122,19 @@ apiKeysRouter.post('/', async (req, res) => {
         encryptedSecret,
         environment: body.environment,
       });
-    } catch (dbError) {
-      console.warn('[ApiKeys] DB error creating key, using stub fallback:', dbError);
-      created = {
+    } catch {
+      console.warn('[ApiKeys] DB unavailable, saving to in-memory store');
+      const memKey: MemoryApiKey = {
         id: `key-${Date.now()}`,
         service: body.service,
         keyName: body.keyName,
-        maskedKey: maskKey(body.keyName),
+        encryptedKey: encryptedKey,
+        encryptedSecret: encryptedSecret,
         environment: body.environment,
         createdAt: new Date().toISOString(),
       };
+      memoryApiKeys.set(memKey.id, memKey);
+      created = memKey;
     }
 
     res.status(201).json({
@@ -143,9 +169,10 @@ apiKeysRouter.delete('/:id', async (req, res) => {
   try {
     try {
       await deleteApiKey(req.params.id as string);
-    } catch (dbError) {
-      console.warn('[ApiKeys] DB error deleting key:', dbError);
+    } catch {
+      // DB unavailable
     }
+    memoryApiKeys.delete(req.params.id as string);
 
     res.status(204).send();
   } catch (error) {
@@ -163,9 +190,9 @@ apiKeysRouter.post('/:id/test', async (req, res) => {
     let key;
     try {
       key = await getApiKey(req.params.id as string);
-    } catch (dbError) {
-      console.warn('[ApiKeys] DB error fetching key for test:', dbError);
-      key = undefined;
+    } catch {
+      // DB unavailable — check in-memory store
+      key = memoryApiKeys.get(req.params.id as string) as unknown as Awaited<ReturnType<typeof getApiKey>> | undefined;
     }
 
     if (!key) {

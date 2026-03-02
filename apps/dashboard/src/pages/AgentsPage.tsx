@@ -127,14 +127,15 @@ export function AgentsPage() {
   const { data: engineData } = useQuery({
     queryKey: ['engine-status'],
     queryFn: () => apiClient.get<{ data: EngineStatus }>('/engine/status'),
-    refetchInterval: 5_000,
+    refetchInterval: 15_000,
   });
   const engine = engineData?.data;
+  const isRunning = engine?.status === 'running';
 
   const { data: agentData } = useQuery({
     queryKey: ['agents-status-api'],
     queryFn: () => apiClient.get<{ data: AgentStatusInfo[] }>('/agents/status'),
-    refetchInterval: 10_000,
+    refetchInterval: isRunning ? 15_000 : false,
   });
   const agents = agentData?.data ?? [];
 
@@ -150,8 +151,6 @@ export function AgentsPage() {
     mutationFn: () => apiClient.post('/engine/stop', {}),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['engine-status'] }),
   });
-
-  const isRunning = engine?.status === 'running';
 
   return (
     <div className="space-y-6">

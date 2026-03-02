@@ -120,19 +120,19 @@ export function ChartsPage() {
   const { data: candleData, isLoading, error } = useQuery({
     queryKey: ['candles', instrument, timeframe],
     queryFn: () => getCandlesticks(instrument, timeframe),
-    refetchInterval: timeframe === '1m' ? 10_000 : 30_000,
+    refetchInterval: 60_000,
   });
 
   const { data: bookData } = useQuery({
     queryKey: ['orderbook', instrument],
     queryFn: () => getOrderBook(instrument, 10),
-    refetchInterval: 5_000,
+    refetchInterval: 15_000,
   });
 
   const { data: tradesData } = useQuery({
     queryKey: ['recent-trades', instrument],
     queryFn: () => getRecentTrades(instrument, 20),
-    refetchInterval: 5_000,
+    refetchInterval: 15_000,
   });
 
   // Compute sorted candle data
