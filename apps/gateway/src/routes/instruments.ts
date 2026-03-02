@@ -66,22 +66,45 @@ async function fetchCryptoInstruments(): Promise<InstrumentInfo[]> {
     // The Crypto.com API returns instruments in result.data
     const rawInstruments = json?.result?.data ?? json?.result?.instruments ?? [];
 
+    // Build a set of base currencies that have _USDT pairs (preferred)
+    const usdtBases = new Set<string>();
+    for (const inst of rawInstruments) {
+      const rec = inst as Record<string, string>;
+      const name = rec.instrument_name ?? rec.symbol ?? '';
+      if (name.endsWith('_USDT')) {
+        usdtBases.add(name.replace('_USDT', ''));
+      }
+    }
+
+    // Deduplicate: skip _USD pairs when a _USDT pair exists for same base
+    const seen = new Map<string, InstrumentInfo>();
     for (const inst of rawInstruments) {
       const rec = inst as Record<string, string>;
       const name = rec.instrument_name ?? rec.symbol ?? '';
       if (!name) continue;
 
-      // Convert USDT pairs to display format: BTC_USDT -> BTC-USD
+      // Skip _USD pair if we already have a _USDT pair for the same base
+      if (name.endsWith('_USD') && !name.endsWith('_USDT')) {
+        const base = name.replace('_USD', '');
+        if (usdtBases.has(base)) continue;
+      }
+
+      // Convert to display format: BTC_USDT -> BTC-USD
       const display = name.replace('_USDT', '-USD').replace('_USD', '-USD').replace('_', '-');
       const base = rec.base_currency ?? display.split(/[-_]/)[0] ?? '';
 
-      instruments.push({
+      // Final dedup by symbol
+      if (seen.has(display)) continue;
+
+      const info: InstrumentInfo = {
         symbol: display,
         displayName: `${base} / USD`,
         market: 'crypto',
         exchange: 'crypto.com',
         tradable: true,
-      });
+      };
+      seen.set(display, info);
+      instruments.push(info);
     }
 
     setCache('crypto', instruments);

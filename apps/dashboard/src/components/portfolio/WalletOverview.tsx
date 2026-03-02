@@ -16,6 +16,7 @@ interface ExchangeBalance {
   error?: string;
   assets: AssetBalance[];
   totalValueUsd: number;
+  isSandbox?: boolean;
 }
 
 interface BalancesResponse {
@@ -130,6 +131,11 @@ export function WalletOverview() {
                     <span className="rounded bg-slate-700/50 px-1.5 py-0.5 text-[10px] font-medium text-slate-400">
                       {envLabel}
                     </span>
+                    {exchange.isSandbox && (
+                      <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-400 ring-1 ring-amber-500/20">
+                        DEMO DATA
+                      </span>
+                    )}
                   </div>
                   {info && (
                     <a

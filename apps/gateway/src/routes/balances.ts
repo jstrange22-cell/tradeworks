@@ -1,5 +1,6 @@
 import { Router, type Router as RouterType } from 'express';
 import { getApiKeysByService, decryptApiKey } from '@tradeworks/db';
+import { getMemoryKeysByService } from './api-keys.js';
 
 /**
  * Exchange balance endpoints.
@@ -31,6 +32,7 @@ interface ExchangeBalance {
   error?: string;
   assets: AssetBalance[];
   totalValueUsd: number;
+  isSandbox?: boolean;
 }
 
 // ── Simulated balances for sandbox mode ────────────────────────────────
@@ -228,7 +230,14 @@ balancesRouter.get('/', async (_req, res) => {
 
   for (const config of exchangeConfigs) {
     try {
-      const keys = await getApiKeysByService(config.service);
+      let keys;
+      try {
+        keys = await getApiKeysByService(config.service);
+      } catch {
+        // DB unavailable — try in-memory/disk-persisted store
+        const memKeys = getMemoryKeysByService(config.service);
+        keys = memKeys as unknown as Awaited<ReturnType<typeof getApiKeysByService>>;
+      }
 
       if (keys.length === 0) {
         exchanges.push({
@@ -292,6 +301,7 @@ balancesRouter.get('/', async (_req, res) => {
         connected: true,
         assets,
         totalValueUsd,
+        isSandbox,
       });
     } catch (error) {
       console.error(`[Balances] Error fetching ${config.label} balances:`, error);

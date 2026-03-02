@@ -1,5 +1,8 @@
 import { Router, type Router as RouterType } from 'express';
 import { z } from 'zod';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   getApiKeys,
   getApiKey,
@@ -20,7 +23,7 @@ import {
 export const apiKeysRouter: RouterType = Router();
 
 // ---------------------------------------------------------------------------
-// In-memory fallback store (used when PostgreSQL is unavailable)
+// In-memory store with file persistence (survives server restarts)
 // ---------------------------------------------------------------------------
 interface MemoryApiKey {
   id: string;
@@ -32,7 +35,74 @@ interface MemoryApiKey {
   createdAt: string;
 }
 
-const memoryApiKeys = new Map<string, MemoryApiKey>();
+// Persistence directory — apps/gateway/data/
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const DATA_DIR = join(__dirname, '..', '..', 'data');
+const KEYS_FILE = join(DATA_DIR, 'api-keys.json');
+
+function ensureDataDir(): void {
+  if (!existsSync(DATA_DIR)) {
+    mkdirSync(DATA_DIR, { recursive: true });
+  }
+}
+
+function loadKeysFromDisk(): Map<string, MemoryApiKey> {
+  try {
+    ensureDataDir();
+    if (!existsSync(KEYS_FILE)) return new Map();
+    const raw = readFileSync(KEYS_FILE, 'utf-8');
+    const entries = JSON.parse(raw) as Array<[string, Record<string, unknown>]>;
+    return new Map(entries.map(([id, key]) => [
+      id,
+      {
+        ...key,
+        encryptedKey: Buffer.from(key.encryptedKey as string, 'base64'),
+        encryptedSecret: key.encryptedSecret
+          ? Buffer.from(key.encryptedSecret as string, 'base64')
+          : undefined,
+      } as MemoryApiKey,
+    ]));
+  } catch (err) {
+    console.warn('[ApiKeys] Failed to load keys from disk:', err);
+    return new Map();
+  }
+}
+
+function saveKeysToDisk(keys: Map<string, MemoryApiKey>): void {
+  try {
+    ensureDataDir();
+    const entries = Array.from(keys.entries()).map(([id, key]) => [
+      id,
+      {
+        ...key,
+        encryptedKey: Buffer.isBuffer(key.encryptedKey)
+          ? (key.encryptedKey as Buffer).toString('base64')
+          : key.encryptedKey,
+        encryptedSecret: key.encryptedSecret && Buffer.isBuffer(key.encryptedSecret)
+          ? (key.encryptedSecret as Buffer).toString('base64')
+          : key.encryptedSecret,
+      },
+    ]);
+    writeFileSync(KEYS_FILE, JSON.stringify(entries, null, 2));
+  } catch (err) {
+    console.error('[ApiKeys] Failed to save keys to disk:', err);
+  }
+}
+
+// Load persisted keys on startup
+const memoryApiKeys = loadKeysFromDisk();
+if (memoryApiKeys.size > 0) {
+  console.log(`[ApiKeys] Loaded ${memoryApiKeys.size} key(s) from disk`);
+}
+
+/**
+ * Get API keys from in-memory store by service name.
+ * Used by balances.ts when DB is unavailable.
+ */
+export function getMemoryKeysByService(service: string): MemoryApiKey[] {
+  return [...memoryApiKeys.values()].filter(k => k.service === service);
+}
 
 /**
  * API Key creation schema.
@@ -134,6 +204,7 @@ apiKeysRouter.post('/', async (req, res) => {
         createdAt: new Date().toISOString(),
       };
       memoryApiKeys.set(memKey.id, memKey);
+      saveKeysToDisk(memoryApiKeys);
       created = memKey;
     }
 
@@ -173,6 +244,7 @@ apiKeysRouter.delete('/:id', async (req, res) => {
       // DB unavailable
     }
     memoryApiKeys.delete(req.params.id as string);
+    saveKeysToDisk(memoryApiKeys);
 
     res.status(204).send();
   } catch (error) {

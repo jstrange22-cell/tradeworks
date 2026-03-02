@@ -22,23 +22,28 @@ export function Header() {
         <div className="text-center">
           <div className="text-xs text-slate-500">Total Equity</div>
           <div className="text-lg font-bold text-slate-100">
-            ${equity.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            {equity > 0
+              ? `$${equity.toLocaleString('en-US', { minimumFractionDigits: 2 })}`
+              : <span className="text-slate-500">No data</span>
+            }
           </div>
         </div>
 
-        <div
-          className={`rounded-lg px-3 py-1.5 ${pnlBg}`}
-        >
-          <div className="text-xs text-slate-500">Daily P&L</div>
-          <div className={`text-sm font-semibold ${pnlColor}`}>
-            {dailyPnl >= 0 ? '+' : ''}
-            ${Math.abs(dailyPnl).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-            <span className="ml-1 text-xs">
-              ({dailyPnlPercent >= 0 ? '+' : ''}
-              {dailyPnlPercent.toFixed(2)}%)
-            </span>
+        {equity > 0 && (
+          <div
+            className={`rounded-lg px-3 py-1.5 ${pnlBg}`}
+          >
+            <div className="text-xs text-slate-500">Daily P&L</div>
+            <div className={`text-sm font-semibold ${pnlColor}`}>
+              {dailyPnl >= 0 ? '+' : ''}
+              ${Math.abs(dailyPnl).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              <span className="ml-1 text-xs">
+                ({dailyPnlPercent >= 0 ? '+' : ''}
+                {dailyPnlPercent.toFixed(2)}%)
+              </span>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Right: Status indicators */}

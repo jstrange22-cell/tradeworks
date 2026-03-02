@@ -112,28 +112,19 @@ describe('GET /api/v1/portfolio', () => {
     expect(typeof res.body.totalTrades).toBe('number');
   });
 
-  it('should return positions as array', async () => {
+  it('should return positions as empty array when no DB', async () => {
     const res = await request(app).get('/api/v1/portfolio');
 
     expect(Array.isArray(res.body.openPositions)).toBe(true);
-    expect(res.body.openPositions.length).toBeGreaterThan(0);
-
-    const pos = res.body.openPositions[0];
-    expect(pos).toHaveProperty('id');
-    expect(pos).toHaveProperty('instrument');
-    expect(pos).toHaveProperty('side');
-    expect(pos).toHaveProperty('quantity');
+    expect(res.body.openPositions.length).toBe(0);
+    expect(res.body.noData).toBe(true);
   });
 
-  it('should return equity curve as array', async () => {
+  it('should return equity curve as empty array when no DB', async () => {
     const res = await request(app).get('/api/v1/portfolio');
 
     expect(Array.isArray(res.body.equityCurve)).toBe(true);
-    expect(res.body.equityCurve.length).toBeGreaterThan(0);
-
-    const point = res.body.equityCurve[0];
-    expect(point).toHaveProperty('date');
-    expect(point).toHaveProperty('equity');
+    expect(res.body.equityCurve.length).toBe(0);
   });
 });
 
@@ -175,28 +166,24 @@ describe('GET /api/v1/portfolio/trades', () => {
 });
 
 describe('GET /api/v1/portfolio/equity-curve', () => {
-  it('should return equity curve data', async () => {
+  it('should return empty equity curve when no DB', async () => {
     const res = await request(app).get('/api/v1/portfolio/equity-curve');
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('data');
     expect(Array.isArray(res.body.data)).toBe(true);
-    expect(res.body.data.length).toBeGreaterThan(0);
+    expect(res.body.data.length).toBe(0);
   });
 });
 
 describe('GET /api/v1/portfolio/allocation', () => {
-  it('should return allocation breakdown', async () => {
+  it('should return empty allocation when no DB', async () => {
     const res = await request(app).get('/api/v1/portfolio/allocation');
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('data');
     expect(Array.isArray(res.body.data)).toBe(true);
-
-    const item = res.body.data[0];
-    expect(item).toHaveProperty('market');
-    expect(item).toHaveProperty('value');
-    expect(item).toHaveProperty('percent');
+    expect(res.body.data.length).toBe(0);
   });
 });
 
@@ -213,15 +200,12 @@ describe('GET /api/v1/portfolio/agents', () => {
     expect(Array.isArray(res.body.cycles)).toBe(true);
   });
 
-  it('should include all 5 agent types', async () => {
+  it('should return empty agents when no DB', async () => {
     const res = await request(app).get('/api/v1/portfolio/agents');
 
-    const agentTypes = res.body.agents.map((a: { agentType: string }) => a.agentType);
-    expect(agentTypes).toContain('quant');
-    expect(agentTypes).toContain('sentiment');
-    expect(agentTypes).toContain('macro');
-    expect(agentTypes).toContain('risk');
-    expect(agentTypes).toContain('execution');
+    expect(res.body.agents.length).toBe(0);
+    expect(res.body.logs.length).toBe(0);
+    expect(res.body.cycles.length).toBe(0);
   });
 });
 
@@ -241,17 +225,13 @@ describe('GET /api/v1/portfolio/risk', () => {
     expect(res.body).toHaveProperty('drawdownHistory');
   });
 
-  it('should include risk limits as array', async () => {
+  it('should return empty risk limits when no DB', async () => {
     const res = await request(app).get('/api/v1/portfolio/risk');
 
     expect(Array.isArray(res.body.riskLimits)).toBe(true);
-    expect(res.body.riskLimits.length).toBeGreaterThan(0);
-
-    const limit = res.body.riskLimits[0];
-    expect(limit).toHaveProperty('metric');
-    expect(limit).toHaveProperty('current');
-    expect(limit).toHaveProperty('limit');
-    expect(limit).toHaveProperty('unit');
+    expect(res.body.riskLimits.length).toBe(0);
+    expect(Array.isArray(res.body.drawdownHistory)).toBe(true);
+    expect(res.body.drawdownHistory.length).toBe(0);
   });
 });
 

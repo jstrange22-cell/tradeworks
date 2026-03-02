@@ -184,7 +184,7 @@ export function MarketsPage() {
   const tabs: TabType[] = ['crypto', 'prediction', 'equity'];
 
   // Fetch instruments dynamically per market
-  const { data: cryptoInstruments } = useInstruments('crypto', 50);
+  const { data: cryptoInstruments } = useInstruments('crypto', 100);
   const { data: predictionInstruments, isLoading: loadingPrediction } = useInstruments('prediction', 100);
   const { data: equityInstruments, isLoading: loadingEquity } = useInstruments('equities', 100);
 
@@ -201,7 +201,7 @@ export function MarketsPage() {
 
   // Build crypto instrument list from dynamic data
   const cryptoSymbols = (cryptoInstruments?.data ?? [])
-    .slice(0, 20)
+    .slice(0, 50)
     .map((i) => i.symbol);
 
   const { data: tickers, isLoading, refetch } = useQuery({
@@ -255,26 +255,35 @@ export function MarketsPage() {
         ))}
       </div>
 
-      {/* Search (for prediction & equity tabs) */}
-      {(tab === 'prediction' || tab === 'equity') && (
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={tab === 'prediction' ? 'Search prediction markets...' : 'Search stocks and ETFs...'}
-            className="input w-full pl-9"
-          />
-        </div>
-      )}
+      {/* Search (all tabs) */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder={
+            tab === 'crypto' ? 'Search crypto markets...'
+              : tab === 'prediction' ? 'Search prediction markets...'
+              : 'Search stocks and ETFs...'
+          }
+          className="input w-full pl-9"
+        />
+      </div>
 
       {/* Market Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {/* Crypto Tab */}
-        {tab === 'crypto' && tickers?.map((ticker) => (
-          <CryptoMarketCard key={ticker.instrument_name} ticker={ticker} />
-        ))}
+        {tab === 'crypto' && tickers
+          ?.filter((ticker) => {
+            if (!searchQuery.trim()) return true;
+            const q = searchQuery.toLowerCase();
+            return ticker.instrument_name.toLowerCase().includes(q)
+              || toDisplayName(ticker.instrument_name).toLowerCase().includes(q);
+          })
+          .map((ticker) => (
+            <CryptoMarketCard key={ticker.instrument_name} ticker={ticker} />
+          ))}
         {tab === 'crypto' && !tickers && !isLoading && (
           <div className="col-span-full text-center text-sm text-slate-500">
             No market data available. Check connection.
