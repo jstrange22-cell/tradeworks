@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, Save, Plus, Trash2, TestTube, Loader2, CheckCircle, XCircle, Key, ExternalLink, Info } from 'lucide-react';
+import { Settings, Save, Plus, Trash2, TestTube, Loader2, CheckCircle, XCircle, Key, ExternalLink, Info, Shield, ShieldOff, Lock, Unlock, Camera, DollarSign } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 import { usePortfolioStore } from '@/stores/portfolio-store';
@@ -36,6 +36,22 @@ interface RiskLimits {
   maxCorrelation: number;
 }
 
+interface ProtectedAsset {
+  symbol: string;
+  locked: boolean;
+  snapshotQuantity: number;
+  snapshotValueUsd: number;
+}
+
+interface AssetProtectionConfig {
+  engineTradingEnabled: boolean;
+  tradingBudgetUsd: number;
+  budgetUsedUsd: number;
+  protectedAssets: Record<string, ProtectedAsset>;
+  enginePositions: unknown[];
+  snapshotTakenAt: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Service display config
 // ---------------------------------------------------------------------------
@@ -53,9 +69,9 @@ const SERVICE_INFO: Record<string, { label: string; color: string; description: 
 const EXCHANGE_SETUP_GUIDES: Record<string, { steps: { text: string; link?: string }[]; fields: string[] }> = {
   coinbase: {
     steps: [
-      { text: 'Go to Coinbase API Settings and click "New API Key"', link: 'https://www.coinbase.com/settings/api' },
+      { text: 'Go to Coinbase CDP Portal and create a new API key', link: 'https://portal.cdp.coinbase.com/access/api' },
       { text: 'Select permissions: View and Trade (minimum required)' },
-      { text: 'Copy the API Key (starts with "organizations/...") and paste below' },
+      { text: 'Copy the Key ID (UUID format) and paste below' },
       { text: 'Copy the API Secret (shown only once!) and paste below' },
       { text: 'For testing: select "Sandbox" environment below' },
     ],
@@ -212,7 +228,7 @@ function AddKeyModal({ onClose, onSuccess, preSelectedService }: { onClose: () =
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder={service === 'coinbase' ? 'organizations/...' : 'Paste your API key'}
+              placeholder={service === 'coinbase' ? 'Key ID (UUID)' : 'Paste your API key'}
               className="input mt-1 w-full font-mono text-sm"
             />
           </div>
@@ -392,6 +408,256 @@ function ApiKeyCard({ apiKey, onDeleted }: { apiKey: MaskedApiKey; onDeleted: ()
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Asset Protection Card
+// ---------------------------------------------------------------------------
+
+function AssetProtectionCard() {
+  const queryClient = useQueryClient();
+
+  const { data: protectionData, isLoading } = useQuery<{ data: AssetProtectionConfig }>({
+    queryKey: ['asset-protection'],
+    queryFn: () => apiClient.get<{ data: AssetProtectionConfig }>('/settings/asset-protection'),
+    refetchInterval: 10000,
+  });
+
+  const config = protectionData?.data;
+
+  const [budgetInput, setBudgetInput] = useState('');
+  const [budgetSaved, setBudgetSaved] = useState(false);
+
+  // Sync budget input from config
+  useEffect(() => {
+    if (config && budgetInput === '') {
+      setBudgetInput(String(config.tradingBudgetUsd));
+    }
+  }, [config, budgetInput]);
+
+  const updateMutation = useMutation({
+    mutationFn: (data: Partial<AssetProtectionConfig>) =>
+      apiClient.put('/settings/asset-protection', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['asset-protection'] });
+    },
+  });
+
+  const snapshotMutation = useMutation({
+    mutationFn: () => apiClient.post('/settings/asset-protection/snapshot'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['asset-protection'] });
+    },
+  });
+
+  const toggleMasterSwitch = () => {
+    if (!config) return;
+    updateMutation.mutate({ engineTradingEnabled: !config.engineTradingEnabled });
+  };
+
+  const toggleAssetLock = (symbol: string, currentlyLocked: boolean) => {
+    updateMutation.mutate({
+      protectedAssets: { [symbol]: { locked: !currentlyLocked } } as unknown as Record<string, ProtectedAsset>,
+    });
+  };
+
+  const lockAll = () => {
+    if (!config) return;
+    const updates: Record<string, ProtectedAsset> = {};
+    for (const [symbol, asset] of Object.entries(config.protectedAssets)) {
+      updates[symbol] = { ...asset, locked: true };
+    }
+    updateMutation.mutate({ protectedAssets: updates });
+  };
+
+  const saveBudget = () => {
+    const val = parseFloat(budgetInput);
+    if (isNaN(val) || val < 0) return;
+    updateMutation.mutate({ tradingBudgetUsd: val });
+    setBudgetSaved(true);
+    setTimeout(() => setBudgetSaved(false), 2000);
+  };
+
+  const assets = config ? Object.values(config.protectedAssets) : [];
+  const totalProtectedValue = assets.reduce((s, a) => s + a.snapshotValueUsd, 0);
+  const lockedCount = assets.filter(a => a.locked).length;
+
+  return (
+    <div className="card lg:col-span-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Shield className="h-5 w-5 text-amber-400" />
+          <div className="card-header">Asset Protection</div>
+        </div>
+        {config && (
+          <div className={`flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${
+            config.engineTradingEnabled
+              ? 'bg-green-500/10 text-green-400'
+              : 'bg-red-500/10 text-red-400'
+          }`}>
+            {config.engineTradingEnabled ? <ShieldOff className="h-3.5 w-3.5" /> : <Shield className="h-3.5 w-3.5" />}
+            {config.engineTradingEnabled ? 'Live Trading ON' : 'Live Trading OFF'}
+          </div>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="h-6 w-6 animate-spin text-amber-400" />
+        </div>
+      ) : !config ? (
+        <div className="py-4 text-center text-sm text-slate-500">Failed to load protection config</div>
+      ) : (
+        <div className="space-y-4">
+          {/* Master Switch */}
+          <div className="flex items-center justify-between rounded-lg border border-slate-700/30 bg-slate-900/30 p-4">
+            <div>
+              <div className="text-sm font-medium text-slate-200">Engine Live Trading</div>
+              <div className="mt-1 text-xs text-slate-500">
+                Master switch. When OFF, the engine cannot place any real trades.
+              </div>
+            </div>
+            <button
+              onClick={toggleMasterSwitch}
+              disabled={updateMutation.isPending}
+              className={`relative inline-flex h-8 w-16 items-center rounded-full transition-colors ${
+                config.engineTradingEnabled ? 'bg-green-600' : 'bg-slate-700'
+              }`}
+            >
+              <span
+                className={`inline-block h-6 w-6 transform rounded-full bg-white transition-transform ${
+                  config.engineTradingEnabled ? 'translate-x-8' : 'translate-x-1.5'
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Trading Budget */}
+          <div className="rounded-lg border border-slate-700/30 bg-slate-900/30 p-4">
+            <div className="flex items-center gap-2">
+              <DollarSign className="h-4 w-4 text-green-400" />
+              <div className="text-sm font-medium text-slate-200">Trading Budget</div>
+            </div>
+            <div className="mt-1 text-xs text-slate-500">
+              Max USD the engine can spend on new positions. Used: ${config.budgetUsedUsd.toFixed(2)}
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-sm text-slate-400">$</span>
+              <input
+                type="number"
+                value={budgetInput}
+                onChange={(e) => setBudgetInput(e.target.value)}
+                className="input w-32"
+                min="0"
+                step="50"
+              />
+              <button
+                onClick={saveBudget}
+                disabled={updateMutation.isPending}
+                className="btn-primary flex items-center gap-1.5 text-sm"
+              >
+                {budgetSaved ? <CheckCircle className="h-3.5 w-3.5" /> : <Save className="h-3.5 w-3.5" />}
+                {budgetSaved ? 'Saved' : 'Save'}
+              </button>
+            </div>
+            {config.tradingBudgetUsd > 0 && (
+              <div className="mt-2 h-2 w-full rounded-full bg-slate-700">
+                <div
+                  className="h-2 rounded-full bg-green-500 transition-all"
+                  style={{ width: `${Math.min((config.budgetUsedUsd / config.tradingBudgetUsd) * 100, 100)}%` }}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Snapshot + Protected Assets */}
+          <div className="rounded-lg border border-slate-700/30 bg-slate-900/30 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Camera className="h-4 w-4 text-blue-400" />
+                  <div className="text-sm font-medium text-slate-200">Holdings Snapshot</div>
+                </div>
+                {config.snapshotTakenAt && (
+                  <div className="mt-1 text-xs text-slate-500">
+                    Last snapshot: {new Date(config.snapshotTakenAt).toLocaleString()} — {lockedCount}/{assets.length} locked, ${totalProtectedValue.toFixed(0)} protected
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={lockAll}
+                  disabled={updateMutation.isPending || assets.length === 0}
+                  className="btn-ghost flex items-center gap-1.5 text-xs"
+                >
+                  <Lock className="h-3.5 w-3.5 text-amber-400" />
+                  Lock All
+                </button>
+                <button
+                  onClick={() => snapshotMutation.mutate()}
+                  disabled={snapshotMutation.isPending}
+                  className="btn-primary flex items-center gap-1.5 text-sm"
+                >
+                  {snapshotMutation.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Camera className="h-3.5 w-3.5" />
+                  )}
+                  Take Snapshot
+                </button>
+              </div>
+            </div>
+
+            {assets.length === 0 ? (
+              <div className="mt-4 rounded-lg border border-dashed border-slate-700 bg-slate-900/20 py-6 text-center">
+                <Shield className="mx-auto h-8 w-8 text-slate-600" />
+                <p className="mt-2 text-sm text-slate-400">No holdings snapshot taken yet</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Click "Take Snapshot" to lock your current exchange holdings.
+                </p>
+              </div>
+            ) : (
+              <div className="mt-3 space-y-1.5">
+                {assets.map((asset) => (
+                  <div
+                    key={asset.symbol}
+                    className="flex items-center justify-between rounded-lg border border-slate-700/20 bg-slate-800/30 px-3 py-2"
+                  >
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => toggleAssetLock(asset.symbol, asset.locked)}
+                        disabled={updateMutation.isPending}
+                        className={`rounded-full p-1 transition-colors ${
+                          asset.locked
+                            ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30'
+                            : 'bg-slate-700/50 text-slate-500 hover:bg-slate-700'
+                        }`}
+                        title={asset.locked ? 'Protected — click to unlock' : 'Unlocked — click to lock'}
+                      >
+                        {asset.locked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
+                      </button>
+                      <div>
+                        <span className="text-sm font-semibold text-slate-200">{asset.symbol}</span>
+                        <span className="ml-2 text-xs text-slate-500">{asset.snapshotQuantity} units</span>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm font-medium text-slate-300">
+                        ${asset.snapshotValueUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      <div className={`text-[10px] font-semibold ${asset.locked ? 'text-amber-400' : 'text-slate-500'}`}>
+                        {asset.locked ? 'PROTECTED' : 'UNLOCKED'}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -630,6 +896,9 @@ export function SettingsPage() {
             </button>
           </div>
         </div>
+
+        {/* Asset Protection */}
+        <AssetProtectionCard />
 
         {/* Risk Limits */}
         <div className="card lg:col-span-2">

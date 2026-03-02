@@ -4,6 +4,13 @@ import { getMemoryKeysByService } from './api-keys.js';
 import { decryptApiKey } from '@tradeworks/db';
 import { SignJWT, importJWK, importPKCS8 } from 'jose';
 import { randomBytes } from 'node:crypto';
+import {
+  isEngineTradingEnabled,
+  isAssetProtected,
+  getEngineOwnedQuantity,
+  getRemainingBudget,
+  recordEnginePosition,
+} from './asset-protection.js';
 
 /**
  * Engine control routes.
@@ -620,7 +627,67 @@ async function runAnalysisCycle(): Promise<CycleResult> {
       const quantity = Math.round((100 / Math.max(price, 1)) * 1000) / 1000;
 
       if (useLiveExecution && coinbaseKeys) {
+        // ── Asset Protection Checks (5 gates) ──
+        const baseSymbol = d.instrument.split('-')[0]; // e.g. BTC from BTC-USD
+
+        // 1. Master switch OFF → cancel
+        if (!isEngineTradingEnabled()) {
+          console.log(`[Engine] BLOCKED: Engine trading disabled (master switch OFF)`);
+          executions.push({
+            instrument: d.instrument, side: side as 'buy' | 'sell', quantity,
+            price: Math.round(price * 100) / 100, status: 'cancelled' as CycleExecution['status'],
+          });
+          continue;
+        }
+
+        // 2. Instrument not in whitelist → cancel
         const productId = COINBASE_PRODUCT_MAP[d.instrument];
+        if (!productId) {
+          console.log(`[Engine] BLOCKED: ${d.instrument} not in whitelist`);
+          executions.push({
+            instrument: d.instrument, side: side as 'buy' | 'sell', quantity,
+            price: Math.round(price * 100) / 100, status: 'cancelled' as CycleExecution['status'],
+          });
+          continue;
+        }
+
+        // 3. SELL but engine never bought it → cancel (protects existing holdings)
+        if (side === 'sell') {
+          const engineOwned = getEngineOwnedQuantity(baseSymbol);
+          if (engineOwned <= 0) {
+            console.log(`[Engine] BLOCKED: SELL ${baseSymbol} rejected — engine owns 0 (user holdings protected)`);
+            executions.push({
+              instrument: d.instrument, side: 'sell', quantity,
+              price: Math.round(price * 100) / 100, status: 'cancelled' as CycleExecution['status'],
+            });
+            continue;
+          }
+        }
+
+        // 4. SELL but asset explicitly locked → cancel
+        if (side === 'sell' && isAssetProtected(baseSymbol)) {
+          console.log(`[Engine] BLOCKED: SELL ${baseSymbol} rejected — asset is locked`);
+          executions.push({
+            instrument: d.instrument, side: 'sell', quantity,
+            price: Math.round(price * 100) / 100, status: 'cancelled' as CycleExecution['status'],
+          });
+          continue;
+        }
+
+        // 5. BUY but budget exhausted → cancel
+        if (side === 'buy') {
+          const remaining = getRemainingBudget();
+          if (remaining < parseFloat(quoteSize)) {
+            console.log(`[Engine] BLOCKED: BUY ${d.instrument} rejected — budget exhausted ($${remaining.toFixed(2)} remaining)`);
+            executions.push({
+              instrument: d.instrument, side: 'buy', quantity,
+              price: Math.round(price * 100) / 100, status: 'cancelled' as CycleExecution['status'],
+            });
+            continue;
+          }
+        }
+
+        // ── All checks passed — execute live trade ──
         if (productId) {
           const result = await placeCoinbaseOrder(
             productId,
@@ -629,6 +696,12 @@ async function runAnalysisCycle(): Promise<CycleResult> {
             coinbaseKeys.apiKey,
             coinbaseKeys.apiSecret,
           );
+
+          if (result.success) {
+            // Record engine position for tracking
+            recordEnginePosition(baseSymbol, side as 'buy' | 'sell', quantity, price);
+          }
+
           executions.push({
             instrument: d.instrument,
             side: side as 'buy' | 'sell',

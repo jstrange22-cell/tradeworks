@@ -1,0 +1,93 @@
+{
+  "engineTradingEnabled": false,
+  "tradingBudgetUsd": 0,
+  "budgetUsedUsd": 0,
+  "protectedAssets": {
+    "STX": {
+      "symbol": "STX",
+      "locked": true,
+      "snapshotQuantity": 492.416519,
+      "snapshotValueUsd": 0
+    },
+    "XRP": {
+      "symbol": "XRP",
+      "locked": true,
+      "snapshotQuantity": 1180.297129,
+      "snapshotValueUsd": 1612.8760267785
+    },
+    "TOSHI": {
+      "symbol": "TOSHI",
+      "locked": true,
+      "snapshotQuantity": 153625.57658661,
+      "snapshotValueUsd": 0
+    },
+    "PROMPT": {
+      "symbol": "PROMPT",
+      "locked": true,
+      "snapshotQuantity": 155.59041112,
+      "snapshotValueUsd": 0
+    },
+    "XLM": {
+      "symbol": "XLM",
+      "locked": true,
+      "snapshotQuantity": 270.7537655,
+      "snapshotValueUsd": 0
+    },
+    "ADA": {
+      "symbol": "ADA",
+      "locked": true,
+      "snapshotQuantity": 2310.326086,
+      "snapshotValueUsd": 637.39586386654
+    },
+    "HBAR": {
+      "symbol": "HBAR",
+      "locked": true,
+      "snapshotQuantity": 10564.59817898,
+      "snapshotValueUsd": 0
+    },
+    "ONDO": {
+      "symbol": "ONDO",
+      "locked": true,
+      "snapshotQuantity": 2080.4649909,
+      "snapshotValueUsd": 0
+    },
+    "LINK": {
+      "symbol": "LINK",
+      "locked": true,
+      "snapshotQuantity": 127.38038322,
+      "snapshotValueUsd": 1121.32951348566
+    },
+    "ALEO": {
+      "symbol": "ALEO",
+      "locked": true,
+      "snapshotQuantity": 19.93026,
+      "snapshotValueUsd": 0
+    },
+    "USDC": {
+      "symbol": "USDC",
+      "locked": true,
+      "snapshotQuantity": 0.023009,
+      "snapshotValueUsd": 0.023009
+    },
+    "SHIB": {
+      "symbol": "SHIB",
+      "locked": true,
+      "snapshotQuantity": 89473309.38162602,
+      "snapshotValueUsd": 502.9294720341199
+    },
+    "USD": {
+      "symbol": "USD",
+      "locked": true,
+      "snapshotQuantity": 50.0053238364116,
+      "snapshotValueUsd": 50.0053238364116
+    },
+    "BTC": {
+      "symbol": "BTC",
+      "locked": true,
+      "snapshotQuantity": 0.00186874,
+      "snapshotValueUsd": 124.77049995319999
+    }
+  },
+  "enginePositions": [],
+  "snapshotTakenAt": "2026-03-02T05:02:49.709Z"
+}

@@ -21,6 +21,7 @@ import { ordersRouter } from './routes/orders.js';
 import { engineRouter, initEngine } from './routes/engine.js';
 import { settingsRouter } from './routes/settings.js';
 import { balancesRouter } from './routes/balances.js';
+import { assetProtectionRouter } from './routes/asset-protection.js';
 
 const app: Express = express();
 const PORT = parseInt(process.env.PORT ?? '4000', 10);
@@ -73,6 +74,7 @@ app.use('/api/v1/orders', devAuth, ordersRouter);
 app.use('/api/v1/engine', devAuth, engineRouter);
 app.use('/api/v1/settings', devAuth, settingsRouter);
 app.use('/api/v1/portfolio/balances', devAuth, balancesRouter);
+app.use('/api/v1/settings/asset-protection', devAuth, assetProtectionRouter);
 
 // --- Error Handling ---
 

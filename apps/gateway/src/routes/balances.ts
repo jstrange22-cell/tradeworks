@@ -61,6 +61,53 @@ function getPolymarketSandboxBalances(): AssetBalance[] {
   ];
 }
 
+// ── Crypto price lookup (Crypto.com public API) ──────────────────────
+
+const PRICE_SYMBOL_MAP: Record<string, string> = {
+  BTC: 'BTC_USDT', ETH: 'ETH_USDT', SOL: 'SOL_USDT', AVAX: 'AVAX_USDT',
+  LINK: 'LINK_USDT', DOGE: 'DOGE_USDT', ADA: 'ADA_USDT', XRP: 'XRP_USDT',
+  DOT: 'DOT_USDT', MATIC: 'MATIC_USDT', SHIB: 'SHIB_USDT', UNI: 'UNI_USDT',
+  ATOM: 'ATOM_USDT', LTC: 'LTC_USDT', NEAR: 'NEAR_USDT', APT: 'APT_USDT',
+  OP: 'OP_USDT', ARB: 'ARB_USDT', FIL: 'FIL_USDT', ALGO: 'ALGO_USDT',
+  STX: 'STX_USDT', XLM: 'XLM_USDT', HBAR: 'HBAR_USDT', ONDO: 'ONDO_USDT',
+  ALEO: 'ALEO_USDT', TOSHI: 'TOSHI_USDT', PROMPT: 'PROMPT_USDT',
+};
+
+const STABLECOINS = new Set(['USD', 'USDC', 'USDT', 'DAI', 'BUSD', 'GUSD', 'USDP']);
+
+async function fetchCryptoPrices(symbols: string[]): Promise<Record<string, number>> {
+  const prices: Record<string, number> = {};
+
+  // Stablecoins are always $1
+  for (const s of symbols) {
+    if (STABLECOINS.has(s)) prices[s] = 1;
+  }
+
+  // Fetch real prices in parallel
+  const toFetch = symbols.filter(s => PRICE_SYMBOL_MAP[s] && !(s in prices));
+  await Promise.allSettled(
+    toFetch.map(async (symbol) => {
+      try {
+        const instrument = PRICE_SYMBOL_MAP[symbol];
+        const res = await fetch(
+          `https://api.crypto.com/exchange/v1/public/get-tickers?instrument_name=${instrument}`,
+        );
+        const json = (await res.json()) as {
+          code: number;
+          result?: { data?: Array<{ a: string }> };
+        };
+        if (json.code === 0 && json.result?.data?.length) {
+          prices[symbol] = parseFloat(json.result.data[0].a);
+        }
+      } catch {
+        // Price unavailable — stays at 0
+      }
+    }),
+  );
+
+  return prices;
+}
+
 // ── Live exchange fetchers ─────────────────────────────────────────────
 
 async function fetchCoinbaseBalances(apiKey: string, apiSecret: string): Promise<AssetBalance[]> {
@@ -125,18 +172,25 @@ async function fetchCoinbaseBalances(apiKey: string, apiSecret: string): Promise
       }>;
     };
 
-    return (data.accounts ?? [])
-      .filter(a => parseFloat(a.available_balance.value) > 0 || a.currency === 'USD')
-      .map(a => {
-        const available = parseFloat(a.available_balance.value);
-        const hold = parseFloat(a.hold?.value ?? '0');
-        return {
-          symbol: a.currency,
-          available,
-          total: available + hold,
-          valueUsd: 0, // Would need price feed for accurate USD conversion
-        };
-      });
+    const accounts = (data.accounts ?? [])
+      .filter(a => parseFloat(a.available_balance.value) > 0 || a.currency === 'USD');
+
+    // Fetch current USD prices for all held assets
+    const symbols = accounts.map(a => a.currency);
+    const prices = await fetchCryptoPrices(symbols);
+
+    return accounts.map(a => {
+      const available = parseFloat(a.available_balance.value);
+      const hold = parseFloat(a.hold?.value ?? '0');
+      const total = available + hold;
+      const price = prices[a.currency] ?? 0;
+      return {
+        symbol: a.currency,
+        available,
+        total,
+        valueUsd: price > 0 ? total * price : 0,
+      };
+    });
   } catch (error) {
     console.error('[Balances] Coinbase fetch failed:', error);
     throw error;
@@ -245,9 +299,12 @@ async function fetchPolymarketBalances(apiKey: string, funderAddress: string): P
   }
 }
 
-// ── Main route ─────────────────────────────────────────────────────────
+// ── Shared balance fetcher (used by portfolio.ts too) ──────────────────
 
-balancesRouter.get('/', async (_req, res) => {
+export async function fetchAllExchangeBalances(): Promise<{
+  exchanges: ExchangeBalance[];
+  totalValueUsd: number;
+}> {
   const exchanges: ExchangeBalance[] = [];
 
   // Define which exchanges to check
@@ -346,10 +403,16 @@ balancesRouter.get('/', async (_req, res) => {
   }
 
   const grandTotal = exchanges.reduce((sum, e) => sum + e.totalValueUsd, 0);
+  return { exchanges, totalValueUsd: grandTotal };
+}
 
+// ── Main route ─────────────────────────────────────────────────────────
+
+balancesRouter.get('/', async (_req, res) => {
+  const result = await fetchAllExchangeBalances();
   res.json({
-    data: exchanges,
-    totalValueUsd: grandTotal,
+    data: result.exchanges,
+    totalValueUsd: result.totalValueUsd,
     message: 'Deposits and withdrawals are managed directly on each exchange. TradeWorks reads your balances for portfolio tracking.',
   });
 });

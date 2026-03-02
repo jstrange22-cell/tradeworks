@@ -13,6 +13,7 @@ import {
   type AgentLog as DbAgentLog,
   type TradingCycle as DbTradingCycle,
 } from '@tradeworks/db';
+import { fetchAllExchangeBalances } from './balances.js';
 
 // getRiskHistory is available for future use (e.g., building real drawdown history)
 void getRiskHistory;
@@ -185,7 +186,32 @@ portfolioRouter.get('/', async (_req, res) => {
       circuitBreaker: portfolioState.circuitBreakerActive,
     });
   } catch {
-    // No DB — return honest zeros, no fake data
+    // No DB — try live exchange balances before returning zeros
+    try {
+      const live = await fetchAllExchangeBalances();
+      if (live.totalValueUsd > 0) {
+        res.json({
+          equity: live.totalValueUsd,
+          initialCapital: live.totalValueUsd,
+          dailyPnl: 0,
+          dailyPnlPercent: 0,
+          weeklyPnl: 0,
+          totalPnl: 0,
+          winRate: 0,
+          totalTrades: 0,
+          openPositions: [],
+          recentTrades: [],
+          equityCurve: generateEquityCurve(live.totalValueUsd, live.totalValueUsd),
+          paperTrading: portfolioState.mode === 'paper',
+          circuitBreaker: portfolioState.circuitBreakerActive,
+          liveBalances: live.exchanges,
+        });
+        return;
+      }
+    } catch {
+      // Exchange fetch also failed — fall through to zeros
+    }
+
     res.json({
       equity: 0,
       initialCapital: 0,
