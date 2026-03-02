@@ -2,6 +2,8 @@ import { Router, type Router as RouterType } from 'express';
 import { z } from 'zod';
 import { getMemoryKeysByService } from './api-keys.js';
 import { decryptApiKey } from '@tradeworks/db';
+import jwt from 'jsonwebtoken';
+import { randomBytes } from 'node:crypto';
 
 /**
  * Engine control routes.
@@ -104,8 +106,53 @@ const MAX_CYCLE_HISTORY = 100;
 let cycleTimer: ReturnType<typeof setInterval> | null = null;
 
 // ---------------------------------------------------------------------------
-// Coinbase Advanced Trade API — HMAC Auth + Execution
+// Coinbase Advanced Trade API — CDP JWT Auth (ES256) + Execution
 // ---------------------------------------------------------------------------
+
+/**
+ * Build a JWT for Coinbase CDP API authentication.
+ *
+ * CDP keys use ES256 (ECDSA P-256) JWT tokens instead of HMAC signing.
+ * Legacy API keys were deprecated by Coinbase in February 2025.
+ *
+ * JWT structure:
+ *   Header: { alg: "ES256", typ: "JWT", kid: keyName, nonce: randomHex }
+ *   Payload: { iss: "cdp", sub: keyName, nbf: now, exp: now+120, uri: "METHOD host+path" }
+ */
+function buildCoinbaseJwt(
+  keyName: string,
+  privateKeyPem: string,
+  method: string,
+  path: string,
+): string {
+  const now = Math.floor(Date.now() / 1000);
+  const nonce = randomBytes(16).toString('hex');
+  const uri = `${method} api.coinbase.com${path}`;
+
+  const payload = {
+    iss: 'cdp',
+    sub: keyName,
+    nbf: now,
+    exp: now + 120,
+    uri,
+  };
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return jwt.sign(payload, privateKeyPem, {
+    algorithm: 'ES256',
+    header: {
+      alg: 'ES256',
+      typ: 'JWT',
+      kid: keyName,
+      nonce,
+    } as any,
+  });
+}
+
+/** Check if a key is in CDP format (organizations/...) vs legacy UUID */
+function isCdpKey(keyName: string): boolean {
+  return keyName.includes('organizations/');
+}
 
 function getCoinbaseKeyEnvironment(): string {
   const keys = getMemoryKeysByService('coinbase');
@@ -122,10 +169,20 @@ function getCoinbaseKeys(): { apiKey: string; apiSecret: string } | null {
     const apiSecret = k.encryptedSecret
       ? decryptApiKey(k.encryptedSecret as Buffer)
       : '';
+
     // Debug logging — masked values for troubleshooting
-    console.log(`[Engine] Coinbase key decrypted: ${apiKey.slice(0, 8)}..., length: ${apiKey.length}`);
-    console.log(`[Engine] Coinbase secret decrypted: length: ${apiSecret.length}`);
+    const keyType = isCdpKey(apiKey) ? 'CDP' : 'Legacy';
+    console.log(`[Engine] Coinbase key decrypted: ${apiKey.slice(0, 20)}..., length: ${apiKey.length}, type: ${keyType}`);
+    console.log(`[Engine] Coinbase secret decrypted: length: ${apiSecret.length}, isPEM: ${apiSecret.includes('BEGIN')}`);
+
     if (!apiKey || !apiSecret) return null;
+
+    // Warn if legacy key detected
+    if (!isCdpKey(apiKey)) {
+      console.warn('[Engine] ⚠ Legacy Coinbase key detected — Legacy keys were deprecated Feb 2025.');
+      console.warn('[Engine] ⚠ Create a CDP API key at https://portal.cdp.coinbase.com/access/api');
+    }
+
     return { apiKey, apiSecret };
   } catch (err) {
     console.error('[Engine] Failed to decrypt Coinbase keys:', err);
@@ -133,6 +190,12 @@ function getCoinbaseKeys(): { apiKey: string; apiSecret: string } | null {
   }
 }
 
+/**
+ * Make an authenticated request to the Coinbase Advanced Trade API.
+ *
+ * Supports CDP keys (JWT/ES256) — the current Coinbase auth standard.
+ * Legacy HMAC keys are detected and a warning is logged.
+ */
 async function coinbaseSignedRequest(
   method: string,
   path: string,
@@ -140,26 +203,39 @@ async function coinbaseSignedRequest(
   apiSecret: string,
   body?: string,
 ): Promise<Response> {
-  const { createHmac } = await import('node:crypto');
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  // Coinbase HMAC: signature = HMAC(timestamp + method + requestPath + body)
-  // requestPath is the path WITHOUT query params
-  const signPath = path.split('?')[0];
-  const message = timestamp + method + signPath + (body ?? '');
+  if (isCdpKey(apiKey)) {
+    // CDP key — use JWT Bearer auth (ES256)
+    // The secret should be a PEM EC private key. Normalize escaped newlines.
+    const pem = apiSecret.replace(/\\n/g, '\n');
+    const jwt = buildCoinbaseJwt(apiKey, pem, method, path.split('?')[0]);
 
-  // Advanced Trade Legacy Keys: use secret as-is (UTF-8 string), hex signature
-  const signature = createHmac('sha256', apiSecret).update(message).digest('hex');
+    return fetch(`https://api.coinbase.com${path}`, {
+      method,
+      headers: {
+        'Authorization': `Bearer ${jwt}`,
+        'Content-Type': 'application/json',
+      },
+      ...(body ? { body } : {}),
+    });
+  } else {
+    // Legacy key fallback — HMAC-SHA256 (deprecated Feb 2025)
+    const { createHmac } = await import('node:crypto');
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signPath = path.split('?')[0];
+    const message = timestamp + method + signPath + (body ?? '');
+    const signature = createHmac('sha256', apiSecret).update(message).digest('hex');
 
-  return fetch(`https://api.coinbase.com${path}`, {
-    method,
-    headers: {
-      'CB-ACCESS-KEY': apiKey,
-      'CB-ACCESS-SIGN': signature,
-      'CB-ACCESS-TIMESTAMP': timestamp,
-      'Content-Type': 'application/json',
-    },
-    ...(body ? { body } : {}),
-  });
+    return fetch(`https://api.coinbase.com${path}`, {
+      method,
+      headers: {
+        'CB-ACCESS-KEY': apiKey,
+        'CB-ACCESS-SIGN': signature,
+        'CB-ACCESS-TIMESTAMP': timestamp,
+        'Content-Type': 'application/json',
+      },
+      ...(body ? { body } : {}),
+    });
+  }
 }
 
 async function testCoinbaseConnection(): Promise<{

@@ -283,36 +283,71 @@ apiKeysRouter.post('/:id/test', async (req, res) => {
     try {
       switch (key.service) {
         case 'coinbase': {
-          // Coinbase Advanced Trade API requires HMAC-SHA256 signing
-          const { createHmac } = await import('node:crypto');
-          const cbTimestamp = Math.floor(Date.now() / 1000).toString();
+          // Coinbase CDP API keys use JWT Bearer auth (ES256)
+          // Legacy HMAC keys were deprecated Feb 2025
           const cbMethod = 'GET';
           const cbPath = '/api/v3/brokerage/accounts';
-          const cbMessage = cbTimestamp + cbMethod + cbPath;
-          // Advanced Trade Legacy Keys: use secret as-is (UTF-8 string), hex signature
-          const cbSignature = createHmac('sha256', decryptedSecret ?? '')
-            .update(cbMessage)
-            .digest('hex');
+          const isCdp = decryptedKey.includes('organizations/');
 
-          const response = await fetch(`https://api.coinbase.com${cbPath}`, {
-            method: cbMethod,
-            headers: {
-              'CB-ACCESS-KEY': decryptedKey,
-              'CB-ACCESS-SIGN': cbSignature,
-              'CB-ACCESS-TIMESTAMP': cbTimestamp,
-              'Content-Type': 'application/json',
-            },
-          });
+          let response: globalThis.Response;
+
+          if (isCdp) {
+            // CDP key — build JWT with ES256
+            const jwtMod = await import('jsonwebtoken');
+            const jwtSignFn = jwtMod.default?.sign ?? jwtMod.sign;
+            const { randomBytes: rb } = await import('node:crypto');
+            const now = Math.floor(Date.now() / 1000);
+            const nonce = rb(16).toString('hex');
+            const uri = `${cbMethod} api.coinbase.com${cbPath}`;
+            const pem = (decryptedSecret ?? '').replace(/\\n/g, '\n');
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const jwt = jwtSignFn(
+              { iss: 'cdp', sub: decryptedKey, nbf: now, exp: now + 120, uri },
+              pem,
+              {
+                algorithm: 'ES256',
+                header: { alg: 'ES256', typ: 'JWT', kid: decryptedKey, nonce } as any,
+              },
+            );
+
+            response = await fetch(`https://api.coinbase.com${cbPath}`, {
+              method: cbMethod,
+              headers: {
+                'Authorization': `Bearer ${jwt}`,
+                'Content-Type': 'application/json',
+              },
+            });
+          } else {
+            // Legacy key fallback (deprecated Feb 2025)
+            const { createHmac } = await import('node:crypto');
+            const cbTimestamp = Math.floor(Date.now() / 1000).toString();
+            const cbMessage = cbTimestamp + cbMethod + cbPath;
+            const cbSignature = createHmac('sha256', decryptedSecret ?? '')
+              .update(cbMessage)
+              .digest('hex');
+
+            response = await fetch(`https://api.coinbase.com${cbPath}`, {
+              method: cbMethod,
+              headers: {
+                'CB-ACCESS-KEY': decryptedKey,
+                'CB-ACCESS-SIGN': cbSignature,
+                'CB-ACCESS-TIMESTAMP': cbTimestamp,
+                'Content-Type': 'application/json',
+              },
+            });
+          }
 
           if (response.ok) {
             const cbData = (await response.json()) as { accounts?: unknown[] };
             const accountCount = cbData.accounts?.length ?? 0;
             success = true;
-            message = `Coinbase connected — ${accountCount} account(s) found`;
+            message = `Coinbase connected (${isCdp ? 'CDP' : 'Legacy'}) — ${accountCount} account(s) found`;
           } else {
             success = false;
             const errBody = await response.text().catch(() => '');
-            message = `Coinbase returned ${response.status}: ${response.statusText}${errBody ? ` — ${errBody.slice(0, 200)}` : ''}`;
+            const hint = !isCdp ? ' (Legacy keys were deprecated Feb 2025 — use a CDP key from portal.cdp.coinbase.com)' : '';
+            message = `Coinbase returned ${response.status}: ${response.statusText}${errBody ? ` — ${errBody.slice(0, 200)}` : ''}${hint}`;
           }
           break;
         }

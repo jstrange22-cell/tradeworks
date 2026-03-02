@@ -66,23 +66,54 @@ function getPolymarketSandboxBalances(): AssetBalance[] {
 async function fetchCoinbaseBalances(apiKey: string, apiSecret: string): Promise<AssetBalance[]> {
   try {
     // Coinbase Advanced Trade API — list accounts
-    const timestamp = Math.floor(Date.now() / 1000).toString();
     const method = 'GET';
     const path = '/api/v3/brokerage/accounts';
-    const message = timestamp + method + path;
+    const isCdp = apiKey.includes('organizations/');
 
-    // Sign with HMAC SHA-256 — Advanced Trade Legacy Keys: secret as-is, hex output
-    const { createHmac } = await import('node:crypto');
-    const signature = createHmac('sha256', apiSecret).update(message).digest('hex');
+    let response: globalThis.Response;
 
-    const response = await fetch(`https://api.coinbase.com${path}?limit=50`, {
-      headers: {
-        'CB-ACCESS-KEY': apiKey,
-        'CB-ACCESS-SIGN': signature,
-        'CB-ACCESS-TIMESTAMP': timestamp,
-        'Content-Type': 'application/json',
-      },
-    });
+    if (isCdp) {
+      // CDP key — JWT Bearer auth (ES256)
+      const jwtMod = await import('jsonwebtoken');
+      const jwtSignFn = jwtMod.default?.sign ?? jwtMod.sign;
+      const { randomBytes } = await import('node:crypto');
+      const now = Math.floor(Date.now() / 1000);
+      const nonce = randomBytes(16).toString('hex');
+      const uri = `${method} api.coinbase.com${path}`;
+      const pem = apiSecret.replace(/\\n/g, '\n');
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const jwt = jwtSignFn(
+        { iss: 'cdp', sub: apiKey, nbf: now, exp: now + 120, uri },
+        pem,
+        {
+          algorithm: 'ES256',
+          header: { alg: 'ES256', typ: 'JWT', kid: apiKey, nonce } as any,
+        },
+      );
+
+      response = await fetch(`https://api.coinbase.com${path}?limit=50`, {
+        headers: {
+          'Authorization': `Bearer ${jwt}`,
+          'Content-Type': 'application/json',
+        },
+      });
+    } else {
+      // Legacy key fallback — HMAC-SHA256 (deprecated Feb 2025)
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const message = timestamp + method + path;
+      const { createHmac } = await import('node:crypto');
+      const signature = createHmac('sha256', apiSecret).update(message).digest('hex');
+
+      response = await fetch(`https://api.coinbase.com${path}?limit=50`, {
+        headers: {
+          'CB-ACCESS-KEY': apiKey,
+          'CB-ACCESS-SIGN': signature,
+          'CB-ACCESS-TIMESTAMP': timestamp,
+          'Content-Type': 'application/json',
+        },
+      });
+    }
 
     if (!response.ok) {
       throw new Error(`Coinbase API error: ${response.status}`);
