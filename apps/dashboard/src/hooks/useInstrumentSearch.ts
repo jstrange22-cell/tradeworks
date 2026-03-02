@@ -1,28 +1,68 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { apiClient } from '@/lib/api-client';
+import { useDebounce } from './useDebounce';
 
-const CRYPTO_INSTRUMENTS = [
-  'BTC-USD', 'ETH-USD', 'SOL-USD', 'AVAX-USD', 'LINK-USD',
-  'DOGE-USD', 'ADA-USD', 'DOT-USD', 'CRO-USD', 'MATIC-USD',
-  'XRP-USD', 'UNI-USD', 'AAVE-USD', 'ATOM-USD', 'NEAR-USD',
-];
+export interface InstrumentInfo {
+  symbol: string;
+  displayName: string;
+  market: 'crypto' | 'equities' | 'prediction';
+  exchange: string;
+  tradable: boolean;
+}
 
-const EQUITY_INSTRUMENTS = [
-  'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'AMZN', 'META', 'TSLA',
-  'SPY', 'QQQ', 'IWM', 'DIA', 'AMD', 'INTC', 'CRM', 'NFLX',
-  'V', 'MA', 'JPM', 'BAC', 'GS', 'WMT', 'HD', 'COST', 'PG',
-  'JNJ', 'UNH', 'PFE', 'ABBV', 'MRK', 'LLY',
-];
+interface InstrumentsResponse {
+  data: InstrumentInfo[];
+  total: number;
+  cached: boolean;
+}
 
-const ALL_INSTRUMENTS = [...CRYPTO_INSTRUMENTS, ...EQUITY_INSTRUMENTS];
-
-export function useInstrumentSearch() {
+/**
+ * Hook for searching tradable instruments across all markets.
+ * Calls the gateway /market/instruments endpoint with debounced search.
+ *
+ * @param market - Optional filter: 'crypto' | 'equities' | 'prediction'
+ * @param limit  - Max results (default 50)
+ */
+export function useInstrumentSearch(market?: string, limit = 50) {
   const [query, setQuery] = useState('');
+  const debouncedQuery = useDebounce(query, 300);
 
-  const results = useMemo(() => {
-    if (!query.trim()) return ALL_INSTRUMENTS.slice(0, 20);
-    const upper = query.toUpperCase().trim();
-    return ALL_INSTRUMENTS.filter(i => i.toUpperCase().includes(upper)).slice(0, 20);
-  }, [query]);
+  const { data, isLoading } = useQuery<InstrumentsResponse>({
+    queryKey: ['instruments', market, debouncedQuery, limit],
+    queryFn: () =>
+      apiClient.get<InstrumentsResponse>('/market/instruments', {
+        market: market || undefined,
+        search: debouncedQuery || undefined,
+        limit,
+      }),
+    staleTime: 60_000,
+    placeholderData: (prev) => prev, // keep previous data while loading
+  });
 
-  return { query, setQuery, results, allInstruments: ALL_INSTRUMENTS };
+  const results = data?.data ?? [];
+
+  return {
+    query,
+    setQuery,
+    results,
+    isLoading,
+    total: data?.total ?? 0,
+  };
+}
+
+/**
+ * Fetch instruments once (no search/debounce) — for market pages that just
+ * need a list of instruments for a given market.
+ */
+export function useInstruments(market: string, limit = 50) {
+  return useQuery<InstrumentsResponse>({
+    queryKey: ['instruments-list', market, limit],
+    queryFn: () =>
+      apiClient.get<InstrumentsResponse>('/market/instruments', {
+        market,
+        limit,
+      }),
+    staleTime: 5 * 60_000, // cache for 5 min
+  });
 }

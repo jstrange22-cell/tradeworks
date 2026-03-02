@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, Save, Plus, Trash2, TestTube, Loader2, CheckCircle, XCircle, Key } from 'lucide-react';
+import { Settings, Save, Plus, Trash2, TestTube, Loader2, CheckCircle, XCircle, Key, ExternalLink, Info } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 import { usePortfolioStore } from '@/stores/portfolio-store';
@@ -47,19 +47,62 @@ const SERVICE_INFO: Record<string, { label: string; color: string; description: 
 };
 
 // ---------------------------------------------------------------------------
+// Per-exchange setup guides
+// ---------------------------------------------------------------------------
+
+const EXCHANGE_SETUP_GUIDES: Record<string, { steps: { text: string; link?: string }[]; fields: string[] }> = {
+  coinbase: {
+    steps: [
+      { text: 'Go to Coinbase API Settings and click "New API Key"', link: 'https://www.coinbase.com/settings/api' },
+      { text: 'Select permissions: View and Trade (minimum required)' },
+      { text: 'Copy the API Key (starts with "organizations/...") and paste below' },
+      { text: 'Copy the API Secret (shown only once!) and paste below' },
+      { text: 'For testing: select "Sandbox" environment below' },
+    ],
+    fields: ['apiKey', 'apiSecret'],
+  },
+  alpaca: {
+    steps: [
+      { text: 'Create a free account at Alpaca', link: 'https://alpaca.markets' },
+      { text: 'Go to your Paper Trading dashboard', link: 'https://app.alpaca.markets/paper/dashboard/overview' },
+      { text: 'Click "Generate API Keys" in the sidebar' },
+      { text: 'Copy the Key ID and paste in "API Key" below' },
+      { text: 'Copy the Secret Key and paste in "API Secret" below' },
+      { text: 'For paper trading: select "Sandbox" environment below' },
+    ],
+    fields: ['apiKey', 'apiSecret'],
+  },
+  polymarket: {
+    steps: [
+      { text: 'Go to Polymarket and connect a crypto wallet', link: 'https://polymarket.com' },
+      { text: 'Navigate to Settings and generate CLOB API credentials' },
+      { text: 'Copy the API Key, API Secret, and Passphrase' },
+      { text: 'You need USDC on Polygon network for trading' },
+    ],
+    fields: ['apiKey', 'apiSecret', 'passphrase'],
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Add API Key Modal
 // ---------------------------------------------------------------------------
 
-function AddKeyModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: () => void }) {
-  const [service, setService] = useState<'coinbase' | 'alpaca' | 'polymarket'>('coinbase');
+function AddKeyModal({ onClose, onSuccess, preSelectedService }: { onClose: () => void; onSuccess: () => void; preSelectedService?: string }) {
+  const [service, setService] = useState<'coinbase' | 'alpaca' | 'polymarket'>(
+    (preSelectedService as 'coinbase' | 'alpaca' | 'polymarket') ?? 'coinbase'
+  );
   const [keyName, setKeyName] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
+  const [passphrase, setPassphrase] = useState('');
   const [environment, setEnvironment] = useState<'production' | 'sandbox' | 'testnet'>('sandbox');
   const [error, setError] = useState('');
+  const [showGuide, setShowGuide] = useState(true);
+
+  const guide = EXCHANGE_SETUP_GUIDES[service];
 
   const addMutation = useMutation({
-    mutationFn: (data: { service: string; keyName: string; apiKey: string; apiSecret?: string; environment: string }) =>
+    mutationFn: (data: { service: string; keyName: string; apiKey: string; apiSecret?: string; passphrase?: string; environment: string }) =>
       apiClient.post('/settings/api-keys', data),
     onSuccess: () => {
       onSuccess();
@@ -82,13 +125,14 @@ function AddKeyModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
       keyName: keyName.trim(),
       apiKey: apiKey.trim(),
       apiSecret: apiSecret.trim() || undefined,
+      passphrase: passphrase.trim() || undefined,
       environment,
     });
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="mx-4 w-full max-w-md rounded-xl border border-slate-700/50 bg-slate-800 p-6 shadow-2xl">
+      <div className="mx-4 w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-slate-700/50 bg-slate-800 p-6 shadow-2xl">
         <h3 className="mb-4 text-lg font-semibold text-slate-100">Add Exchange API Key</h3>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -97,14 +141,57 @@ function AddKeyModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
             <label className="text-xs font-medium text-slate-400">Exchange</label>
             <select
               value={service}
-              onChange={(e) => setService(e.target.value as 'coinbase' | 'alpaca' | 'polymarket')}
+              onChange={(e) => { setService(e.target.value as 'coinbase' | 'alpaca' | 'polymarket'); setShowGuide(true); }}
               className="input mt-1 w-full"
             >
-              <option value="coinbase">Coinbase</option>
-              <option value="alpaca">Alpaca</option>
-              <option value="polymarket">Polymarket</option>
+              <option value="coinbase">Coinbase — Crypto Trading</option>
+              <option value="alpaca">Alpaca — Stocks & ETFs</option>
+              <option value="polymarket">Polymarket — Prediction Markets</option>
             </select>
           </div>
+
+          {/* Setup Guide */}
+          {guide && showGuide && (
+            <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-blue-400">
+                  <Info className="h-3.5 w-3.5" />
+                  How to get your {SERVICE_INFO[service]?.label} API keys
+                </div>
+                <button type="button" onClick={() => setShowGuide(false)} className="text-xs text-slate-500 hover:text-slate-300">
+                  Hide
+                </button>
+              </div>
+              <ol className="mt-2 space-y-1.5">
+                {guide.steps.map((step, i) => (
+                  <li key={i} className="flex gap-2 text-xs text-slate-300">
+                    <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-blue-500/20 text-[10px] font-bold text-blue-400">
+                      {i + 1}
+                    </span>
+                    <span>
+                      {step.text}
+                      {step.link && (
+                        <a
+                          href={step.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ml-1 inline-flex items-center gap-0.5 text-blue-400 underline hover:text-blue-300"
+                        >
+                          Open <ExternalLink className="h-3 w-3" />
+                        </a>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          {!showGuide && (
+            <button type="button" onClick={() => setShowGuide(true)} className="text-xs text-blue-400 hover:text-blue-300">
+              Show setup guide
+            </button>
+          )}
 
           {/* Key Name */}
           <div>
@@ -113,7 +200,7 @@ function AddKeyModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
               type="text"
               value={keyName}
               onChange={(e) => setKeyName(e.target.value)}
-              placeholder="e.g., My Trading Key"
+              placeholder={`e.g., My ${SERVICE_INFO[service]?.label ?? ''} Key`}
               className="input mt-1 w-full"
             />
           </div>
@@ -125,7 +212,7 @@ function AddKeyModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="Paste your API key"
+              placeholder={service === 'coinbase' ? 'organizations/...' : 'Paste your API key'}
               className="input mt-1 w-full font-mono text-sm"
             />
           </div>
@@ -133,7 +220,7 @@ function AddKeyModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
           {/* API Secret */}
           <div>
             <label className="text-xs font-medium text-slate-400">
-              API Secret <span className="text-slate-600">(optional)</span>
+              API Secret
             </label>
             <input
               type="password"
@@ -144,6 +231,22 @@ function AddKeyModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
             />
           </div>
 
+          {/* Passphrase (Polymarket only) */}
+          {service === 'polymarket' && (
+            <div>
+              <label className="text-xs font-medium text-slate-400">
+                Passphrase
+              </label>
+              <input
+                type="password"
+                value={passphrase}
+                onChange={(e) => setPassphrase(e.target.value)}
+                placeholder="Paste your CLOB passphrase"
+                className="input mt-1 w-full font-mono text-sm"
+              />
+            </div>
+          )}
+
           {/* Environment */}
           <div>
             <label className="text-xs font-medium text-slate-400">Environment</label>
@@ -152,7 +255,7 @@ function AddKeyModal({ onClose, onSuccess }: { onClose: () => void; onSuccess: (
               onChange={(e) => setEnvironment(e.target.value as 'production' | 'sandbox' | 'testnet')}
               className="input mt-1 w-full"
             >
-              <option value="sandbox">Sandbox (Paper Trading)</option>
+              <option value="sandbox">Sandbox (Paper Trading) — Recommended to start</option>
               <option value="testnet">Testnet</option>
               <option value="production">Production (Real Money)</option>
             </select>
@@ -300,7 +403,20 @@ function ApiKeyCard({ apiKey, onDeleted }: { apiKey: MaskedApiKey; onDeleted: ()
 export function SettingsPage() {
   const { paperTrading, setPaperTrading } = usePortfolioStore();
   const queryClient = useQueryClient();
-  const [showAddModal, setShowAddModal] = useState(false);
+  const [addModalService, setAddModalService] = useState<string | undefined>(undefined);
+
+  // Auto-open modal if redirected with ?addKey=service
+  const [showAddModal, setShowAddModal] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const addKey = params.get('addKey');
+    if (addKey && ['coinbase', 'alpaca', 'polymarket'].includes(addKey)) {
+      setAddModalService(addKey);
+      // Clean URL
+      window.history.replaceState({}, '', window.location.pathname);
+      return true;
+    }
+    return false;
+  });
   const [riskSaved, setRiskSaved] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
 
@@ -625,14 +741,54 @@ export function SettingsPage() {
         {/* API Keys - REAL DATA */}
         <div className="card lg:col-span-2">
           <div className="flex items-center justify-between">
-            <div className="card-header">API Key Management</div>
+            <div className="card-header">Exchange Connections</div>
             <button
-              onClick={() => setShowAddModal(true)}
+              onClick={() => { setAddModalService(undefined); setShowAddModal(true); }}
               className="btn-primary flex items-center gap-2 text-sm"
             >
               <Plus className="h-4 w-4" />
               Add API Key
             </button>
+          </div>
+
+          {/* Connection Checklist */}
+          <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            {(['coinbase', 'alpaca', 'polymarket'] as const).map((svc) => {
+              const info = SERVICE_INFO[svc];
+              const connected = apiKeys.some((k) => k.service === svc);
+              const connectedKey = apiKeys.find((k) => k.service === svc);
+              return (
+                <div
+                  key={svc}
+                  className={`rounded-lg border p-3 ${
+                    connected
+                      ? 'border-green-500/30 bg-green-500/5'
+                      : 'border-slate-700/30 bg-slate-900/20'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    {connected ? (
+                      <CheckCircle className="h-4 w-4 text-green-400" />
+                    ) : (
+                      <XCircle className="h-4 w-4 text-slate-500" />
+                    )}
+                    <span className={`text-sm font-semibold ${info.color}`}>{info.label}</span>
+                  </div>
+                  {connected ? (
+                    <div className="mt-1 text-xs text-green-400/70">
+                      Connected ({connectedKey?.environment})
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => { setAddModalService(svc); setShowAddModal(true); }}
+                      className="mt-1.5 text-xs font-medium text-blue-400 hover:text-blue-300"
+                    >
+                      + Connect {info.label}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {keysLoading ? (
@@ -643,17 +799,10 @@ export function SettingsPage() {
           ) : apiKeys.length === 0 ? (
             <div className="rounded-lg border border-dashed border-slate-700 bg-slate-900/20 py-8 text-center">
               <Key className="mx-auto h-8 w-8 text-slate-600" />
-              <p className="mt-2 text-sm text-slate-400">No API keys configured</p>
+              <p className="mt-2 text-sm text-slate-400">No API keys configured yet</p>
               <p className="mt-1 text-xs text-slate-500">
-                Add your exchange API keys to start trading
+                Click an exchange above to add your API keys. Step-by-step guides will walk you through it.
               </p>
-              <button
-                onClick={() => setShowAddModal(true)}
-                className="btn-primary mt-4 text-sm"
-              >
-                <Plus className="mr-1 inline h-4 w-4" />
-                Add Your First Key
-              </button>
             </div>
           ) : (
             <div className="space-y-3">
@@ -741,6 +890,7 @@ export function SettingsPage() {
         <AddKeyModal
           onClose={() => setShowAddModal(false)}
           onSuccess={invalidateKeys}
+          preSelectedService={addModalService}
         />
       )}
     </div>

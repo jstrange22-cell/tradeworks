@@ -11,6 +11,14 @@ import {
   Trash2,
   Loader2,
   X,
+  TrendingUp,
+  Repeat,
+  Zap,
+  ArrowUpRight,
+  Shuffle,
+  Store,
+  Brain,
+  Info,
 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
@@ -29,12 +37,51 @@ interface Strategy {
   updatedAt: string;
 }
 
+// Strategy type descriptions for user education
+const STRATEGY_TYPES: Record<string, { label: string; icon: typeof TrendingUp; description: string; color: string }> = {
+  trend_following: {
+    label: 'Trend Following',
+    icon: TrendingUp,
+    description: 'Rides established price trends using moving averages and momentum indicators. Best in trending markets.',
+    color: 'text-green-400',
+  },
+  mean_reversion: {
+    label: 'Mean Reversion',
+    icon: Repeat,
+    description: 'Buys when price drops below average and sells when above. Profits from price returning to the mean.',
+    color: 'text-blue-400',
+  },
+  momentum: {
+    label: 'Momentum',
+    icon: Zap,
+    description: 'Enters trades in the direction of strong recent price movement. Catches accelerating moves early.',
+    color: 'text-amber-400',
+  },
+  breakout: {
+    label: 'Breakout',
+    icon: ArrowUpRight,
+    description: 'Enters when price breaks through key support/resistance levels. Captures explosive moves.',
+    color: 'text-purple-400',
+  },
+  arbitrage: {
+    label: 'Arbitrage',
+    icon: Shuffle,
+    description: 'Exploits price differences between markets or exchanges for risk-free profits.',
+    color: 'text-cyan-400',
+  },
+  market_making: {
+    label: 'Market Making',
+    icon: Store,
+    description: 'Places both buy and sell orders to profit from the bid-ask spread. Earns from providing liquidity.',
+    color: 'text-pink-400',
+  },
+};
+
 export function StrategiesPage() {
   const queryClient = useQueryClient();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
 
-  // Fetch strategies from API
   const { data: strategiesData, isLoading } = useQuery({
     queryKey: ['strategies'],
     queryFn: () => apiClient.get<{ data: Strategy[] }>('/strategies'),
@@ -42,20 +89,17 @@ export function StrategiesPage() {
   });
   const strategies = strategiesData?.data ?? [];
 
-  // Toggle enabled
   const toggleMutation = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
       apiClient.patch(`/strategies/${id}`, { enabled }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['strategies'] }),
   });
 
-  // Delete
   const deleteMutation = useMutation({
     mutationFn: (id: string) => apiClient.delete(`/strategies/${id}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['strategies'] }),
   });
 
-  // Create
   const createMutation = useMutation({
     mutationFn: (data: {
       name: string;
@@ -85,6 +129,22 @@ export function StrategiesPage() {
         </button>
       </div>
 
+      {/* AI Insight Banner */}
+      <div className="card border-blue-500/20 bg-blue-500/5">
+        <div className="flex gap-3">
+          <Brain className="mt-0.5 h-5 w-5 shrink-0 text-blue-400" />
+          <div>
+            <h3 className="text-sm font-semibold text-blue-300">AI-Managed Strategies</h3>
+            <p className="mt-1 text-sm text-slate-400">
+              The AI engine uses your enabled strategies as <span className="text-slate-200">guidelines for its autonomous research</span>.
+              Each trading cycle, the Quant Analyst generates signals matching your strategy types, and the Risk Guardian
+              enforces the allocation and risk limits you set here. The AI adapts its research focus based on which strategies
+              are active.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {isLoading && (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-6 w-6 animate-spin text-blue-400" />
@@ -96,7 +156,7 @@ export function StrategiesPage() {
           <Lightbulb className="mx-auto h-12 w-12 text-slate-600" />
           <h3 className="mt-4 text-lg font-semibold text-slate-300">No Strategies</h3>
           <p className="mt-2 text-sm text-slate-500">
-            Create your first trading strategy to get started with automated trading.
+            Create a strategy to tell the AI what types of trades to look for.
           </p>
           <button
             onClick={() => setShowCreateForm(true)}
@@ -111,18 +171,27 @@ export function StrategiesPage() {
       <div className="grid grid-cols-1 gap-4">
         {strategies.map((strategy) => {
           const isExpanded = expandedId === strategy.id;
+          const typeMeta = STRATEGY_TYPES[strategy.strategyType];
+          const TypeIcon = typeMeta?.icon ?? Settings2;
 
           return (
             <div key={strategy.id} className="card">
-              {/* Strategy Header */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className={`h-3 w-3 rounded-full ${strategy.enabled ? 'bg-green-500' : 'bg-slate-600'}`} />
                   <div>
-                    <h3 className="font-semibold text-slate-200">{strategy.name}</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold text-slate-200">{strategy.name}</h3>
+                      {typeMeta && (
+                        <div className={`flex items-center gap-1 ${typeMeta.color}`}>
+                          <TypeIcon className="h-3.5 w-3.5" />
+                          <span className="text-xs">{typeMeta.label}</span>
+                        </div>
+                      )}
+                    </div>
                     <div className="flex items-center gap-2 text-xs text-slate-500">
                       <span className="badge-info">{strategy.market?.toUpperCase() ?? 'N/A'}</span>
-                      <span>{strategy.strategyType?.replace('_', ' ') ?? 'custom'}</span>
+                      {typeMeta && <span className="text-slate-600">{typeMeta.description.split('.')[0]}</span>}
                     </div>
                   </div>
                 </div>
@@ -239,6 +308,8 @@ function CreateStrategyModal({
   const [strategyType, setStrategyType] = useState('trend_following');
   const [paramsJson, setParamsJson] = useState('{\n  "period": 14,\n  "threshold": 0.5\n}');
 
+  const selectedType = STRATEGY_TYPES[strategyType];
+
   const handleSubmit = () => {
     if (!name.trim()) return;
     let params: Record<string, unknown> = {};
@@ -284,15 +355,20 @@ function CreateStrategyModal({
             <div>
               <label className="text-xs font-medium text-slate-400">Type</label>
               <select value={strategyType} onChange={(e) => setStrategyType(e.target.value)} className="input mt-1 w-full">
-                <option value="trend_following">Trend Following</option>
-                <option value="mean_reversion">Mean Reversion</option>
-                <option value="momentum">Momentum</option>
-                <option value="breakout">Breakout</option>
-                <option value="arbitrage">Arbitrage</option>
-                <option value="market_making">Market Making</option>
+                {Object.entries(STRATEGY_TYPES).map(([key, meta]) => (
+                  <option key={key} value={key}>{meta.label}</option>
+                ))}
               </select>
             </div>
           </div>
+
+          {/* Strategy Type Description */}
+          {selectedType && (
+            <div className="flex items-start gap-2 rounded-lg bg-slate-900/50 p-3">
+              <Info className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
+              <p className="text-xs text-slate-400">{selectedType.description}</p>
+            </div>
+          )}
 
           <div>
             <label className="text-xs font-medium text-slate-400">Parameters (JSON)</label>

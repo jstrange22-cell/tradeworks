@@ -14,11 +14,13 @@ import { riskRouter } from './routes/risk.js';
 import { agentsRouter } from './routes/agents.js';
 import { backtestRouter } from './routes/backtest.js';
 import { marketDataRouter } from './routes/market-data.js';
+import { instrumentsRouter } from './routes/instruments.js';
 import { portfolioRouter } from './routes/portfolio.js';
 import { apiKeysRouter } from './routes/api-keys.js';
 import { ordersRouter } from './routes/orders.js';
 import { engineRouter } from './routes/engine.js';
 import { settingsRouter } from './routes/settings.js';
+import { balancesRouter } from './routes/balances.js';
 
 const app: Express = express();
 const PORT = parseInt(process.env.PORT ?? '4000', 10);
@@ -47,6 +49,7 @@ app.use((req, _res, next) => {
 
 app.use('/api/v1/health', healthRouter);
 app.use('/api/v1/market', marketDataRouter);
+app.use('/api/v1/market/instruments', instrumentsRouter);
 
 // --- Development Routes (no auth for local dashboard) ---
 // TODO: Add authMiddleware back when JWT auth is configured
@@ -63,6 +66,7 @@ app.use('/api/v1/settings/api-keys', devAuth, apiKeysRouter);
 app.use('/api/v1/orders', devAuth, ordersRouter);
 app.use('/api/v1/engine', devAuth, engineRouter);
 app.use('/api/v1/settings', devAuth, settingsRouter);
+app.use('/api/v1/portfolio/balances', devAuth, balancesRouter);
 
 // --- Error Handling ---
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Globe, TrendingUp, TrendingDown, Loader2, RefreshCw, Key } from 'lucide-react';
+import { Globe, TrendingUp, TrendingDown, Loader2, RefreshCw, Key, Search } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import {
   LineChart,
@@ -7,12 +7,10 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { getMultipleTickers, getCandlesticks, toDisplayName, type CryptoTicker } from '@/lib/crypto-api';
+import { useInstruments, type InstrumentInfo } from '@/hooks/useInstrumentSearch';
+import { apiClient } from '@/lib/api-client';
 
 type TabType = 'crypto' | 'prediction' | 'equity';
-
-const CRYPTO_INSTRUMENTS = [
-  'BTC-USD', 'ETH-USD', 'SOL-USD', 'AVAX-USD', 'LINK-USD', 'DOGE-USD', 'CRO-USD',
-];
 
 function formatVolume(v: number): string {
   if (v >= 1_000_000_000) return `$${(v / 1_000_000_000).toFixed(1)}B`;
@@ -111,12 +109,59 @@ function CryptoMarketCard({ ticker }: { ticker: CryptoTicker }) {
   );
 }
 
+function PredictionMarketCard({ instrument }: { instrument: InstrumentInfo }) {
+  return (
+    <div className="card transition-all hover:border-slate-600/50">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-purple-500/10">
+          <Globe className="h-4 w-4 text-purple-400" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-medium leading-snug text-slate-200">
+            {instrument.displayName}
+          </h3>
+          <div className="mt-2 flex items-center gap-2">
+            <span className="rounded bg-purple-500/10 px-1.5 py-0.5 text-[10px] font-medium text-purple-400">
+              PREDICTION
+            </span>
+            <span className="text-xs text-slate-500">{instrument.exchange}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EquityMarketCard({ instrument }: { instrument: InstrumentInfo }) {
+  return (
+    <div className="card transition-all hover:border-slate-600/50">
+      <div className="flex items-start justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-200">{instrument.symbol}</h3>
+          <p className="mt-0.5 text-xs text-slate-500">{instrument.displayName}</p>
+        </div>
+        <span className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-400">
+          EQUITY
+        </span>
+      </div>
+      <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+        <span className="capitalize">{instrument.exchange}</span>
+        {instrument.tradable && (
+          <span className="rounded bg-green-500/10 px-1.5 py-0.5 text-[10px] text-green-400">
+            Tradable
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ConnectExchangeCard({ exchange, description }: { exchange: string; description: string }) {
   return (
-    <div className="col-span-full card border-dashed border-slate-700 bg-slate-900/20 py-8 text-center">
+    <div className="col-span-full card border-dashed border-slate-700 bg-slate-900/20 py-6 text-center">
       <Key className="mx-auto h-8 w-8 text-slate-600" />
       <p className="mt-2 text-sm text-slate-400">
-        Connect your {exchange} account to see live {description} data
+        Connect your {exchange} account to trade live {description}
       </p>
       <p className="mt-1 text-xs text-slate-500">
         Add your API keys in{' '}
@@ -129,15 +174,54 @@ function ConnectExchangeCard({ exchange, description }: { exchange: string; desc
   );
 }
 
+interface ApiKeysResponse {
+  data: Array<{ service: string }>;
+}
+
 export function MarketsPage() {
   const [tab, setTab] = useState<TabType>('crypto');
+  const [searchQuery, setSearchQuery] = useState('');
   const tabs: TabType[] = ['crypto', 'prediction', 'equity'];
 
+  // Fetch instruments dynamically per market
+  const { data: cryptoInstruments } = useInstruments('crypto', 50);
+  const { data: predictionInstruments, isLoading: loadingPrediction } = useInstruments('prediction', 100);
+  const { data: equityInstruments, isLoading: loadingEquity } = useInstruments('equities', 100);
+
+  // Check which exchanges are connected
+  const { data: apiKeysData } = useQuery<ApiKeysResponse>({
+    queryKey: ['api-keys-status'],
+    queryFn: () => apiClient.get<ApiKeysResponse>('/settings/api-keys'),
+    staleTime: 60_000,
+  });
+
+  const connectedExchanges = new Set(apiKeysData?.data?.map((k) => k.service) ?? []);
+  const hasPolymarket = connectedExchanges.has('polymarket');
+  const hasAlpaca = connectedExchanges.has('alpaca');
+
+  // Build crypto instrument list from dynamic data
+  const cryptoSymbols = (cryptoInstruments?.data ?? [])
+    .slice(0, 20)
+    .map((i) => i.symbol);
+
   const { data: tickers, isLoading, refetch } = useQuery({
-    queryKey: ['market-tickers', CRYPTO_INSTRUMENTS],
-    queryFn: () => getMultipleTickers(CRYPTO_INSTRUMENTS),
+    queryKey: ['market-tickers', cryptoSymbols],
+    queryFn: () => getMultipleTickers(cryptoSymbols),
     refetchInterval: 10_000,
-    enabled: tab === 'crypto',
+    enabled: tab === 'crypto' && cryptoSymbols.length > 0,
+  });
+
+  // Filter predictions and equities by search
+  const filteredPredictions = (predictionInstruments?.data ?? []).filter((i) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return i.displayName.toLowerCase().includes(q) || i.symbol.toLowerCase().includes(q);
+  });
+
+  const filteredEquities = (equityInstruments?.data ?? []).filter((i) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return i.displayName.toLowerCase().includes(q) || i.symbol.toLowerCase().includes(q);
   });
 
   return (
@@ -161,18 +245,33 @@ export function MarketsPage() {
         {tabs.map((t) => (
           <button
             key={t}
-            onClick={() => setTab(t)}
+            onClick={() => { setTab(t); setSearchQuery(''); }}
             className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${
               tab === t ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            {t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === 'equity' ? 'Equities' : t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>
 
+      {/* Search (for prediction & equity tabs) */}
+      {(tab === 'prediction' || tab === 'equity') && (
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder={tab === 'prediction' ? 'Search prediction markets...' : 'Search stocks and ETFs...'}
+            className="input w-full pl-9"
+          />
+        </div>
+      )}
+
       {/* Market Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {/* Crypto Tab */}
         {tab === 'crypto' && tickers?.map((ticker) => (
           <CryptoMarketCard key={ticker.instrument_name} ticker={ticker} />
         ))}
@@ -181,17 +280,67 @@ export function MarketsPage() {
             No market data available. Check connection.
           </div>
         )}
-        {tab === 'prediction' && (
-          <ConnectExchangeCard
-            exchange="Polymarket"
-            description="prediction market"
-          />
+
+        {/* Prediction Tab */}
+        {tab === 'prediction' && loadingPrediction && (
+          <div className="col-span-full flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
+            <span className="ml-2 text-sm text-slate-400">Loading prediction markets...</span>
+          </div>
         )}
-        {tab === 'equity' && (
-          <ConnectExchangeCard
-            exchange="Alpaca"
-            description="stock and ETF"
-          />
+        {tab === 'prediction' && !loadingPrediction && filteredPredictions.length > 0 && (
+          <>
+            {!hasPolymarket && (
+              <ConnectExchangeCard
+                exchange="Polymarket"
+                description="prediction markets"
+              />
+            )}
+            {filteredPredictions.slice(0, 40).map((inst) => (
+              <PredictionMarketCard key={inst.symbol} instrument={inst} />
+            ))}
+            {filteredPredictions.length > 40 && (
+              <div className="col-span-full text-center text-xs text-slate-500">
+                Showing 40 of {filteredPredictions.length} markets. Use search to narrow results.
+              </div>
+            )}
+          </>
+        )}
+        {tab === 'prediction' && !loadingPrediction && filteredPredictions.length === 0 && (
+          <div className="col-span-full text-center text-sm text-slate-500 py-8">
+            {searchQuery ? 'No prediction markets match your search.' : 'No prediction markets available.'}
+          </div>
+        )}
+
+        {/* Equity Tab */}
+        {tab === 'equity' && loadingEquity && (
+          <div className="col-span-full flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
+            <span className="ml-2 text-sm text-slate-400">Loading equities...</span>
+          </div>
+        )}
+        {tab === 'equity' && !loadingEquity && filteredEquities.length > 0 && (
+          <>
+            {!hasAlpaca && (
+              <ConnectExchangeCard
+                exchange="Alpaca"
+                description="stocks and ETFs"
+              />
+            )}
+            {filteredEquities.slice(0, 60).map((inst) => (
+              <EquityMarketCard key={inst.symbol} instrument={inst} />
+            ))}
+            {filteredEquities.length > 60 && (
+              <div className="col-span-full text-center text-xs text-slate-500">
+                Showing 60 of {filteredEquities.length} instruments. Use search to narrow results.
+              </div>
+            )}
+          </>
+        )}
+        {tab === 'equity' && !loadingEquity && filteredEquities.length === 0 && (
+          <div className="col-span-full text-center text-sm text-slate-500 py-8">
+            {searchQuery ? 'No equities match your search.' : 'No equity instruments available.'}
+          </div>
         )}
       </div>
     </div>

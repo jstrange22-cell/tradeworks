@@ -7,6 +7,7 @@ import { useInstrumentSearch } from '@/hooks/useInstrumentSearch';
 
 interface TradePanelProps {
   instrument?: string;
+  market?: string;
   onClose: () => void;
 }
 
@@ -22,10 +23,11 @@ interface OrderResponse {
   message: string;
 }
 
-export function TradePanel({ instrument: initialInstrument, onClose }: TradePanelProps) {
+export function TradePanel({ instrument: initialInstrument, market: initialMarket, onClose }: TradePanelProps) {
   const { paperTrading } = usePortfolioStore();
-  const { query, setQuery, results } = useInstrumentSearch();
+  const { query, setQuery, results, isLoading: searchLoading } = useInstrumentSearch();
   const [instrument, setInstrument] = useState(initialInstrument ?? '');
+  const [selectedMarket, setSelectedMarket] = useState(initialMarket ?? '');
   const [showDropdown, setShowDropdown] = useState(false);
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [orderType, setOrderType] = useState<'market' | 'limit' | 'stop'>('market');
@@ -52,6 +54,7 @@ export function TradePanel({ instrument: initialInstrument, onClose }: TradePane
       quantity: number;
       orderType: string;
       price?: number;
+      market?: string;
     }) => apiClient.post<OrderResponse>('/orders', data),
     onSuccess: (data) => {
       setOrderResult(data.data);
@@ -67,6 +70,7 @@ export function TradePanel({ instrument: initialInstrument, onClose }: TradePane
       quantity: number;
       orderType: string;
       price?: number;
+      market?: string;
     } = {
       instrument: instrument.trim(),
       side,
@@ -76,6 +80,10 @@ export function TradePanel({ instrument: initialInstrument, onClose }: TradePane
 
     if (orderType !== 'market' && price) {
       order.price = parseFloat(price);
+    }
+
+    if (selectedMarket) {
+      order.market = selectedMarket;
     }
 
     setOrderResult(null);
@@ -120,11 +128,21 @@ export function TradePanel({ instrument: initialInstrument, onClose }: TradePane
               <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-slate-700 bg-slate-800 shadow-lg">
                 {results.map((r) => (
                   <button
-                    key={r}
-                    onClick={() => { setInstrument(r); setShowDropdown(false); }}
-                    className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-700"
+                    key={r.symbol}
+                    onClick={() => {
+                      setInstrument(r.symbol);
+                      setSelectedMarket(r.market);
+                      setShowDropdown(false);
+                    }}
+                    className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-700"
                   >
-                    {r}
+                    <div>
+                      <span className="font-medium">{r.symbol}</span>
+                      <span className="ml-2 text-xs text-slate-500">{r.displayName}</span>
+                    </div>
+                    <span className="rounded bg-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400">
+                      {r.market}
+                    </span>
                   </button>
                 ))}
               </div>

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { CandlestickChart, Loader2, ShoppingCart } from 'lucide-react';
+import { CandlestickChart, Loader2, ShoppingCart, Search } from 'lucide-react';
 import { TradePanel } from '@/components/trade/TradePanel';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -22,11 +22,7 @@ import {
   type CryptoTrade,
 } from '@/lib/crypto-api';
 import { sma, ema, rsi, macd, bollinger } from '@tradeworks/indicators';
-
-const CRYPTO_INSTRUMENTS = [
-  'BTC-USD', 'ETH-USD', 'SOL-USD', 'AVAX-USD', 'LINK-USD',
-  'DOGE-USD', 'ADA-USD', 'DOT-USD', 'CRO-USD',
-];
+import { useInstrumentSearch, type InstrumentInfo } from '@/hooks/useInstrumentSearch';
 
 const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d'] as const;
 
@@ -99,12 +95,27 @@ function formatQty(qty: string): string {
 
 export function ChartsPage() {
   const [instrument, setInstrument] = useState('BTC-USD');
+  const [instrumentMarket, setInstrumentMarket] = useState<string>('crypto');
   const [timeframe, setTimeframe] = useState<string>('1h');
   const [activeIndicators, setActiveIndicators] = useState<Set<IndicatorId>>(new Set());
   const [showTradePanel, setShowTradePanel] = useState(false);
+  const [showInstrumentSearch, setShowInstrumentSearch] = useState(false);
+  const { query: instrumentQuery, setQuery: setInstrumentQuery, results: instrumentResults, isLoading: searchingInstruments } = useInstrumentSearch();
+  const instrumentSearchRef = useRef<HTMLDivElement>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const indicatorSeriesRef = useRef<Map<string, ISeriesApi<'Line' | 'Histogram'>>>(new Map());
+
+  // Close instrument search dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (instrumentSearchRef.current && !instrumentSearchRef.current.contains(e.target as Node)) {
+        setShowInstrumentSearch(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
 
   const { data: candleData, isLoading, error } = useQuery({
     queryKey: ['candles', instrument, timeframe],
@@ -301,17 +312,51 @@ export function ChartsPage() {
 
       {/* Controls */}
       <div className="card flex flex-wrap items-center gap-4">
-        <div className="flex items-center gap-2">
+        <div className="relative flex items-center gap-2" ref={instrumentSearchRef}>
           <label className="text-xs text-slate-500">Instrument:</label>
-          <select
-            value={instrument}
-            onChange={(e) => setInstrument(e.target.value)}
-            className="input py-1.5 text-sm"
-          >
-            {CRYPTO_INSTRUMENTS.map((inst) => (
-              <option key={inst} value={inst}>{inst}</option>
-            ))}
-          </select>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              value={showInstrumentSearch ? instrumentQuery : instrument}
+              onChange={(e) => {
+                setInstrumentQuery(e.target.value);
+                setShowInstrumentSearch(true);
+              }}
+              onFocus={() => {
+                setInstrumentQuery(instrument);
+                setShowInstrumentSearch(true);
+              }}
+              placeholder="Search BTC, AAPL, ETH..."
+              className="input w-52 py-1.5 pl-8 text-sm"
+            />
+            {searchingInstruments && (
+              <Loader2 className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-blue-400" />
+            )}
+          </div>
+          {showInstrumentSearch && instrumentResults.length > 0 && (
+            <div className="absolute left-0 top-full z-20 mt-1 max-h-64 w-80 overflow-y-auto rounded-lg border border-slate-700 bg-slate-800 shadow-xl">
+              {instrumentResults.map((r: InstrumentInfo) => (
+                <button
+                  key={r.symbol}
+                  onClick={() => {
+                    setInstrument(r.symbol);
+                    setInstrumentMarket(r.market);
+                    setShowInstrumentSearch(false);
+                  }}
+                  className="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-slate-700"
+                >
+                  <div className="min-w-0">
+                    <span className="font-medium">{r.symbol}</span>
+                    <span className="ml-2 truncate text-xs text-slate-500">{r.displayName}</span>
+                  </div>
+                  <span className="ml-2 shrink-0 rounded bg-slate-700 px-1.5 py-0.5 text-[10px] text-slate-400">
+                    {r.market}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-1">
@@ -490,6 +535,7 @@ export function ChartsPage() {
       {showTradePanel && (
         <TradePanel
           instrument={instrument}
+          market={instrumentMarket}
           onClose={() => setShowTradePanel(false)}
         />
       )}

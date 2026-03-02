@@ -17,6 +17,7 @@ const OrderSchema = z.object({
   orderType: z.enum(['market', 'limit', 'stop', 'stop_limit']).default('market'),
   price: z.number().positive().optional(),
   stopPrice: z.number().positive().optional(),
+  market: z.enum(['crypto', 'equities', 'prediction']).optional(),
 });
 
 /**

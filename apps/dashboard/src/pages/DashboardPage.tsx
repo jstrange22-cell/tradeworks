@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   LineChart,
   Line,
@@ -18,7 +19,16 @@ import {
   Target,
   Briefcase,
 } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePortfolio } from '@/hooks/usePortfolio';
+import { apiClient } from '@/lib/api-client';
+import { GettingStartedWizard } from '@/components/onboarding/GettingStartedWizard';
+import { WalletOverview } from '@/components/portfolio/WalletOverview';
+
+interface ApiKeysResponse {
+  data: Array<{ id: string; service: string; keyName: string; maskedKey: string; environment: string; createdAt: string }>;
+  total: number;
+}
 
 const PIE_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6'];
 
@@ -36,8 +46,30 @@ export function DashboardPage() {
     equityCurve,
   } = usePortfolio();
 
+  const [onboardingComplete, setOnboardingComplete] = useState(
+    () => localStorage.getItem('tradeworks_onboarding_complete') === 'true'
+  );
+  const [addKeyService, setAddKeyService] = useState<string | undefined>(undefined);
+  const [showAddKeyModal, setShowAddKeyModal] = useState(false);
+
+  // Fetch API keys to check connection status
+  const { data: apiKeysData } = useQuery<ApiKeysResponse>({
+    queryKey: ['api-keys'],
+    queryFn: () => apiClient.get<ApiKeysResponse>('/settings/api-keys'),
+  });
+  const queryClient = useQueryClient();
+
+  const connectedExchanges = (apiKeysData?.data ?? []).map((k) => k.service);
+  const hasNoKeys = connectedExchanges.length === 0;
+
   const totalReturn = initialCapital > 0 ? ((equity - initialCapital) / initialCapital) * 100 : 0;
   const isEmpty = equity === 0 && totalTrades === 0 && openPositions.length === 0;
+  const showWizard = isEmpty && hasNoKeys && !onboardingComplete;
+
+  const handleOnboardingComplete = () => {
+    localStorage.setItem('tradeworks_onboarding_complete', 'true');
+    setOnboardingComplete(true);
+  };
 
   // Compute allocation by market
   const allocationData = (() => {
@@ -61,16 +93,35 @@ export function DashboardPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-slate-100">Portfolio Overview</h1>
 
-      {isEmpty && (
+      {showWizard && (
+        <GettingStartedWizard
+          onComplete={handleOnboardingComplete}
+          onOpenAddKey={(service) => {
+            // Navigate to settings with service pre-selected
+            window.location.href = `/settings?addKey=${service}`;
+          }}
+          connectedExchanges={connectedExchanges}
+        />
+      )}
+
+      {isEmpty && !showWizard && (
         <div className="card border-blue-500/30 bg-blue-500/5 py-8 text-center">
           <h2 className="text-lg font-semibold text-slate-200">Welcome to TradeWorks</h2>
           <p className="mt-2 text-sm text-slate-400">
-            Add your exchange API keys in{' '}
-            <a href="/settings" className="text-blue-400 underline hover:text-blue-300">Settings</a>{' '}
-            to get started with trading.
-          </p>
-          <p className="mt-1 text-xs text-slate-500">
-            Once configured, you can place trades from the Charts page or start the AI trading engine from the Agents page.
+            {hasNoKeys ? (
+              <>
+                Add your exchange API keys in{' '}
+                <a href="/settings" className="text-blue-400 underline hover:text-blue-300">Settings</a>{' '}
+                to get started with trading.
+              </>
+            ) : (
+              <>
+                Your exchanges are connected! Start the{' '}
+                <a href="/agents" className="text-blue-400 underline hover:text-blue-300">AI Engine</a>{' '}
+                or place a manual trade from{' '}
+                <a href="/charts" className="text-blue-400 underline hover:text-blue-300">Charts</a>.
+              </>
+            )}
           </p>
         </div>
       )}
@@ -150,6 +201,9 @@ export function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Exchange Balances */}
+      <WalletOverview />
 
       {/* Charts row */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
