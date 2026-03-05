@@ -1,6 +1,7 @@
 import { Router, type Router as RouterType } from 'express';
 import { getApiKeysByService, decryptApiKey } from '@tradeworks/db';
 import { getMemoryKeysByService } from './api-keys.js';
+import { isSolanaConnected, getSolanaKeypair, getSolanaConnection } from './solana-utils.js';
 
 /**
  * Exchange balance endpoints.
@@ -299,6 +300,86 @@ async function fetchPolymarketBalances(apiKey: string, funderAddress: string): P
   }
 }
 
+// ── Solana balance fetcher ──────────────────────────────────────────────
+
+async function fetchSolanaBalances(): Promise<AssetBalance[]> {
+  try {
+    const keypair = getSolanaKeypair();
+    const connection = getSolanaConnection();
+    const { TOKEN_PROGRAM_ID } = await import('@solana/spl-token');
+
+    // SOL balance
+    const lamports = await connection.getBalance(keypair.publicKey);
+    const solBalance = lamports / 1e9;
+
+    // Fetch SOL price
+    let solPrice = 0;
+    try {
+      const priceRes = await fetch('https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112');
+      if (priceRes.ok) {
+        const priceJson = (await priceRes.json()) as {
+          data: Record<string, { price: string } | undefined>;
+        };
+        solPrice = parseFloat(priceJson.data['So11111111111111111111111111111111111111112']?.price ?? '0');
+      }
+    } catch { /* price unavailable */ }
+
+    const assets: AssetBalance[] = [
+      {
+        symbol: 'SOL',
+        available: solBalance,
+        total: solBalance,
+        valueUsd: solBalance * solPrice,
+      },
+    ];
+
+    // SPL token balances
+    const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
+      keypair.publicKey,
+      { programId: TOKEN_PROGRAM_ID },
+    );
+
+    const mints: string[] = [];
+    const tokenEntries: { symbol: string; amount: number; mint: string }[] = [];
+
+    for (const account of tokenAccounts.value) {
+      const parsed = account.account.data.parsed?.info;
+      if (!parsed) continue;
+      const amount = parseFloat(parsed.tokenAmount?.uiAmountString ?? '0');
+      if (amount <= 0) continue;
+      const mint = parsed.mint as string;
+      mints.push(mint);
+      tokenEntries.push({ symbol: mint.slice(0, 6), amount, mint });
+    }
+
+    // Fetch token prices
+    if (mints.length > 0) {
+      try {
+        const priceRes = await fetch(`https://api.jup.ag/price/v2?ids=${mints.join(',')}`);
+        if (priceRes.ok) {
+          const priceJson = (await priceRes.json()) as {
+            data: Record<string, { price: string } | undefined>;
+          };
+          for (const entry of tokenEntries) {
+            const price = parseFloat(priceJson.data[entry.mint]?.price ?? '0');
+            assets.push({
+              symbol: entry.symbol,
+              available: entry.amount,
+              total: entry.amount,
+              valueUsd: entry.amount * price,
+            });
+          }
+        }
+      } catch { /* prices unavailable */ }
+    }
+
+    return assets;
+  } catch (error) {
+    console.error('[Balances] Solana fetch failed:', error);
+    throw error;
+  }
+}
+
 // ── Shared balance fetcher (used by portfolio.ts too) ──────────────────
 
 export async function fetchAllExchangeBalances(): Promise<{
@@ -394,6 +475,30 @@ export async function fetchAllExchangeBalances(): Promise<{
       exchanges.push({
         exchange: config.label,
         environment: 'unknown',
+        connected: false,
+        error: error instanceof Error ? error.message : 'Failed to fetch balances',
+        assets: [],
+        totalValueUsd: 0,
+      });
+    }
+  }
+
+  // ── Solana Wallet (separate from exchange key pattern) ──────────────
+  if (isSolanaConnected()) {
+    try {
+      const assets = await fetchSolanaBalances();
+      const totalValueUsd = assets.reduce((sum, a) => sum + a.valueUsd, 0);
+      exchanges.push({
+        exchange: 'Solana Wallet',
+        environment: 'production',
+        connected: true,
+        assets,
+        totalValueUsd,
+      });
+    } catch (error) {
+      exchanges.push({
+        exchange: 'Solana Wallet',
+        environment: 'production',
         connected: false,
         error: error instanceof Error ? error.message : 'Failed to fetch balances',
         assets: [],

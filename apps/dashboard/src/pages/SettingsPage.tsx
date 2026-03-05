@@ -60,6 +60,7 @@ const SERVICE_INFO: Record<string, { label: string; color: string; description: 
   coinbase: { label: 'Coinbase', color: 'text-blue-400', description: 'Cryptocurrency trading via Coinbase Advanced' },
   alpaca: { label: 'Alpaca', color: 'text-green-400', description: 'Stock & ETF trading via Alpaca' },
   polymarket: { label: 'Polymarket', color: 'text-purple-400', description: 'Prediction market trading via Polymarket CLOB' },
+  solana: { label: 'Solana', color: 'text-violet-400', description: 'Solana meme coin trading via bot wallet' },
 };
 
 // ---------------------------------------------------------------------------
@@ -97,6 +98,16 @@ const EXCHANGE_SETUP_GUIDES: Record<string, { steps: { text: string; link?: stri
     ],
     fields: ['apiKey', 'apiSecret', 'passphrase'],
   },
+  solana: {
+    steps: [
+      { text: 'Create a NEW Solana wallet dedicated for bot trading (e.g., in Phantom)' },
+      { text: 'Fund it with SOL for trading and transaction fees' },
+      { text: 'Export the private key (base58 format, 88 characters)' },
+      { text: 'Paste the private key below — it will be encrypted and stored securely' },
+      { text: 'Optional: add a custom RPC URL (Helius, QuickNode) in "API Secret" field' },
+    ],
+    fields: ['apiKey'],
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -104,8 +115,8 @@ const EXCHANGE_SETUP_GUIDES: Record<string, { steps: { text: string; link?: stri
 // ---------------------------------------------------------------------------
 
 function AddKeyModal({ onClose, onSuccess, preSelectedService }: { onClose: () => void; onSuccess: () => void; preSelectedService?: string }) {
-  const [service, setService] = useState<'coinbase' | 'alpaca' | 'polymarket'>(
-    (preSelectedService as 'coinbase' | 'alpaca' | 'polymarket') ?? 'coinbase'
+  const [service, setService] = useState<'coinbase' | 'alpaca' | 'polymarket' | 'solana'>(
+    (preSelectedService as 'coinbase' | 'alpaca' | 'polymarket' | 'solana') ?? 'coinbase'
   );
   const [keyName, setKeyName] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -157,12 +168,13 @@ function AddKeyModal({ onClose, onSuccess, preSelectedService }: { onClose: () =
             <label className="text-xs font-medium text-slate-400">Exchange</label>
             <select
               value={service}
-              onChange={(e) => { setService(e.target.value as 'coinbase' | 'alpaca' | 'polymarket'); setShowGuide(true); }}
+              onChange={(e) => { setService(e.target.value as 'coinbase' | 'alpaca' | 'polymarket' | 'solana'); setShowGuide(true); }}
               className="input mt-1 w-full"
             >
               <option value="coinbase">Coinbase — Crypto Trading</option>
               <option value="alpaca">Alpaca — Stocks & ETFs</option>
               <option value="polymarket">Polymarket — Prediction Markets</option>
+              <option value="solana">Solana — Meme Coin Bot Wallet</option>
             </select>
           </div>
 
@@ -1021,8 +1033,8 @@ export function SettingsPage() {
           </div>
 
           {/* Connection Checklist */}
-          <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
-            {(['coinbase', 'alpaca', 'polymarket'] as const).map((svc) => {
+          <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {(['coinbase', 'alpaca', 'polymarket', 'solana'] as const).map((svc) => {
               const info = SERVICE_INFO[svc];
               const connected = apiKeys.some((k) => k.service === svc);
               const connectedKey = apiKeys.find((k) => k.service === svc);

@@ -8,6 +8,7 @@ import {
   Lightbulb,
   CandlestickChart,
   Globe,
+  Zap,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -21,6 +22,7 @@ const navItems = [
   { to: '/strategies', icon: Lightbulb, label: 'Strategies' },
   { to: '/charts', icon: CandlestickChart, label: 'Charts' },
   { to: '/markets', icon: Globe, label: 'Markets' },
+  { to: '/solana', icon: Zap, label: 'Solana' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ] as const;
 

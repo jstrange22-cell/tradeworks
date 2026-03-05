@@ -11,6 +11,7 @@ import {
   encryptApiKey,
   decryptApiKey,
 } from '@tradeworks/db';
+import { isValidSolanaPrivateKey, publicKeyFromPrivateKey } from './solana-utils.js';
 
 /**
  * API Key management routes.
@@ -108,7 +109,7 @@ export function getMemoryKeysByService(service: string): MemoryApiKey[] {
  * API Key creation schema.
  */
 const ApiKeySchema = z.object({
-  service: z.enum(['coinbase', 'alpaca', 'polymarket']),
+  service: z.enum(['coinbase', 'alpaca', 'polymarket', 'solana']),
   keyName: z.string().min(1),
   apiKey: z.string().min(1),
   apiSecret: z.string().optional(),
@@ -371,6 +372,32 @@ apiKeysRouter.post('/:id/test', async (req, res) => {
           message = success
             ? 'Polymarket endpoint reachable'
             : `Polymarket returned ${response.status}: ${response.statusText}`;
+          break;
+        }
+
+        case 'solana': {
+          // Validate the private key and check SOL balance
+          if (!isValidSolanaPrivateKey(decryptedKey)) {
+            success = false;
+            message = 'Invalid Solana private key. Must be a base58-encoded 64-byte secret key.';
+            break;
+          }
+
+          const pubkey = publicKeyFromPrivateKey(decryptedKey);
+
+          // Try connecting to RPC and fetching balance
+          const { Connection, clusterApiUrl } = await import('@solana/web3.js');
+          const rpcUrl = (decryptedSecret && decryptedSecret.startsWith('http'))
+            ? decryptedSecret
+            : (process.env.SOLANA_RPC_URL ?? clusterApiUrl('mainnet-beta'));
+
+          const conn = new Connection(rpcUrl, 'confirmed');
+          const { PublicKey } = await import('@solana/web3.js');
+          const balance = await conn.getBalance(new PublicKey(pubkey));
+          const solBalance = balance / 1e9;
+
+          success = true;
+          message = `Solana wallet connected — ${pubkey.slice(0, 4)}...${pubkey.slice(-4)} — ${solBalance.toFixed(4)} SOL`;
           break;
         }
 

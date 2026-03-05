@@ -22,6 +22,9 @@ import { engineRouter, initEngine } from './routes/engine.js';
 import { settingsRouter } from './routes/settings.js';
 import { balancesRouter } from './routes/balances.js';
 import { assetProtectionRouter } from './routes/asset-protection.js';
+import { solanaBalancesRouter } from './routes/solana-balances.js';
+import { solanaSwapRouter } from './routes/solana-swap.js';
+import { solanaScannerRouter } from './routes/solana-scanner.js';
 
 const app: Express = express();
 const PORT = parseInt(process.env.PORT ?? '4000', 10);
@@ -75,6 +78,11 @@ app.use('/api/v1/engine', devAuth, engineRouter);
 app.use('/api/v1/settings', devAuth, settingsRouter);
 app.use('/api/v1/portfolio/balances', devAuth, balancesRouter);
 app.use('/api/v1/settings/asset-protection', devAuth, assetProtectionRouter);
+
+// --- Solana Routes ---
+app.use('/api/v1/solana', devAuth, solanaBalancesRouter);
+app.use('/api/v1/solana', devAuth, solanaSwapRouter);
+app.use('/api/v1/solana', devAuth, solanaScannerRouter);
 
 // --- Error Handling ---
 

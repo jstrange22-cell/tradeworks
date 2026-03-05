@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { AppShell } from '@/components/layout/AppShell';
+import { SolanaWalletProvider } from '@/providers/SolanaWalletProvider';
 
 const DashboardPage = lazy(() => import('@/pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
 const TradesPage = lazy(() => import('@/pages/TradesPage').then(m => ({ default: m.TradesPage })));
@@ -10,6 +11,7 @@ const StrategiesPage = lazy(() => import('@/pages/StrategiesPage').then(m => ({ 
 const ChartsPage = lazy(() => import('@/pages/ChartsPage').then(m => ({ default: m.ChartsPage })));
 const MarketsPage = lazy(() => import('@/pages/MarketsPage').then(m => ({ default: m.MarketsPage })));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
+const SolanaPage = lazy(() => import('@/pages/SolanaPage').then(m => ({ default: m.SolanaPage })));
 
 function PageLoader() {
   return (
@@ -30,11 +32,16 @@ const router = createBrowserRouter([
       { path: '/strategies', element: <Suspense fallback={<PageLoader />}><StrategiesPage /></Suspense> },
       { path: '/charts', element: <Suspense fallback={<PageLoader />}><ChartsPage /></Suspense> },
       { path: '/markets', element: <Suspense fallback={<PageLoader />}><MarketsPage /></Suspense> },
+      { path: '/solana', element: <Suspense fallback={<PageLoader />}><SolanaPage /></Suspense> },
       { path: '/settings', element: <Suspense fallback={<PageLoader />}><SettingsPage /></Suspense> },
     ],
   },
 ]);
 
 export function App() {
-  return <RouterProvider router={router} />;
+  return (
+    <SolanaWalletProvider>
+      <RouterProvider router={router} />
+    </SolanaWalletProvider>
+  );
 }
