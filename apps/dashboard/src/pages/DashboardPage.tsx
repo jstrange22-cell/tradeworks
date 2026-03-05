@@ -18,6 +18,12 @@ import {
   BarChart3,
   Target,
   Briefcase,
+  Rocket,
+  Crosshair,
+  Eye,
+  Brain,
+  Activity,
+  ExternalLink,
 } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePortfolio } from '@/hooks/usePortfolio';
@@ -61,6 +67,47 @@ export function DashboardPage() {
 
   const connectedExchanges = (apiKeysData?.data ?? []).map((k) => k.service);
   const hasNoKeys = connectedExchanges.length === 0;
+  const hasSolana = connectedExchanges.includes('solana');
+
+  // ── Solana data queries ──────────────────────────────────────────────
+  const { data: solBalanceData } = useQuery<{ data: { sol: number; usd: number; tokens: unknown[] } }>({
+    queryKey: ['sol-balance-dash'],
+    queryFn: () => apiClient.get('/solana/balances/wallet'),
+    enabled: hasSolana,
+    refetchInterval: 30_000,
+  });
+
+  const { data: sniperStatus } = useQuery<{ running: boolean; totalSnipes: number; successfulSnipes: number; dailySpentSol: number; openPositions: number }>({
+    queryKey: ['sniper-status-dash'],
+    queryFn: () => apiClient.get('/solana/sniper/status'),
+    enabled: hasSolana,
+    refetchInterval: 15_000,
+  });
+
+  const { data: whaleMonitor } = useQuery<{ running: boolean; trackedWhales: number; totalActivities: number }>({
+    queryKey: ['whale-monitor-dash'],
+    queryFn: () => apiClient.get('/solana/whales/monitor/status'),
+    enabled: hasSolana,
+    refetchInterval: 15_000,
+  });
+
+  const { data: moonshotAlerts } = useQuery<{ data: Array<{ mint: string; symbol: string; name: string; score: number; recommendation: string; rugRisk: string }> }>({
+    queryKey: ['moonshot-alerts-dash'],
+    queryFn: () => apiClient.get('/solana/moonshot/alerts'),
+    enabled: hasSolana,
+    refetchInterval: 30_000,
+  });
+
+  const { data: pumpfunStatus } = useQuery<{ running: boolean; totalDetected: number; recentLaunches: Array<{ mint: string; symbol: string; name: string; usdMarketCap: number; bondingCurveProgress: number }> }>({
+    queryKey: ['pumpfun-status-dash'],
+    queryFn: () => apiClient.get('/solana/pumpfun/monitor/status'),
+    enabled: hasSolana,
+    refetchInterval: 15_000,
+  });
+
+  const solBalance = solBalanceData?.data;
+  const topAlerts = moonshotAlerts?.data?.slice(0, 3) ?? [];
+  const recentPumpLaunches = pumpfunStatus?.recentLaunches?.slice(0, 5) ?? [];
 
   const totalReturn = initialCapital > 0 ? ((equity - initialCapital) / initialCapital) * 100 : 0;
   const isEmpty = equity === 0 && totalTrades === 0 && openPositions.length === 0;
@@ -204,6 +251,167 @@ export function DashboardPage() {
 
       {/* Exchange Balances */}
       <WalletOverview />
+
+      {/* ── Solana Meme Trading Overview ──────────────────────────────── */}
+      {hasSolana && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-100">
+              <Rocket className="h-5 w-5 text-purple-400" />
+              Solana Meme Trading
+            </h2>
+            <a
+              href="/solana"
+              className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300"
+            >
+              Full Dashboard <ExternalLink className="h-3 w-3" />
+            </a>
+          </div>
+
+          {/* Solana Status Cards */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {/* SOL Balance */}
+            <div className="card">
+              <div className="card-header flex items-center gap-2 text-xs">
+                <DollarSign className="h-3.5 w-3.5 text-purple-400" />
+                SOL Balance
+              </div>
+              <div className="text-lg font-bold text-slate-100">
+                {solBalance ? `${solBalance.sol.toFixed(3)}` : '--'}
+              </div>
+              <div className="text-xs text-slate-500">
+                {solBalance ? `≈ $${solBalance.usd.toFixed(2)}` : 'Loading...'}
+              </div>
+            </div>
+
+            {/* Sniper Engine */}
+            <div className="card">
+              <div className="card-header flex items-center gap-2 text-xs">
+                <Crosshair className="h-3.5 w-3.5 text-amber-400" />
+                Sniper Engine
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`h-2 w-2 rounded-full ${sniperStatus?.running ? 'bg-green-400 animate-pulse' : 'bg-slate-600'}`} />
+                <span className="text-sm font-medium text-slate-200">
+                  {sniperStatus?.running ? 'Active' : 'Stopped'}
+                </span>
+              </div>
+              <div className="text-xs text-slate-500">
+                {sniperStatus ? `${sniperStatus.successfulSnipes}/${sniperStatus.totalSnipes} snipes · ${sniperStatus.openPositions} open` : '--'}
+              </div>
+            </div>
+
+            {/* Whale Monitor */}
+            <div className="card">
+              <div className="card-header flex items-center gap-2 text-xs">
+                <Eye className="h-3.5 w-3.5 text-cyan-400" />
+                Whale Tracker
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`h-2 w-2 rounded-full ${whaleMonitor?.running ? 'bg-green-400 animate-pulse' : 'bg-slate-600'}`} />
+                <span className="text-sm font-medium text-slate-200">
+                  {whaleMonitor?.running ? 'Monitoring' : 'Stopped'}
+                </span>
+              </div>
+              <div className="text-xs text-slate-500">
+                {whaleMonitor ? `${whaleMonitor.trackedWhales} whales · ${whaleMonitor.totalActivities} txns` : '--'}
+              </div>
+            </div>
+
+            {/* pump.fun Monitor */}
+            <div className="card">
+              <div className="card-header flex items-center gap-2 text-xs">
+                <Activity className="h-3.5 w-3.5 text-pink-400" />
+                pump.fun
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`h-2 w-2 rounded-full ${pumpfunStatus?.running ? 'bg-green-400 animate-pulse' : 'bg-slate-600'}`} />
+                <span className="text-sm font-medium text-slate-200">
+                  {pumpfunStatus?.running ? 'Live' : 'Stopped'}
+                </span>
+              </div>
+              <div className="text-xs text-slate-500">
+                {pumpfunStatus ? `${pumpfunStatus.totalDetected} launches detected` : '--'}
+              </div>
+            </div>
+          </div>
+
+          {/* Bottom row: Moonshot Alerts + Recent pump.fun Launches */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            {/* Moonshot AI Alerts */}
+            <div className="card">
+              <div className="card-header flex items-center gap-2">
+                <Brain className="h-4 w-4 text-yellow-400" />
+                Moonshot Alerts
+              </div>
+              {topAlerts.length === 0 ? (
+                <p className="py-4 text-center text-xs text-slate-500">No high-score tokens detected</p>
+              ) : (
+                <div className="space-y-2">
+                  {topAlerts.map((alert) => (
+                    <div key={alert.mint} className="flex items-center justify-between rounded-lg bg-slate-800/50 px-3 py-2">
+                      <div>
+                        <span className="font-medium text-slate-200">{alert.symbol}</span>
+                        <span className="ml-2 text-xs text-slate-500">{alert.name}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${
+                          alert.rugRisk === 'low' ? 'bg-green-500/10 text-green-400' :
+                          alert.rugRisk === 'medium' ? 'bg-amber-500/10 text-amber-400' :
+                          'bg-red-500/10 text-red-400'
+                        }`}>
+                          {alert.rugRisk}
+                        </span>
+                        <span className={`text-sm font-bold ${
+                          alert.score >= 70 ? 'text-green-400' :
+                          alert.score >= 50 ? 'text-amber-400' : 'text-slate-400'
+                        }`}>
+                          {alert.score}/100
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Recent pump.fun Launches */}
+            <div className="card">
+              <div className="card-header flex items-center gap-2">
+                <Rocket className="h-4 w-4 text-pink-400" />
+                Recent pump.fun Launches
+              </div>
+              {recentPumpLaunches.length === 0 ? (
+                <p className="py-4 text-center text-xs text-slate-500">Start the pump.fun monitor to detect launches</p>
+              ) : (
+                <div className="space-y-2">
+                  {recentPumpLaunches.map((token) => (
+                    <div key={token.mint} className="flex items-center justify-between rounded-lg bg-slate-800/50 px-3 py-2">
+                      <div>
+                        <span className="font-medium text-slate-200">{token.symbol}</span>
+                        <span className="ml-2 text-xs text-slate-500 truncate max-w-[120px] inline-block align-bottom">{token.name}</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="w-16">
+                          <div className="h-1.5 rounded-full bg-slate-700">
+                            <div
+                              className="h-1.5 rounded-full bg-gradient-to-r from-pink-500 to-purple-500"
+                              style={{ width: `${Math.min(token.bondingCurveProgress, 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                        <span className="text-xs text-slate-400 w-16 text-right">
+                          ${token.usdMarketCap >= 1000 ? `${(token.usdMarketCap / 1000).toFixed(0)}k` : token.usdMarketCap.toFixed(0)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Charts row */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
