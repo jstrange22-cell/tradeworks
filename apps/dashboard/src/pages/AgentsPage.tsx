@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import {
   Bot,
   Brain,
@@ -14,6 +15,8 @@ import {
   Square,
   RefreshCw,
   Info,
+  Timer,
+  Activity,
 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
@@ -33,6 +36,29 @@ interface AgentStatusInfo {
   totalRuns: number;
   errorCount: number;
   tools: string[];
+}
+
+interface OrchestratorInfo {
+  status: string;
+  cycleCount: number;
+  cycleIntervalMs: number;
+  lastCycleAt: string | null;
+  nextCycleAt: string | null;
+  cycleInProgress: boolean;
+}
+
+interface LastCycleInfo {
+  summary: string;
+  status: string;
+  cycleNumber: number;
+  timestamp: string;
+  durationMs: number;
+}
+
+interface AgentStatusResponse {
+  data: AgentStatusInfo[];
+  orchestrator: OrchestratorInfo;
+  lastCycle: LastCycleInfo | null;
 }
 
 interface EngineStatus {
@@ -125,21 +151,45 @@ function formatUptime(ms: number): string {
 
 export function AgentsPage() {
   const queryClient = useQueryClient();
+  const [countdown, setCountdown] = useState<string>('');
 
   const { data: engineData } = useQuery({
     queryKey: ['engine-status'],
     queryFn: () => apiClient.get<{ data: EngineStatus }>('/engine/status'),
-    refetchInterval: 15_000,
+    refetchInterval: 5_000,
   });
   const engine = engineData?.data;
   const isRunning = engine?.status === 'running';
 
   const { data: agentData } = useQuery({
     queryKey: ['agents-status-api'],
-    queryFn: () => apiClient.get<{ data: AgentStatusInfo[] }>('/agents/status'),
-    refetchInterval: isRunning ? 15_000 : false,
+    queryFn: () => apiClient.get<AgentStatusResponse>('/agents/status'),
+    refetchInterval: isRunning ? 5_000 : 30_000,
   });
   const agents = agentData?.data ?? [];
+  const orchestrator = agentData?.orchestrator;
+  const lastCycle = agentData?.lastCycle;
+
+  // Countdown timer to next cycle
+  useEffect(() => {
+    if (!orchestrator?.nextCycleAt || !isRunning) {
+      setCountdown('');
+      return;
+    }
+    const update = () => {
+      const diff = new Date(orchestrator.nextCycleAt!).getTime() - Date.now();
+      if (diff <= 0) {
+        setCountdown('Starting...');
+        return;
+      }
+      const m = Math.floor(diff / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setCountdown(`${m}:${s.toString().padStart(2, '0')}`);
+    };
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [orchestrator?.nextCycleAt, isRunning]);
 
   const startMutation = useMutation({
     mutationFn: () => apiClient.post('/engine/start', {}),
@@ -241,6 +291,52 @@ export function AgentsPage() {
           {isRunning ? 'Stop Engine' : 'Start Engine'}
         </button>
       </div>
+
+      {/* Cycle Status Bar — shows last cycle summary + countdown to next */}
+      {isRunning && (
+        <div className="card flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <Activity className="h-5 w-5 text-blue-400" />
+            <div>
+              {orchestrator?.cycleInProgress ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+                  <span className="text-sm font-semibold text-blue-300">Cycle in progress...</span>
+                </div>
+              ) : lastCycle ? (
+                <div>
+                  <span className="text-sm font-semibold text-slate-200">
+                    Cycle #{lastCycle.cycleNumber}:{' '}
+                    <span className={
+                      lastCycle.status === 'completed' ? 'text-green-400' :
+                      lastCycle.status === 'error' ? 'text-red-400' :
+                      lastCycle.status === 'circuit_breaker' ? 'text-amber-400' :
+                      'text-slate-400'
+                    }>
+                      {lastCycle.status.replace('_', ' ').toUpperCase()}
+                    </span>
+                  </span>
+                  <p className="mt-0.5 text-xs text-slate-500">{lastCycle.summary}</p>
+                  <span className="text-[10px] text-slate-600">
+                    Duration: {(lastCycle.durationMs / 1000).toFixed(1)}s
+                  </span>
+                </div>
+              ) : (
+                <span className="text-sm text-slate-400">Waiting for first cycle...</span>
+              )}
+            </div>
+          </div>
+          {countdown && !orchestrator?.cycleInProgress && (
+            <div className="flex items-center gap-2 rounded-lg bg-slate-700/30 px-3 py-2">
+              <Timer className="h-4 w-4 text-slate-400" />
+              <div>
+                <span className="text-[10px] text-slate-500">Next cycle in</span>
+                <span className="ml-2 text-sm font-mono font-bold text-slate-200">{countdown}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Agent Cards with Descriptions */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-5">

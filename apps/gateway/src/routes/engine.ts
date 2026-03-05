@@ -113,6 +113,46 @@ const MAX_CYCLE_HISTORY = 100;
 let cycleTimer: ReturnType<typeof setInterval> | null = null;
 
 // ---------------------------------------------------------------------------
+// Live Agent Status — exported so agents.ts can read real-time state
+// ---------------------------------------------------------------------------
+
+export type AgentPhase = 'idle' | 'analyzing' | 'evaluating' | 'executing';
+
+/** Maps agent name → current phase during a cycle */
+export const agentLiveStatus = new Map<string, AgentPhase>([
+  ['Quant Analyst', 'idle'],
+  ['Sentiment Analyst', 'idle'],
+  ['Macro Analyst', 'idle'],
+  ['Risk Guardian', 'idle'],
+  ['Execution Specialist', 'idle'],
+]);
+
+/** Last completed cycle summary for display in agent page */
+export let lastCycleSummary: {
+  summary: string;
+  status: string;
+  cycleNumber: number;
+  timestamp: string;
+  durationMs: number;
+} | null = null;
+
+/** Whether a cycle is currently running */
+export let cycleInProgress = false;
+
+function setAllAgentsIdle(): void {
+  agentLiveStatus.set('Quant Analyst', 'idle');
+  agentLiveStatus.set('Sentiment Analyst', 'idle');
+  agentLiveStatus.set('Macro Analyst', 'idle');
+  agentLiveStatus.set('Risk Guardian', 'idle');
+  agentLiveStatus.set('Execution Specialist', 'idle');
+}
+
+/** Get engine state for agents to determine orchestrator status */
+export function getEngineState() {
+  return engineState;
+}
+
+// ---------------------------------------------------------------------------
 // Coinbase Advanced Trade API — CDP JWT Auth (ES256 + Ed25519) + Execution
 // ---------------------------------------------------------------------------
 
@@ -531,10 +571,13 @@ async function runAnalysisCycle(): Promise<CycleResult> {
   const startTime = Date.now();
   engineState.cycleCount += 1;
   const cycleNum = engineState.cycleCount;
+  cycleInProgress = true;
 
   try {
     // ── Phase 1: Quant Analysis ──
+    agentLiveStatus.set('Quant Analyst', 'analyzing');
     const analyses = await Promise.all(TRACKED_INSTRUMENTS.map(analyzeInstrument));
+    agentLiveStatus.set('Quant Analyst', 'idle');
     const valid = analyses.filter((a): a is InstrumentAnalysis => a !== null);
 
     if (valid.length === 0) {
@@ -546,6 +589,9 @@ async function runAnalysisCycle(): Promise<CycleResult> {
         decisions: [], riskAssessment: { portfolioHeat: 0, drawdownPercent: 0, approved: 0, rejected: 0 },
         executions: [], summary: 'Failed to fetch market data — retrying next cycle.',
       };
+      setAllAgentsIdle();
+      cycleInProgress = false;
+      lastCycleSummary = { summary: cycle.summary, status: 'error', cycleNumber: cycleNum, timestamp: cycle.timestamp, durationMs: cycle.durationMs };
       pushCycle(cycle);
       return cycle;
     }
@@ -565,12 +611,16 @@ async function runAnalysisCycle(): Promise<CycleResult> {
       : 0;
 
     // ── Phase 2: Sentiment (24h change proxy) ──
+    agentLiveStatus.set('Sentiment Analyst', 'analyzing');
     const avgChange = valid.reduce((sum, a) => sum + a.change24h, 0) / valid.length;
     const sentimentScore = Math.round(Math.max(-1, Math.min(1, avgChange * 5)) * 100) / 100;
     const sentimentLabel: CycleAgentOutput['sentimentLabel'] =
       sentimentScore > 0.2 ? 'bullish' : sentimentScore < -0.2 ? 'bearish' : 'neutral';
 
+    agentLiveStatus.set('Sentiment Analyst', 'idle');
+
     // ── Phase 3: Macro Regime ──
+    agentLiveStatus.set('Macro Analyst', 'analyzing');
     const avgRsi = valid.reduce((sum, a) => sum + a.rsiValue, 0) / valid.length;
     let macroRegime: CycleAgentOutput['macroRegime'] = 'neutral';
     let macroRiskLevel: CycleAgentOutput['macroRiskLevel'] = 'normal';
@@ -585,7 +635,10 @@ async function runAnalysisCycle(): Promise<CycleResult> {
       macroRegime = 'transition'; macroRiskLevel = 'normal';
     }
 
+    agentLiveStatus.set('Macro Analyst', 'idle');
+
     // ── Phase 4: Risk Assessment & Decisions ──
+    agentLiveStatus.set('Risk Guardian', 'evaluating');
     const maxRisk = 1.0; // 1% per trade
     const maxHeat = 6.0;
     let heat = 0;
@@ -611,7 +664,10 @@ async function runAnalysisCycle(): Promise<CycleResult> {
     const approvedD = decisions.filter(d => d.approved);
     const rejectedD = decisions.filter(d => !d.approved);
 
+    agentLiveStatus.set('Risk Guardian', 'idle');
+
     // ── Phase 5: Execution (Coinbase live or paper) ──
+    agentLiveStatus.set('Execution Specialist', 'executing');
     const coinbaseKeys = getCoinbaseKeys();
     const useLiveExecution = coinbaseKeys !== null
       && engineState.coinbaseConnected
@@ -785,6 +841,9 @@ async function runAnalysisCycle(): Promise<CycleResult> {
       summary,
     };
 
+    setAllAgentsIdle();
+    cycleInProgress = false;
+    lastCycleSummary = { summary, status, cycleNumber: cycleNum, timestamp: cycle.timestamp, durationMs: cycle.durationMs };
     pushCycle(cycle);
     console.log(`[Engine] Cycle #${cycleNum}: ${status} — ${summary}`);
     return cycle;
@@ -797,6 +856,9 @@ async function runAnalysisCycle(): Promise<CycleResult> {
       decisions: [], riskAssessment: { portfolioHeat: 0, drawdownPercent: 0, approved: 0, rejected: 0 },
       executions: [], summary: `Error: ${(err as Error).message}`,
     };
+    setAllAgentsIdle();
+    cycleInProgress = false;
+    lastCycleSummary = { summary: `Error: ${(err as Error).message}`, status: 'error', cycleNumber: cycleNum, timestamp: cycle.timestamp, durationMs: cycle.durationMs };
     pushCycle(cycle);
     console.error(`[Engine] Cycle #${cycleNum} error:`, err);
     return cycle;

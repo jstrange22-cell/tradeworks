@@ -1,4 +1,5 @@
-import { Wallet, ExternalLink, AlertCircle, Loader2, RefreshCw } from 'lucide-react';
+import { useState } from 'react';
+import { Wallet, ExternalLink, AlertCircle, Loader2, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 
@@ -36,12 +37,25 @@ const EXCHANGE_INFO: Record<string, { depositUrl: string; color: string; envLabe
     color: 'text-green-400',
     envLabel: { sandbox: 'Paper', production: 'Live' },
   },
+  Robinhood: {
+    depositUrl: 'https://robinhood.com/crypto',
+    color: 'text-emerald-400',
+    envLabel: { sandbox: 'Paper', production: 'Live' },
+  },
   Polymarket: {
     depositUrl: 'https://polymarket.com/wallet',
     color: 'text-purple-400',
     envLabel: { sandbox: 'Testnet', production: 'Live' },
   },
+  'Solana Wallet': {
+    depositUrl: 'https://solscan.io/',
+    color: 'text-violet-400',
+    envLabel: { production: 'Mainnet' },
+  },
 };
+
+const CASH_SYMBOLS = ['USD', 'USDC', 'USDT', 'DAI'];
+const DEFAULT_VISIBLE = 8;
 
 function formatUsd(value: number): string {
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
@@ -50,7 +64,7 @@ function formatUsd(value: number): string {
 }
 
 function formatAmount(amount: number, symbol: string): string {
-  if (['USD', 'USDC', 'USDT', 'DAI'].includes(symbol)) {
+  if (CASH_SYMBOLS.includes(symbol)) {
     return `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
   if (amount >= 1000) return amount.toLocaleString('en-US', { maximumFractionDigits: 2 });
@@ -60,6 +74,8 @@ function formatAmount(amount: number, symbol: string): string {
 
 export function WalletOverview() {
   const queryClient = useQueryClient();
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
   const { data, isLoading, error } = useQuery<BalancesResponse>({
     queryKey: ['portfolio-balances'],
     queryFn: () => apiClient.get<BalancesResponse>('/portfolio/balances'),
@@ -75,6 +91,9 @@ export function WalletOverview() {
   if (!isLoading && connectedExchanges.length === 0) {
     return null;
   }
+
+  const toggleExpand = (name: string) =>
+    setExpanded((prev) => ({ ...prev, [name]: !prev[name] }));
 
   return (
     <div className="card">
@@ -116,6 +135,11 @@ export function WalletOverview() {
           {connectedExchanges.map((exchange) => {
             const info = EXCHANGE_INFO[exchange.exchange];
             const envLabel = info?.envLabel[exchange.environment] ?? exchange.environment;
+            const isExpanded = expanded[exchange.exchange] ?? false;
+            const visibleAssets = isExpanded
+              ? exchange.assets
+              : exchange.assets.slice(0, DEFAULT_VISIBLE);
+            const hasMore = exchange.assets.length > DEFAULT_VISIBLE;
 
             return (
               <div
@@ -163,25 +187,44 @@ export function WalletOverview() {
                 {/* Asset List */}
                 {exchange.assets.length > 0 && (
                   <div className="mt-3 space-y-1.5">
-                    {exchange.assets.slice(0, 6).map((asset) => (
-                      <div key={asset.symbol} className="flex items-center justify-between text-xs">
-                        <span className="font-medium text-slate-300">{asset.symbol}</span>
-                        <div className="text-right">
-                          <span className="text-slate-300">
-                            {formatAmount(asset.available, asset.symbol)}
+                    {visibleAssets.map((asset) => {
+                      const isCash = asset.symbol === 'USD';
+                      return (
+                        <div
+                          key={asset.symbol}
+                          className={`flex items-center justify-between text-xs ${
+                            isCash ? 'rounded bg-green-500/5 px-1.5 py-1' : ''
+                          }`}
+                        >
+                          <span className={`font-medium ${isCash ? 'text-green-400' : 'text-slate-300'}`}>
+                            {isCash ? 'USD Cash' : asset.symbol}
                           </span>
-                          {asset.valueUsd > 0 && !['USD', 'USDC', 'USDT', 'DAI'].includes(asset.symbol) && (
-                            <span className="ml-1 text-slate-500">
-                              ({formatUsd(asset.valueUsd)})
+                          <div className="text-right">
+                            <span className={isCash ? 'font-semibold text-green-400' : 'text-slate-300'}>
+                              {formatAmount(asset.available, asset.symbol)}
                             </span>
-                          )}
+                            {asset.valueUsd > 0 && !CASH_SYMBOLS.includes(asset.symbol) && (
+                              <span className="ml-1 text-slate-500">
+                                ({formatUsd(asset.valueUsd)})
+                              </span>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                    {exchange.assets.length > 6 && (
-                      <div className="text-[10px] text-slate-500">
-                        +{exchange.assets.length - 6} more assets
-                      </div>
+                      );
+                    })}
+
+                    {/* Expand / Collapse toggle */}
+                    {hasMore && (
+                      <button
+                        onClick={() => toggleExpand(exchange.exchange)}
+                        className="flex w-full items-center justify-center gap-1 rounded py-1 text-[10px] text-blue-400 transition-colors hover:bg-slate-700/30 hover:text-blue-300"
+                      >
+                        {isExpanded ? (
+                          <>Show less <ChevronUp className="h-3 w-3" /></>
+                        ) : (
+                          <>+{exchange.assets.length - DEFAULT_VISIBLE} more assets <ChevronDown className="h-3 w-3" /></>
+                        )}
+                      </button>
                     )}
                   </div>
                 )}

@@ -8,6 +8,12 @@ import {
   getRecentCycles,
   type AgentLog,
 } from '@tradeworks/db';
+import {
+  agentLiveStatus,
+  lastCycleSummary,
+  cycleInProgress,
+  getEngineState,
+} from './engine.js';
 
 /**
  * Agent routes.
@@ -94,6 +100,9 @@ agentsRouter.get('/status', async (_req, res) => {
       }
     }
 
+    // Get live engine state for orchestrator status
+    const engineState = getEngineState();
+
     const agents = AGENT_DEFINITIONS.map((def) => {
       // Try to match the agent definition name to agentType in logs
       // Agent types in logs may use snake_case or different casing
@@ -102,10 +111,13 @@ agentsRouter.get('/status', async (_req, res) => {
         agentStats.get(def.name) ??
         { lastRunAt: null, lastDurationMs: null, totalRuns: 0, errorCount: 0 };
 
+      // Use live status from engine during active cycles, fall back to 'idle'
+      const livePhase = agentLiveStatus.get(def.name) ?? 'idle';
+
       return {
         name: def.name,
         model: def.model,
-        status: 'idle' as const,
+        status: livePhase === 'evaluating' ? 'deciding' as const : livePhase as 'idle' | 'analyzing' | 'executing',
         lastRunAt: stats.lastRunAt,
         lastDurationMs: stats.lastDurationMs,
         totalRuns: stats.totalRuns,
@@ -114,19 +126,28 @@ agentsRouter.get('/status', async (_req, res) => {
       };
     });
 
-    const cycleIntervalMs = parseInt(process.env.CYCLE_INTERVAL_MS ?? '300000', 10);
+    const cycleIntervalMs = engineState.config?.cycleIntervalMs ?? parseInt(process.env.CYCLE_INTERVAL_MS ?? '300000', 10);
+
+    // Determine orchestrator status from engine state
+    const orchestratorStatus = cycleInProgress
+      ? 'analyzing'
+      : engineState.status === 'running'
+        ? 'running'
+        : 'idle';
 
     res.json({
       data: agents,
       orchestrator: {
-        status: 'idle',
-        cycleCount,
+        status: orchestratorStatus,
+        cycleCount: engineState.cycleCount || cycleCount,
         cycleIntervalMs,
-        lastCycleAt,
-        nextCycleAt: lastCycleAt
-          ? new Date(new Date(lastCycleAt).getTime() + cycleIntervalMs).toISOString()
+        lastCycleAt: engineState.lastCycleAt || lastCycleAt,
+        nextCycleAt: (engineState.lastCycleAt || lastCycleAt)
+          ? new Date(new Date(engineState.lastCycleAt || lastCycleAt!).getTime() + cycleIntervalMs).toISOString()
           : null,
+        cycleInProgress,
       },
+      lastCycle: lastCycleSummary,
     });
   } catch (error) {
     console.error('[Agents] Error fetching agent status:', error);

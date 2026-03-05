@@ -264,6 +264,23 @@ pumpFunRouter.get('/pumpfun/monitor/status', (_req, res) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Auto-start — called from index.ts on server boot
+// ---------------------------------------------------------------------------
+
+/**
+ * Auto-start pump.fun monitor if not already running.
+ * Runs unconditionally (no Solana wallet needed — this monitors public data).
+ */
+export function initPumpFunMonitor(): void {
+  if (monitorRunning) {
+    console.log('[PumpFun] Monitor already running, skipping auto-start');
+    return;
+  }
+  console.log('[PumpFun] Auto-starting monitor (polls pump.fun API every 5s)...');
+  startMonitor(5000);
+}
+
 // Cleanup on shutdown
 process.on('SIGINT', () => stopMonitor());
 process.on('SIGTERM', () => stopMonitor());

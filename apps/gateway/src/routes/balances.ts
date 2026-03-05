@@ -460,6 +460,17 @@ export async function fetchAllExchangeBalances(): Promise<{
         }
       }
 
+      // Sort assets: USD/stablecoins first, then by value descending
+      const PRIORITY_SYMBOLS = ['USD', 'USDC', 'USDT', 'DAI'];
+      assets.sort((a, b) => {
+        const aPri = PRIORITY_SYMBOLS.indexOf(a.symbol);
+        const bPri = PRIORITY_SYMBOLS.indexOf(b.symbol);
+        if (aPri !== -1 && bPri === -1) return -1;
+        if (aPri === -1 && bPri !== -1) return 1;
+        if (aPri !== -1 && bPri !== -1) return aPri - bPri;
+        return b.valueUsd - a.valueUsd;
+      });
+
       const totalValueUsd = assets.reduce((sum, a) => sum + a.valueUsd, 0);
 
       exchanges.push({
@@ -487,6 +498,16 @@ export async function fetchAllExchangeBalances(): Promise<{
   if (isSolanaConnected()) {
     try {
       const assets = await fetchSolanaBalances();
+      // Sort: SOL first, then stablecoins, then by value
+      const SOL_PRIORITY = ['SOL', 'USDC', 'USDT'];
+      assets.sort((a, b) => {
+        const aPri = SOL_PRIORITY.indexOf(a.symbol);
+        const bPri = SOL_PRIORITY.indexOf(b.symbol);
+        if (aPri !== -1 && bPri === -1) return -1;
+        if (aPri === -1 && bPri !== -1) return 1;
+        if (aPri !== -1 && bPri !== -1) return aPri - bPri;
+        return b.valueUsd - a.valueUsd;
+      });
       const totalValueUsd = assets.reduce((sum, a) => sum + a.valueUsd, 0);
       exchanges.push({
         exchange: 'Solana Wallet',

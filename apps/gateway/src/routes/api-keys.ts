@@ -109,7 +109,7 @@ export function getMemoryKeysByService(service: string): MemoryApiKey[] {
  * API Key creation schema.
  */
 const ApiKeySchema = z.object({
-  service: z.enum(['coinbase', 'alpaca', 'polymarket', 'solana']),
+  service: z.enum(['coinbase', 'alpaca', 'polymarket', 'solana', 'robinhood']),
   keyName: z.string().min(1),
   apiKey: z.string().min(1),
   apiSecret: z.string().optional(),
@@ -398,6 +398,33 @@ apiKeysRouter.post('/:id/test', async (req, res) => {
 
           success = true;
           message = `Solana wallet connected — ${pubkey.slice(0, 4)}...${pubkey.slice(-4)} — ${solBalance.toFixed(4)} SOL`;
+          break;
+        }
+
+        case 'robinhood': {
+          // Test Robinhood Crypto API connection
+          try {
+            const response = await fetch('https://trading.robinhood.com/api/v1/crypto/trading/accounts/', {
+              headers: {
+                'Authorization': `Bearer ${decryptedKey}`,
+                'Content-Type': 'application/json',
+              },
+            });
+            // Even a 401 means the endpoint is reachable
+            if (response.ok) {
+              success = true;
+              message = 'Robinhood Crypto API connected successfully';
+            } else if (response.status === 401) {
+              success = false;
+              message = 'Robinhood API endpoint reachable but credentials rejected. Check your API key and secret.';
+            } else {
+              success = false;
+              message = `Robinhood API returned ${response.status}: ${response.statusText}`;
+            }
+          } catch (rhErr) {
+            success = false;
+            message = `Robinhood API unreachable: ${rhErr instanceof Error ? rhErr.message : String(rhErr)}`;
+          }
           break;
         }
 

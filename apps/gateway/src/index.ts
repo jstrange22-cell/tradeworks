@@ -25,10 +25,11 @@ import { assetProtectionRouter } from './routes/asset-protection.js';
 import { solanaBalancesRouter } from './routes/solana-balances.js';
 import { solanaSwapRouter } from './routes/solana-swap.js';
 import { solanaScannerRouter } from './routes/solana-scanner.js';
-import { pumpFunRouter } from './routes/solana-pumpfun.js';
+import { pumpFunRouter, initPumpFunMonitor } from './routes/solana-pumpfun.js';
 import { sniperRouter } from './routes/solana-sniper.js';
 import { whaleRouter } from './routes/solana-whales.js';
-import { moonshotRouter } from './routes/solana-moonshot.js';
+import { moonshotRouter, initMoonshotScanner } from './routes/solana-moonshot.js';
+import { robinhoodRouter } from './routes/robinhood.js';
 
 const app: Express = express();
 const PORT = parseInt(process.env.PORT ?? '4000', 10);
@@ -83,6 +84,9 @@ app.use('/api/v1/settings', devAuth, settingsRouter);
 app.use('/api/v1/portfolio/balances', devAuth, balancesRouter);
 app.use('/api/v1/settings/asset-protection', devAuth, assetProtectionRouter);
 
+// --- Robinhood Crypto Route ---
+app.use('/api/v1/robinhood', devAuth, robinhoodRouter);
+
 // --- Solana Routes ---
 app.use('/api/v1/solana', devAuth, solanaBalancesRouter);
 app.use('/api/v1/solana', devAuth, solanaSwapRouter);
@@ -120,6 +124,10 @@ server.listen(PORT, HOST, () => {
 
   // Auto-start the AI trading engine — runs 24/7 with zero intervention
   initEngine();
+
+  // Auto-start Solana monitors — pump.fun and moonshot run on public APIs (no wallet needed)
+  initPumpFunMonitor();
+  initMoonshotScanner();
 });
 
 // Graceful shutdown

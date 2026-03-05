@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, Save, Plus, Trash2, TestTube, Loader2, CheckCircle, XCircle, Key, ExternalLink, Info, Shield, ShieldOff, Lock, Unlock, Camera, DollarSign } from 'lucide-react';
+import { Settings, Save, Plus, Trash2, TestTube, Loader2, CheckCircle, XCircle, Key, ExternalLink, Info, Shield, ShieldOff, Lock, Unlock, Camera, DollarSign, Sparkles, AlertTriangle, Copy } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 import { usePortfolioStore } from '@/stores/portfolio-store';
@@ -59,6 +59,7 @@ interface AssetProtectionConfig {
 const SERVICE_INFO: Record<string, { label: string; color: string; description: string }> = {
   coinbase: { label: 'Coinbase', color: 'text-blue-400', description: 'Cryptocurrency trading via Coinbase Advanced' },
   alpaca: { label: 'Alpaca', color: 'text-green-400', description: 'Stock & ETF trading via Alpaca' },
+  robinhood: { label: 'Robinhood', color: 'text-emerald-400', description: 'Crypto trading via Robinhood Crypto API (crypto only — use Alpaca for stocks)' },
   polymarket: { label: 'Polymarket', color: 'text-purple-400', description: 'Prediction market trading via Polymarket CLOB' },
   solana: { label: 'Solana', color: 'text-violet-400', description: 'Solana meme coin trading via bot wallet' },
 };
@@ -89,6 +90,16 @@ const EXCHANGE_SETUP_GUIDES: Record<string, { steps: { text: string; link?: stri
     ],
     fields: ['apiKey', 'apiSecret'],
   },
+  robinhood: {
+    steps: [
+      { text: 'Go to Robinhood Crypto Trading API portal', link: 'https://robinhood.com/account/crypto-api' },
+      { text: 'Generate an API key pair (ED25519)' },
+      { text: 'Copy the API Key and paste below' },
+      { text: 'Copy the Private Key (PEM format) and paste in "API Secret" below' },
+      { text: 'Note: This is for CRYPTO trading only. For stocks/ETFs, use Alpaca.' },
+    ],
+    fields: ['apiKey', 'apiSecret'],
+  },
   polymarket: {
     steps: [
       { text: 'Go to Polymarket and connect a crypto wallet', link: 'https://polymarket.com' },
@@ -100,11 +111,11 @@ const EXCHANGE_SETUP_GUIDES: Record<string, { steps: { text: string; link?: stri
   },
   solana: {
     steps: [
-      { text: 'Create a NEW Solana wallet dedicated for bot trading (e.g., in Phantom)' },
-      { text: 'Fund it with SOL for trading and transaction fees' },
-      { text: 'Export the private key (base58 format, 88 characters)' },
-      { text: 'Paste the private key below — it will be encrypted and stored securely' },
-      { text: 'Optional: add a custom RPC URL (Helius, QuickNode) in "API Secret" field' },
+      { text: '⚡ Method A — Generate: Click "Generate Wallet" below to create a new keypair instantly' },
+      { text: '🦊 Method B — Phantom: Open Phantom → Settings → Security → Export Private Key → Paste below' },
+      { text: '💻 Method C — CLI: Run "solana-keygen new" and paste the base58 private key', link: 'https://docs.solanalabs.com/cli/wallets/file-system' },
+      { text: 'Fund the wallet with SOL (0.1+ SOL recommended for gas fees + trading)' },
+      { text: 'Optional: add a custom RPC URL (Helius, QuickNode) in "API Secret" field for faster transactions', link: 'https://www.helius.dev/' },
     ],
     fields: ['apiKey'],
   },
@@ -115,8 +126,9 @@ const EXCHANGE_SETUP_GUIDES: Record<string, { steps: { text: string; link?: stri
 // ---------------------------------------------------------------------------
 
 function AddKeyModal({ onClose, onSuccess, preSelectedService }: { onClose: () => void; onSuccess: () => void; preSelectedService?: string }) {
-  const [service, setService] = useState<'coinbase' | 'alpaca' | 'polymarket' | 'solana'>(
-    (preSelectedService as 'coinbase' | 'alpaca' | 'polymarket' | 'solana') ?? 'coinbase'
+  type ServiceType = 'coinbase' | 'alpaca' | 'robinhood' | 'polymarket' | 'solana';
+  const [service, setService] = useState<ServiceType>(
+    (preSelectedService as ServiceType) ?? 'coinbase'
   );
   const [keyName, setKeyName] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -168,11 +180,12 @@ function AddKeyModal({ onClose, onSuccess, preSelectedService }: { onClose: () =
             <label className="text-xs font-medium text-slate-400">Exchange</label>
             <select
               value={service}
-              onChange={(e) => { setService(e.target.value as 'coinbase' | 'alpaca' | 'polymarket' | 'solana'); setShowGuide(true); }}
+              onChange={(e) => { setService(e.target.value as ServiceType); setShowGuide(true); }}
               className="input mt-1 w-full"
             >
               <option value="coinbase">Coinbase — Crypto Trading</option>
               <option value="alpaca">Alpaca — Stocks & ETFs</option>
+              <option value="robinhood">Robinhood — Crypto Trading</option>
               <option value="polymarket">Polymarket — Prediction Markets</option>
               <option value="solana">Solana — Meme Coin Bot Wallet</option>
             </select>
@@ -235,15 +248,52 @@ function AddKeyModal({ onClose, onSuccess, preSelectedService }: { onClose: () =
 
           {/* API Key */}
           <div>
-            <label className="text-xs font-medium text-slate-400">API Key</label>
+            <label className="text-xs font-medium text-slate-400">
+              {service === 'solana' ? 'Private Key (base58)' : 'API Key'}
+            </label>
             <input
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder={service === 'coinbase' ? 'Key ID (UUID)' : 'Paste your API key'}
+              placeholder={service === 'coinbase' ? 'Key ID (UUID)' : service === 'solana' ? 'Base58 private key (88 chars)' : 'Paste your API key'}
               className="input mt-1 w-full font-mono text-sm"
             />
           </div>
+
+          {/* Solana: Generate Wallet Button */}
+          {service === 'solana' && !apiKey && (
+            <div className="rounded-lg border border-violet-500/20 bg-violet-500/5 p-3">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const { Keypair } = await import('@solana/web3.js');
+                    const kp = Keypair.generate();
+                    // Convert secret key to base58
+                    const bs58Chars = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+                    let num = BigInt('0x' + Array.from(kp.secretKey).map(b => b.toString(16).padStart(2, '0')).join(''));
+                    let b58 = '';
+                    while (num > 0n) { b58 = bs58Chars[Number(num % 58n)] + b58; num = num / 58n; }
+                    const pubKey = kp.publicKey.toBase58();
+                    setApiKey(b58);
+                    setKeyName(`Bot Wallet (${pubKey.slice(0, 8)}...)`);
+                    setError('');
+                    alert(`Wallet generated!\n\nPublic Key: ${pubKey}\n\nFund this address with SOL before trading.\nThe private key has been auto-filled below.`);
+                  } catch (err) {
+                    setError('Failed to generate wallet: ' + (err as Error).message);
+                  }
+                }}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-violet-500"
+              >
+                <Sparkles className="h-4 w-4" />
+                Generate New Bot Wallet
+              </button>
+              <div className="mt-2 flex items-start gap-1.5 text-[10px] text-slate-500">
+                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-400" />
+                <span>Creates a new Solana keypair in your browser. Fund it with SOL before trading. Never use your main wallet — use a dedicated bot wallet.</span>
+              </div>
+            </div>
+          )}
 
           {/* API Secret */}
           <div>
@@ -1033,8 +1083,8 @@ export function SettingsPage() {
           </div>
 
           {/* Connection Checklist */}
-          <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            {(['coinbase', 'alpaca', 'polymarket', 'solana'] as const).map((svc) => {
+          <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            {(['coinbase', 'alpaca', 'robinhood', 'polymarket', 'solana'] as const).map((svc) => {
               const info = SERVICE_INFO[svc];
               const connected = apiKeys.some((k) => k.service === svc);
               const connectedKey = apiKeys.find((k) => k.service === svc);

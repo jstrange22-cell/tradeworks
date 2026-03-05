@@ -492,6 +492,65 @@ moonshotRouter.put('/moonshot/config', (req, res) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Auto-start — called from index.ts on server boot
+// ---------------------------------------------------------------------------
+
+/**
+ * Auto-start moonshot scanner with 5-minute interval.
+ * Runs unconditionally (uses public DexScreener API, no wallet needed).
+ * Starts with a 30-second delay to let other services initialize first.
+ */
+export function initMoonshotScanner(): void {
+  if (autoScanInterval) {
+    console.log('[Moonshot] Scanner already running, skipping auto-start');
+    return;
+  }
+
+  const intervalSec = 300; // 5 minutes
+  scoringConfig.autoScanIntervalSec = intervalSec;
+
+  console.log(`[Moonshot] Auto-starting scanner (every ${intervalSec}s, first scan in 30s)...`);
+
+  // Delay first scan by 30s to let server fully boot
+  setTimeout(async () => {
+    try {
+      const boostsRes = await fetch('https://api.dexscreener.com/token-boosts/latest/v1');
+      if (!boostsRes.ok) return;
+      const boosts = (await boostsRes.json()) as Array<{ tokenAddress: string; chainId: string }>;
+      const mints = [...new Set(
+        boosts.filter(b => b.chainId === 'solana').map(b => b.tokenAddress),
+      )].slice(0, 10);
+
+      for (const mint of mints) {
+        try { await scoreToken(mint); } catch { /* skip */ }
+      }
+      console.log(`[Moonshot] Initial scan scored ${mints.length} tokens`);
+    } catch (err) {
+      console.error('[Moonshot] Initial scan error:', err);
+    }
+  }, 30_000);
+
+  // Recurring scan
+  autoScanInterval = setInterval(async () => {
+    try {
+      const boostsRes = await fetch('https://api.dexscreener.com/token-boosts/latest/v1');
+      if (!boostsRes.ok) return;
+      const boosts = (await boostsRes.json()) as Array<{ tokenAddress: string; chainId: string }>;
+      const mints = [...new Set(
+        boosts.filter(b => b.chainId === 'solana').map(b => b.tokenAddress),
+      )].slice(0, 10);
+
+      for (const mint of mints) {
+        try { await scoreToken(mint); } catch { /* skip */ }
+      }
+      console.log(`[Moonshot] Auto-scan scored ${mints.length} tokens`);
+    } catch (err) {
+      console.error('[Moonshot] Auto-scan error:', err);
+    }
+  }, intervalSec * 1000);
+}
+
 // GET /moonshot/config
 moonshotRouter.get('/moonshot/config', (_req, res) => {
   res.json({ data: scoringConfig });
