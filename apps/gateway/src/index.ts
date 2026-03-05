@@ -25,6 +25,10 @@ import { assetProtectionRouter } from './routes/asset-protection.js';
 import { solanaBalancesRouter } from './routes/solana-balances.js';
 import { solanaSwapRouter } from './routes/solana-swap.js';
 import { solanaScannerRouter } from './routes/solana-scanner.js';
+import { pumpFunRouter } from './routes/solana-pumpfun.js';
+import { sniperRouter } from './routes/solana-sniper.js';
+import { whaleRouter } from './routes/solana-whales.js';
+import { moonshotRouter } from './routes/solana-moonshot.js';
 
 const app: Express = express();
 const PORT = parseInt(process.env.PORT ?? '4000', 10);
@@ -83,6 +87,10 @@ app.use('/api/v1/settings/asset-protection', devAuth, assetProtectionRouter);
 app.use('/api/v1/solana', devAuth, solanaBalancesRouter);
 app.use('/api/v1/solana', devAuth, solanaSwapRouter);
 app.use('/api/v1/solana', devAuth, solanaScannerRouter);
+app.use('/api/v1/solana', devAuth, pumpFunRouter);
+app.use('/api/v1/solana', devAuth, sniperRouter);
+app.use('/api/v1/solana', devAuth, whaleRouter);
+app.use('/api/v1/solana', devAuth, moonshotRouter);
 
 // --- Error Handling ---
 

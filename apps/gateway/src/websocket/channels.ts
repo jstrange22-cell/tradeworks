@@ -32,6 +32,19 @@ export const CHANNELS = {
     description: 'Real-time risk metrics, portfolio heat, and circuit breaker status',
     rateLimit: 1,
   },
+  'solana:tokens': {
+    description: 'New Solana token launches and pump.fun detections',
+    rateLimit: 10,
+  },
+  'solana:whales': {
+    description: 'Whale wallet activity and large transaction alerts',
+    rateLimit: 5,
+  },
+  'solana:sniper': {
+    description: 'Snipe bot execution status and trade results',
+    rateLimit: 10,
+    requiresRole: ['admin', 'trader'],
+  },
 } as const satisfies Record<string, ChannelDefinition>;
 
 export type ChannelName = keyof typeof CHANNELS;

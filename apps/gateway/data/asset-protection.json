@@ -1,6 +1,6 @@
 {
-  "engineTradingEnabled": false,
-  "tradingBudgetUsd": 0,
+  "engineTradingEnabled": true,
+  "tradingBudgetUsd": 50,
   "budgetUsedUsd": 0,
   "protectedAssets": {
     "STX": {
@@ -77,7 +77,7 @@
     },
     "USD": {
       "symbol": "USD",
-      "locked": true,
+      "locked": false,
       "snapshotQuantity": 50.0053238364116,
       "snapshotValueUsd": 50.0053238364116
     },
