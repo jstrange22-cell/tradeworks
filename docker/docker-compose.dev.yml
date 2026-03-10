@@ -1,0 +1,51 @@
+# Dev databases only — run apps locally via `pnpm dev`
+# Usage: docker compose -f docker/docker-compose.dev.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tw-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tradeworks
+      POSTGRES_USER: tradeworks
+      POSTGRES_PASSWORD: tradeworks_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - tw-pg-dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tradeworks"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: tw-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - tw-redis-dev:/data
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24
+    container_name: tw-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: tradeworks
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - tw-ch-dev:/var/lib/clickhouse
+      - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
+volumes:
+  tw-pg-dev:
+  tw-redis-dev:
+  tw-ch-dev:

@@ -1,25 +1,43 @@
 import Redis from 'ioredis';
 
 let _redis: Redis | null = null;
+let _loggedDisconnect = false;
 
 /**
  * Returns a singleton Redis client.
- * Connection parameters are read from environment variables.
+ * Gracefully degrades when Redis is unavailable — the gateway won't crash.
  */
 export function getRedisClient(): Redis {
   if (!_redis) {
     _redis = new Redis(process.env['REDIS_URL'] ?? 'redis://localhost:6379', {
-      maxRetriesPerRequest: 3,
+      maxRetriesPerRequest: null,        // Never throw on pending commands
       retryStrategy(times: number) {
-        const delay = Math.min(times * 200, 5_000);
-        return delay;
+        // Exponential backoff capped at 30s. Never stop retrying.
+        return Math.min(times * 500, 30_000);
       },
-      lazyConnect: false,
+      lazyConnect: true,                 // Don't block startup
+      enableOfflineQueue: false,         // Drop commands when disconnected (prevents memory leak)
+      reconnectOnError() { return true; },
     });
 
     _redis.on('error', (err) => {
-      console.error('[redis] Connection error:', err);
+      if ((err as NodeJS.ErrnoException).code === 'ECONNREFUSED') {
+        if (!_loggedDisconnect) {
+          console.warn('[redis] Not available — features requiring Redis will be degraded');
+          _loggedDisconnect = true;
+        }
+      } else {
+        console.error('[redis] Error:', err.message);
+      }
     });
+
+    _redis.on('connect', () => {
+      _loggedDisconnect = false;
+      console.info('[redis] Connected');
+    });
+
+    // Attempt connection but don't crash if it fails
+    _redis.connect().catch(() => {});
   }
 
   return _redis;
@@ -30,14 +48,23 @@ export function getRedisClient(): Redis {
  * Useful for subscribers that need a dedicated connection.
  */
 export function createRedisClient(): Redis {
-  return new Redis(process.env['REDIS_URL'] ?? 'redis://localhost:6379', {
-    maxRetriesPerRequest: 3,
+  const client = new Redis(process.env['REDIS_URL'] ?? 'redis://localhost:6379', {
+    maxRetriesPerRequest: null,
     retryStrategy(times: number) {
-      const delay = Math.min(times * 200, 5_000);
-      return delay;
+      return Math.min(times * 500, 30_000);
     },
-    lazyConnect: false,
+    lazyConnect: true,
+    enableOfflineQueue: false,
+    reconnectOnError() { return true; },
   });
+
+  client.on('error', () => {
+    // Silently handled — singleton client logs once
+  });
+
+  client.connect().catch(() => {});
+
+  return client;
 }
 
 /**

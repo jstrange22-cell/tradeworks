@@ -12,7 +12,11 @@ const pool = new Pool({
 });
 
 pool.on('error', (err) => {
-  console.error('[postgres] Unexpected pool error:', err);
+  if ((err as NodeJS.ErrnoException).code === 'ECONNREFUSED') {
+    console.warn('[postgres] Not available — API routes requiring DB will return errors');
+  } else {
+    console.error('[postgres] Pool error:', err.message);
+  }
 });
 
 export const db = drizzle(pool, { schema });

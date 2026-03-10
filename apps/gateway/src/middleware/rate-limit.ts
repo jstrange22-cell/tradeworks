@@ -18,10 +18,23 @@ function tryCreateRedisStore(prefix: string): RedisStore | undefined {
   try {
     const client = getRedisClient();
 
+    // Only use Redis store if the client is actually connected
+    if (client.status !== 'ready' && client.status !== 'connect') {
+      console.info('[rate-limit] Redis not connected, using in-memory store');
+      return undefined;
+    }
+
     return new RedisStore({
-      // `rate-limit-redis` expects a sendCommand function
-      sendCommand: async (...args: string[]) =>
-        client.call(args[0], ...args.slice(1)) as Promise<string>,
+      // `rate-limit-redis` expects a sendCommand function.
+      // Wrap in try/catch so a Redis failure degrades to in-memory rather than 500.
+      sendCommand: async (...args: string[]) => {
+        try {
+          return await client.call(args[0], ...args.slice(1)) as string;
+        } catch {
+          // Redis went away mid-flight — let the request through
+          return '' as unknown as string;
+        }
+      },
       prefix: `rl:${prefix}:`,
     });
   } catch (error) {
