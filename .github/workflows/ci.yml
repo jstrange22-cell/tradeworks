@@ -82,3 +82,51 @@ jobs:
 
       - name: Build all packages and apps
         run: pnpm turbo build
+
+  # ── 4. Database Migration Check ─────────────────────────────
+  db-migration:
+    name: DB Migration Check
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tradeworks
+          POSTGRES_PASSWORD: tradeworks_ci
+          POSTGRES_DB: tradeworks_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://tradeworks:tradeworks_ci@localhost:5432/tradeworks_ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build DB package
+        run: pnpm --filter @tradeworks/db build
+
+      - name: Push schema to Postgres
+        run: pnpm --filter @tradeworks/db db:push
+        env:
+          DATABASE_URL: postgresql://tradeworks:tradeworks_ci@localhost:5432/tradeworks_ci
+
+      - name: Check for schema drift
+        run: pnpm --filter @tradeworks/db exec drizzle-kit check
+        env:
+          DATABASE_URL: postgresql://tradeworks:tradeworks_ci@localhost:5432/tradeworks_ci

@@ -25,7 +25,7 @@ interface OrderResponse {
 
 export function TradePanel({ instrument: initialInstrument, market: initialMarket, onClose }: TradePanelProps) {
   const { paperTrading } = usePortfolioStore();
-  const { query, setQuery, results, isLoading: searchLoading } = useInstrumentSearch();
+  const { setQuery, results } = useInstrumentSearch();
   const [instrument, setInstrument] = useState(initialInstrument ?? '');
   const [selectedMarket, setSelectedMarket] = useState(initialMarket ?? '');
   const [showDropdown, setShowDropdown] = useState(false);

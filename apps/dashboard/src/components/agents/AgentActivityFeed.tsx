@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import {
   Brain,
   MessageSquare,
@@ -13,6 +13,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { apiClient } from '@/lib/api-client';
 
 // ---------------------------------------------------------------------------
@@ -93,8 +94,11 @@ function timeStr(iso: string): string {
 // Component
 // ---------------------------------------------------------------------------
 
+const ESTIMATED_CYCLE_HEIGHT = 100;
+
 export function AgentActivityFeed() {
   const [expandedCycle, setExpandedCycle] = useState<string | null>(null);
+  const parentRef = useRef<HTMLDivElement>(null);
 
   const { data } = useQuery<CyclesResponse>({
     queryKey: ['engine-cycles'],
@@ -103,6 +107,19 @@ export function AgentActivityFeed() {
   });
 
   const cycles = data?.data ?? [];
+
+  const virtualizer = useVirtualizer({
+    count: cycles.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ESTIMATED_CYCLE_HEIGHT,
+    overscan: 5,
+  });
+
+  const handleToggle = useCallback((cycleId: string) => {
+    setExpandedCycle((prev) => (prev === cycleId ? null : cycleId));
+    // Re-measure after expand/collapse animation
+    requestAnimationFrame(() => virtualizer.measure());
+  }, [virtualizer]);
 
   if (cycles.length === 0) {
     return (
@@ -122,135 +139,151 @@ export function AgentActivityFeed() {
         <span className="text-xs text-slate-500">{cycles.length} cycles</span>
       </div>
 
-      <div className="max-h-[500px] space-y-2 overflow-y-auto pr-1">
-        {cycles.map((cycle) => {
-          const isExpanded = expandedCycle === cycle.id;
-          const BiasIcon = BIAS_ICONS[cycle.agents.quantBias] ?? Minus;
-          const statusClass = STATUS_COLORS[cycle.status] ?? STATUS_COLORS.error;
+      <div ref={parentRef} className="h-[500px] overflow-y-auto pr-1">
+        <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+          {virtualizer.getVirtualItems().map((virtualItem) => {
+            const cycle = cycles[virtualItem.index];
+            const isExpanded = expandedCycle === cycle.id;
+            const BiasIcon = BIAS_ICONS[cycle.agents.quantBias] ?? Minus;
+            const statusClass = STATUS_COLORS[cycle.status] ?? STATUS_COLORS.error;
 
-          return (
-            <div key={cycle.id} className={`rounded-lg border p-3 ${statusClass}`}>
-              {/* Cycle Header */}
-              <button
-                onClick={() => setExpandedCycle(isExpanded ? null : cycle.id)}
-                className="flex w-full items-start justify-between text-left"
+            return (
+              <div
+                key={virtualItem.key}
+                data-index={virtualItem.index}
+                ref={virtualizer.measureElement}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${virtualItem.start}px)`,
+                }}
               >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold">#{cycle.cycleNumber}</span>
-                    <span className="text-xs opacity-70">{timeStr(cycle.timestamp)}</span>
-                    <span className="text-xs opacity-50">{cycle.durationMs}ms</span>
-                  </div>
-                  <p className="mt-1 text-sm leading-snug">{cycle.summary}</p>
-                </div>
-                <div className="ml-2 shrink-0">
-                  {isExpanded ? <ChevronUp className="h-4 w-4 opacity-50" /> : <ChevronDown className="h-4 w-4 opacity-50" />}
-                </div>
-              </button>
-
-              {/* Expanded Details */}
-              {isExpanded && (
-                <div className="mt-3 space-y-3 border-t border-current/10 pt-3">
-                  {/* Agent Outputs */}
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="rounded-md bg-black/20 p-2">
-                      <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide opacity-70">
-                        <Brain className="h-3 w-3" /> Quant
+                <div className={`mb-2 rounded-lg border p-3 ${statusClass}`}>
+                  {/* Cycle Header */}
+                  <button
+                    onClick={() => handleToggle(cycle.id)}
+                    className="flex w-full items-start justify-between text-left"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold">#{cycle.cycleNumber}</span>
+                        <span className="text-xs opacity-70">{timeStr(cycle.timestamp)}</span>
+                        <span className="text-xs opacity-50">{cycle.durationMs}ms</span>
                       </div>
-                      <div className="mt-1 flex items-center gap-1">
-                        <BiasIcon className="h-3.5 w-3.5" />
-                        <span className="text-sm font-semibold capitalize">{cycle.agents.quantBias}</span>
-                      </div>
-                      <div className="text-xs opacity-70">{(cycle.agents.quantConfidence * 100).toFixed(0)}% confidence</div>
+                      <p className="mt-1 text-sm leading-snug">{cycle.summary}</p>
                     </div>
-
-                    <div className="rounded-md bg-black/20 p-2">
-                      <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide opacity-70">
-                        <MessageSquare className="h-3 w-3" /> Sentiment
-                      </div>
-                      <div className="mt-1 text-sm font-semibold">
-                        {cycle.agents.sentimentScore > 0 ? '+' : ''}{cycle.agents.sentimentScore.toFixed(2)}
-                      </div>
-                      <div className="text-xs capitalize opacity-70">{cycle.agents.sentimentLabel}</div>
+                    <div className="ml-2 shrink-0">
+                      {isExpanded ? <ChevronUp className="h-4 w-4 opacity-50" /> : <ChevronDown className="h-4 w-4 opacity-50" />}
                     </div>
+                  </button>
 
-                    <div className="rounded-md bg-black/20 p-2">
-                      <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide opacity-70">
-                        <Globe2 className="h-3 w-3" /> Macro
-                      </div>
-                      <div className="mt-1 text-sm font-semibold capitalize">{cycle.agents.macroRegime}</div>
-                      <div className="text-xs capitalize opacity-70">Risk: {cycle.agents.macroRiskLevel}</div>
-                    </div>
-                  </div>
-
-                  {/* Signals */}
-                  {cycle.agents.quantSignals.length > 0 && (
-                    <div>
-                      <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide opacity-70">
-                        <Zap className="h-3 w-3" /> Signals
-                      </div>
-                      <div className="mt-1 space-y-1">
-                        {cycle.agents.quantSignals.map((sig, i) => (
-                          <div key={i} className="flex items-center gap-2 text-xs">
-                            <span className={sig.direction === 'long' ? 'text-green-400' : 'text-red-400'}>
-                              {sig.direction.toUpperCase()}
-                            </span>
-                            <span className="font-medium">{sig.instrument}</span>
-                            <span className="opacity-50">via {sig.indicator}</span>
-                            <span className="ml-auto opacity-70">{(sig.confidence * 100).toFixed(0)}%</span>
+                  {/* Expanded Details */}
+                  {isExpanded && (
+                    <div className="mt-3 space-y-3 border-t border-current/10 pt-3">
+                      {/* Agent Outputs */}
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="rounded-md bg-black/20 p-2">
+                          <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide opacity-70">
+                            <Brain className="h-3 w-3" /> Quant
                           </div>
-                        ))}
+                          <div className="mt-1 flex items-center gap-1">
+                            <BiasIcon className="h-3.5 w-3.5" />
+                            <span className="text-sm font-semibold capitalize">{cycle.agents.quantBias}</span>
+                          </div>
+                          <div className="text-xs opacity-70">{(cycle.agents.quantConfidence * 100).toFixed(0)}% confidence</div>
+                        </div>
+
+                        <div className="rounded-md bg-black/20 p-2">
+                          <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide opacity-70">
+                            <MessageSquare className="h-3 w-3" /> Sentiment
+                          </div>
+                          <div className="mt-1 text-sm font-semibold">
+                            {cycle.agents.sentimentScore > 0 ? '+' : ''}{cycle.agents.sentimentScore.toFixed(2)}
+                          </div>
+                          <div className="text-xs capitalize opacity-70">{cycle.agents.sentimentLabel}</div>
+                        </div>
+
+                        <div className="rounded-md bg-black/20 p-2">
+                          <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide opacity-70">
+                            <Globe2 className="h-3 w-3" /> Macro
+                          </div>
+                          <div className="mt-1 text-sm font-semibold capitalize">{cycle.agents.macroRegime}</div>
+                          <div className="text-xs capitalize opacity-70">Risk: {cycle.agents.macroRiskLevel}</div>
+                        </div>
                       </div>
-                    </div>
-                  )}
 
-                  {/* Risk Assessment */}
-                  <div className="flex items-center gap-4 text-xs">
-                    <div className="flex items-center gap-1">
-                      <ShieldCheck className="h-3 w-3 opacity-70" />
-                      <span>Heat: {cycle.riskAssessment.portfolioHeat.toFixed(1)}%</span>
-                    </div>
-                    <span>DD: {cycle.riskAssessment.drawdownPercent.toFixed(1)}%</span>
-                    <span className="text-green-400">{cycle.riskAssessment.approved} approved</span>
-                    {cycle.riskAssessment.rejected > 0 && (
-                      <span className="text-red-400">{cycle.riskAssessment.rejected} rejected</span>
-                    )}
-                  </div>
+                      {/* Signals */}
+                      {cycle.agents.quantSignals.length > 0 && (
+                        <div>
+                          <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide opacity-70">
+                            <Zap className="h-3 w-3" /> Signals
+                          </div>
+                          <div className="mt-1 space-y-1">
+                            {cycle.agents.quantSignals.map((sig, i) => (
+                              <div key={i} className="flex items-center gap-2 text-xs">
+                                <span className={sig.direction === 'long' ? 'text-green-400' : 'text-red-400'}>
+                                  {sig.direction.toUpperCase()}
+                                </span>
+                                <span className="font-medium">{sig.instrument}</span>
+                                <span className="opacity-50">via {sig.indicator}</span>
+                                <span className="ml-auto opacity-70">{(sig.confidence * 100).toFixed(0)}%</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
-                  {/* Rejections */}
-                  {cycle.decisions.filter(d => !d.approved).map((d, i) => (
-                    <div key={i} className="flex items-center gap-2 text-xs text-red-400/80">
-                      <AlertTriangle className="h-3 w-3" />
-                      <span>{d.instrument} {d.direction} — {d.rejectionReason}</span>
-                    </div>
-                  ))}
-
-                  {/* Executions */}
-                  {cycle.executions.length > 0 && (
-                    <div>
-                      <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide opacity-70">
-                        <Zap className="h-3 w-3" /> Executions
+                      {/* Risk Assessment */}
+                      <div className="flex items-center gap-4 text-xs">
+                        <div className="flex items-center gap-1">
+                          <ShieldCheck className="h-3 w-3 opacity-70" />
+                          <span>Heat: {cycle.riskAssessment.portfolioHeat.toFixed(1)}%</span>
+                        </div>
+                        <span>DD: {cycle.riskAssessment.drawdownPercent.toFixed(1)}%</span>
+                        <span className="text-green-400">{cycle.riskAssessment.approved} approved</span>
+                        {cycle.riskAssessment.rejected > 0 && (
+                          <span className="text-red-400">{cycle.riskAssessment.rejected} rejected</span>
+                        )}
                       </div>
-                      {cycle.executions.map((exec, i) => (
-                        <div key={i} className="mt-1 flex items-center gap-2 text-xs">
-                          <span className={exec.side === 'buy' ? 'text-green-400' : 'text-red-400'}>
-                            {exec.side.toUpperCase()}
-                          </span>
-                          <span>{exec.quantity}</span>
-                          <span className="font-medium">{exec.instrument}</span>
-                          <span className="opacity-70">@ ${exec.price.toLocaleString()}</span>
-                          {exec.slippage !== undefined && (
-                            <span className="opacity-50">{exec.slippage.toFixed(1)} bps slip</span>
-                          )}
+
+                      {/* Rejections */}
+                      {cycle.decisions.filter(d => !d.approved).map((d, i) => (
+                        <div key={i} className="flex items-center gap-2 text-xs text-red-400/80">
+                          <AlertTriangle className="h-3 w-3" />
+                          <span>{d.instrument} {d.direction} — {d.rejectionReason}</span>
                         </div>
                       ))}
+
+                      {/* Executions */}
+                      {cycle.executions.length > 0 && (
+                        <div>
+                          <div className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide opacity-70">
+                            <Zap className="h-3 w-3" /> Executions
+                          </div>
+                          {cycle.executions.map((exec, i) => (
+                            <div key={i} className="mt-1 flex items-center gap-2 text-xs">
+                              <span className={exec.side === 'buy' ? 'text-green-400' : 'text-red-400'}>
+                                {exec.side.toUpperCase()}
+                              </span>
+                              <span>{exec.quantity}</span>
+                              <span className="font-medium">{exec.instrument}</span>
+                              <span className="opacity-70">@ ${exec.price.toLocaleString()}</span>
+                              {exec.slippage !== undefined && (
+                                <span className="opacity-50">{exec.slippage.toFixed(1)} bps slip</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-              )}
-            </div>
-          );
-        })}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

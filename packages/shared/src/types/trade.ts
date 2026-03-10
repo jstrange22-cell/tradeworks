@@ -1,7 +1,7 @@
 import type { MarketType } from './market-data.js';
 
 export type OrderSide = 'buy' | 'sell';
-export type OrderType = 'market' | 'limit' | 'stop' | 'stop_limit';
+export type OrderType = 'market' | 'limit' | 'stop' | 'stop_limit' | 'twap' | 'vwap' | 'iceberg';
 export type OrderStatus = 'pending' | 'submitted' | 'partial' | 'filled' | 'cancelled' | 'rejected';
 export type PositionSide = 'long' | 'short';
 export type PositionStatus = 'open' | 'closed' | 'liquidated';
@@ -82,4 +82,56 @@ export interface Portfolio {
   paperTrading: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+// --- Advanced Order Types ---
+
+export interface TwapSlice {
+  sliceIndex: number;
+  quantity: number;
+  scheduledAt: string; // ISO timestamp
+  delayMs: number;
+}
+
+export interface TwapPlan {
+  type: 'twap';
+  instrument: string;
+  side: OrderSide;
+  totalQuantity: number;
+  slices: number;
+  durationMinutes: number;
+  intervalMs: number;
+  plan: TwapSlice[];
+  createdAt: string;
+}
+
+export interface VwapSlice {
+  sliceIndex: number;
+  quantity: number;
+  weight: number;
+  scheduledAt: string; // ISO timestamp
+  delayMs: number;
+}
+
+export interface VwapPlan {
+  type: 'vwap';
+  instrument: string;
+  side: OrderSide;
+  totalQuantity: number;
+  slices: number;
+  volumeProfile: number[];
+  plan: VwapSlice[];
+  createdAt: string;
+}
+
+export interface IcebergPlan {
+  type: 'iceberg';
+  instrument: string;
+  side: OrderSide;
+  totalQuantity: number;
+  displayQuantity: number;
+  price: number;
+  totalRefills: number;
+  remainderQuantity: number;
+  createdAt: string;
 }

@@ -1,10 +1,11 @@
-import { useState, useMemo } from 'react';
-import { ArrowLeftRight, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useState, useMemo, useRef } from 'react';
+import { ArrowLeftRight, Filter } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { apiClient } from '@/lib/api-client';
 
-const PAGE_SIZE = 15;
 const MARKETS = ['All', 'crypto', 'prediction', 'equity'] as const;
+const ESTIMATED_ROW_HEIGHT = 44;
 
 interface Trade {
   id: string;
@@ -26,7 +27,7 @@ interface TradesResponse {
 export function TradesPage() {
   const [marketFilter, setMarketFilter] = useState<string>('All');
   const [strategyFilter, setStrategyFilter] = useState<string>('All');
-  const [page, setPage] = useState(0);
+  const parentRef = useRef<HTMLDivElement>(null);
 
   // Fetch trades from the real API
   const { data: tradesData, isLoading } = useQuery<TradesResponse>({
@@ -51,8 +52,12 @@ export function TradesPage() {
     });
   }, [allTrades, marketFilter, strategyFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const virtualizer = useVirtualizer({
+    count: filtered.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ESTIMATED_ROW_HEIGHT,
+    overscan: 10,
+  });
 
   return (
     <div className="space-y-6">
@@ -76,7 +81,7 @@ export function TradesPage() {
             value={marketFilter}
             onChange={(e) => {
               setMarketFilter(e.target.value);
-              setPage(0);
+              virtualizer.scrollToIndex(0);
             }}
             className="input py-1 text-xs"
           >
@@ -94,7 +99,7 @@ export function TradesPage() {
             value={strategyFilter}
             onChange={(e) => {
               setStrategyFilter(e.target.value);
-              setPage(0);
+              virtualizer.scrollToIndex(0);
             }}
             className="input py-1 text-xs"
           >
@@ -110,6 +115,7 @@ export function TradesPage() {
       {/* Trades Table */}
       <div className="card">
         <div className="overflow-x-auto">
+          {/* Sticky header */}
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-700/50 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
@@ -123,102 +129,98 @@ export function TradesPage() {
                 <th className="pb-3">Strategy</th>
               </tr>
             </thead>
-            <tbody>
-              {isLoading && (
-                <tr>
-                  <td colSpan={8} className="py-8 text-center text-sm text-slate-500">
-                    Loading trades...
-                  </td>
-                </tr>
-              )}
-              {!isLoading && paginated.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="py-8 text-center text-sm text-slate-500">
-                    No trades yet. Place your first trade from the Charts page.
-                  </td>
-                </tr>
-              )}
-              {paginated.map((trade) => (
-                <tr key={trade.id} className="table-row">
-                  <td className="py-2.5 pr-4 text-slate-400">
-                    {new Date(trade.executedAt).toLocaleString([], {
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </td>
-                  <td className="py-2.5 pr-4 font-medium text-slate-200">
-                    {trade.instrument}
-                  </td>
-                  <td className="py-2.5 pr-4">
-                    <span className="badge-info text-xs">
-                      {trade.market.toUpperCase()}
-                    </span>
-                  </td>
-                  <td className="py-2.5 pr-4">
-                    <span
-                      className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium ${
-                        trade.side === 'buy'
-                          ? 'bg-green-500/10 text-green-400'
-                          : 'bg-red-500/10 text-red-400'
-                      }`}
-                    >
-                      {trade.side.toUpperCase()}
-                    </span>
-                  </td>
-                  <td className="py-2.5 pr-4 text-right text-slate-300">
-                    {trade.quantity}
-                  </td>
-                  <td className="py-2.5 pr-4 text-right text-slate-300">
-                    ${trade.price.toLocaleString('en-US', {
-                      minimumFractionDigits: 2,
-                    })}
-                  </td>
-                  <td
-                    className={`py-2.5 pr-4 text-right font-medium ${
-                      trade.pnl > 0
-                        ? 'text-green-400'
-                        : trade.pnl < 0
-                          ? 'text-red-400'
-                          : 'text-slate-500'
-                    }`}
-                  >
-                    {trade.pnl !== 0
-                      ? `${trade.pnl > 0 ? '+' : ''}$${trade.pnl.toFixed(2)}`
-                      : '--'}
-                  </td>
-                  <td className="py-2.5 text-slate-500">{trade.strategyId}</td>
-                </tr>
-              ))}
-            </tbody>
           </table>
-        </div>
 
-        {/* Pagination */}
-        {filtered.length > 0 && (
-          <div className="mt-4 flex items-center justify-between border-t border-slate-700/50 pt-4">
-            <div className="text-xs text-slate-500">
-              Page {page + 1} of {totalPages}
+          {isLoading && (
+            <div className="py-8 text-center text-sm text-slate-500">
+              Loading trades...
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
-                disabled={page === 0}
-                className="btn-ghost p-1.5"
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-                disabled={page >= totalPages - 1}
-                className="btn-ghost p-1.5"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
+          )}
+          {!isLoading && filtered.length === 0 && (
+            <div className="py-8 text-center text-sm text-slate-500">
+              No trades yet. Place your first trade from the Charts page.
             </div>
-          </div>
-        )}
+          )}
+
+          {/* Virtualized scrollable body */}
+          {!isLoading && filtered.length > 0 && (
+            <div ref={parentRef} className="h-[600px] overflow-y-auto">
+              <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+                {virtualizer.getVirtualItems().map((virtualItem) => {
+                  const trade = filtered[virtualItem.index];
+                  return (
+                    <div
+                      key={virtualItem.key}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        transform: `translateY(${virtualItem.start}px)`,
+                      }}
+                    >
+                      <table className="w-full text-sm">
+                        <tbody>
+                          <tr className="table-row">
+                            <td className="py-2.5 pr-4 text-slate-400">
+                              {new Date(trade.executedAt).toLocaleString([], {
+                                month: 'short',
+                                day: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </td>
+                            <td className="py-2.5 pr-4 font-medium text-slate-200">
+                              {trade.instrument}
+                            </td>
+                            <td className="py-2.5 pr-4">
+                              <span className="badge-info text-xs">
+                                {trade.market.toUpperCase()}
+                              </span>
+                            </td>
+                            <td className="py-2.5 pr-4">
+                              <span
+                                className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium ${
+                                  trade.side === 'buy'
+                                    ? 'bg-green-500/10 text-green-400'
+                                    : 'bg-red-500/10 text-red-400'
+                                }`}
+                              >
+                                {trade.side.toUpperCase()}
+                              </span>
+                            </td>
+                            <td className="py-2.5 pr-4 text-right text-slate-300">
+                              {trade.quantity}
+                            </td>
+                            <td className="py-2.5 pr-4 text-right text-slate-300">
+                              ${trade.price.toLocaleString('en-US', {
+                                minimumFractionDigits: 2,
+                              })}
+                            </td>
+                            <td
+                              className={`py-2.5 pr-4 text-right font-medium ${
+                                trade.pnl > 0
+                                  ? 'text-green-400'
+                                  : trade.pnl < 0
+                                    ? 'text-red-400'
+                                    : 'text-slate-500'
+                              }`}
+                            >
+                              {trade.pnl !== 0
+                                ? `${trade.pnl > 0 ? '+' : ''}$${trade.pnl.toFixed(2)}`
+                                : '--'}
+                            </td>
+                            <td className="py-2.5 text-slate-500">{trade.strategyId}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

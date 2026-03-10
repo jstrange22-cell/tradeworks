@@ -283,6 +283,37 @@ export const userSettings = pgTable('user_settings', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const emotionalStateEnum = pgEnum('emotional_state', [
+  'confident',
+  'anxious',
+  'neutral',
+  'fomo',
+  'fearful',
+  'greedy',
+  'disciplined',
+  'impulsive',
+]);
+
+export const tradeJournals = pgTable('trade_journals', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tradeId: uuid('trade_id').references(() => orders.id, { onDelete: 'set null' }),
+  instrument: varchar('instrument', { length: 50 }),
+  market: marketEnum('market'),
+  side: orderSideEnum('side'),
+  entryPrice: numeric('entry_price', { precision: 18, scale: 8 }),
+  exitPrice: numeric('exit_price', { precision: 18, scale: 8 }),
+  pnl: numeric('pnl', { precision: 18, scale: 2 }),
+  notes: text('notes'),
+  tags: jsonb('tags').default([]),
+  emotionalState: emotionalStateEnum('emotional_state'),
+  lessonsLearned: text('lessons_learned'),
+  strategyUsed: varchar('strategy_used', { length: 255 }),
+  rating: integer('rating'),
+  screenshots: jsonb('screenshots').default([]),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 // ---------------------------------------------------------------------------
 // Relations
 // ---------------------------------------------------------------------------
@@ -340,6 +371,13 @@ export const backtestRunsRelations = relations(backtestRuns, ({ one }) => ({
   }),
 }));
 
+export const tradeJournalsRelations = relations(tradeJournals, ({ one }) => ({
+  trade: one(orders, {
+    fields: [tradeJournals.tradeId],
+    references: [orders.id],
+  }),
+}));
+
 // ---------------------------------------------------------------------------
 // Type exports
 // ---------------------------------------------------------------------------
@@ -376,3 +414,6 @@ export type NewGuardrail = typeof guardrails.$inferInsert;
 
 export type UserSetting = typeof userSettings.$inferSelect;
 export type NewUserSetting = typeof userSettings.$inferInsert;
+
+export type TradeJournal = typeof tradeJournals.$inferSelect;
+export type NewTradeJournal = typeof tradeJournals.$inferInsert;

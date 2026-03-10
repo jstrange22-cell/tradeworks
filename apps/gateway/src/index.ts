@@ -2,7 +2,11 @@ import 'dotenv/config';
 import express, { type Express } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import pinoHttp from 'pino-http';
+import swaggerUi from 'swagger-ui-express';
+import { openapiSpec } from './docs/openapi.js';
 import { createServer } from 'http';
+import { logger } from './lib/logger.js';
 import { setupWebSocket } from './websocket/server.js';
 import { authMiddleware } from './middleware/auth.js';
 import { createRateLimiter } from './middleware/rate-limit.js';
@@ -18,6 +22,7 @@ import { instrumentsRouter } from './routes/instruments.js';
 import { portfolioRouter } from './routes/portfolio.js';
 import { apiKeysRouter } from './routes/api-keys.js';
 import { ordersRouter } from './routes/orders.js';
+import { advancedOrdersRouter } from './routes/advanced-orders.js';
 import { engineRouter, initEngine } from './routes/engine.js';
 import { settingsRouter } from './routes/settings.js';
 import { balancesRouter } from './routes/balances.js';
@@ -30,6 +35,11 @@ import { sniperRouter } from './routes/solana-sniper.js';
 import { whaleRouter } from './routes/solana-whales.js';
 import { moonshotRouter, initMoonshotScanner } from './routes/solana-moonshot.js';
 import { robinhoodRouter } from './routes/robinhood.js';
+import { journalRouter } from './routes/journal.js';
+import { arbitrageRouter } from './routes/arbitrage.js';
+import { notificationsRouter } from './routes/notifications.js';
+import { globalErrorHandler } from './middleware/error-handler.js';
+import { metricsMiddleware, metricsRouter } from './middleware/metrics.js';
 
 const app: Express = express();
 const PORT = parseInt(process.env.PORT ?? '4000', 10);
@@ -49,14 +59,15 @@ app.use(express.urlencoded({ extended: true }));
 app.use(createRateLimiter());
 
 // Request logging
-app.use((req, _res, next) => {
-  console.log(`[Gateway] ${req.method} ${req.path}`);
-  next();
-});
+app.use(pinoHttp({ logger }));
+
+// Prometheus metrics
+app.use(metricsMiddleware);
 
 // --- Public Routes ---
 
 app.use('/api/v1/health', healthRouter);
+app.use('/metrics', metricsRouter);
 app.use('/api/v1/market', marketDataRouter);
 app.use('/api/v1/market/instruments', instrumentsRouter);
 
@@ -79,6 +90,7 @@ app.use('/api/v1/agents', devAuth, agentsRouter);
 app.use('/api/v1/backtest', devAuth, backtestRouter);
 app.use('/api/v1/settings/api-keys', devAuth, apiKeysRouter);
 app.use('/api/v1/orders', devAuth, ordersRouter);
+app.use('/api/v1/orders/advanced', devAuth, advancedOrdersRouter);
 app.use('/api/v1/engine', devAuth, engineRouter);
 app.use('/api/v1/settings', devAuth, settingsRouter);
 app.use('/api/v1/portfolio/balances', devAuth, balancesRouter);
@@ -86,6 +98,15 @@ app.use('/api/v1/settings/asset-protection', devAuth, assetProtectionRouter);
 
 // --- Robinhood Crypto Route ---
 app.use('/api/v1/robinhood', devAuth, robinhoodRouter);
+
+// --- Trade Journal ---
+app.use('/api/v1/journal', devAuth, journalRouter);
+
+// --- Cross-Exchange Arbitrage ---
+app.use('/api/v1/arbitrage', devAuth, arbitrageRouter);
+
+// --- Notifications ---
+app.use('/api/v1/notifications', devAuth, notificationsRouter);
 
 // --- Solana Routes ---
 app.use('/api/v1/solana', devAuth, solanaBalancesRouter);
@@ -96,19 +117,24 @@ app.use('/api/v1/solana', devAuth, sniperRouter);
 app.use('/api/v1/solana', devAuth, whaleRouter);
 app.use('/api/v1/solana', devAuth, moonshotRouter);
 
+// --- API Documentation ---
+
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec, {
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'TradeWorks API Docs',
+}));
+
 // --- Error Handling ---
 
 app.use((_req, res) => {
-  res.status(404).json({ error: 'Not found' });
-});
-
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error('[Gateway] Unhandled error:', err);
-  res.status(500).json({
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined,
+  res.status(404).json({
+    error: { code: 'NOT_FOUND', message: 'Not found' },
+    status: 404,
+    timestamp: new Date().toISOString(),
   });
 });
+
+app.use(globalErrorHandler);
 
 // --- Server Start ---
 
@@ -118,9 +144,9 @@ const server = createServer(app);
 setupWebSocket(server);
 
 server.listen(PORT, HOST, () => {
-  console.log(`[TradeWorks Gateway] Running on http://${HOST}:${PORT}`);
-  console.log(`[TradeWorks Gateway] Environment: ${process.env.NODE_ENV ?? 'development'}`);
-  console.log(`[TradeWorks Gateway] WebSocket available at ws://${HOST}:${PORT}/ws`);
+  logger.info({ host: HOST, port: PORT }, `TradeWorks Gateway running on http://${HOST}:${PORT}`);
+  logger.info({ env: process.env.NODE_ENV ?? 'development' }, `Environment: ${process.env.NODE_ENV ?? 'development'}`);
+  logger.info({ ws: `ws://${HOST}:${PORT}/ws` }, `WebSocket available at ws://${HOST}:${PORT}/ws`);
 
   // Auto-start the AI trading engine — runs 24/7 with zero intervention
   initEngine();
@@ -132,15 +158,15 @@ server.listen(PORT, HOST, () => {
 
 // Graceful shutdown
 function shutdown(signal: string): void {
-  console.log(`\n[TradeWorks Gateway] Received ${signal}. Shutting down...`);
+  logger.info({ signal }, `Received ${signal}. Shutting down...`);
 
   server.close(() => {
-    console.log('[TradeWorks Gateway] HTTP server closed.');
+    logger.info('HTTP server closed.');
     process.exit(0);
   });
 
   setTimeout(() => {
-    console.error('[TradeWorks Gateway] Forced shutdown after timeout.');
+    logger.error('Forced shutdown after timeout.');
     process.exit(1);
   }, 10_000);
 }

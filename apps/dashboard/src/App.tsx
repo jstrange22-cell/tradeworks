@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { AppShell } from '@/components/layout/AppShell';
+import { PageErrorBoundary } from '@/components/ErrorBoundary';
 import { SolanaWalletProvider } from '@/providers/SolanaWalletProvider';
 
 const DashboardPage = lazy(() => import('@/pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
@@ -11,6 +12,8 @@ const StrategiesPage = lazy(() => import('@/pages/StrategiesPage').then(m => ({ 
 const ChartsPage = lazy(() => import('@/pages/ChartsPage').then(m => ({ default: m.ChartsPage })));
 const MarketsPage = lazy(() => import('@/pages/MarketsPage').then(m => ({ default: m.MarketsPage })));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
+const AnalyticsPage = lazy(() => import('@/pages/AnalyticsPage').then(m => ({ default: m.AnalyticsPage })));
+const JournalPage = lazy(() => import('@/pages/JournalPage').then(m => ({ default: m.JournalPage })));
 const SolanaPage = lazy(() => import('@/pages/SolanaPage').then(m => ({ default: m.SolanaPage })));
 
 function PageLoader() {
@@ -25,15 +28,17 @@ const router = createBrowserRouter([
   {
     element: <AppShell />,
     children: [
-      { path: '/', element: <Suspense fallback={<PageLoader />}><DashboardPage /></Suspense> },
-      { path: '/trades', element: <Suspense fallback={<PageLoader />}><TradesPage /></Suspense> },
-      { path: '/agents', element: <Suspense fallback={<PageLoader />}><AgentsPage /></Suspense> },
-      { path: '/risk', element: <Suspense fallback={<PageLoader />}><RiskPage /></Suspense> },
-      { path: '/strategies', element: <Suspense fallback={<PageLoader />}><StrategiesPage /></Suspense> },
-      { path: '/charts', element: <Suspense fallback={<PageLoader />}><ChartsPage /></Suspense> },
-      { path: '/markets', element: <Suspense fallback={<PageLoader />}><MarketsPage /></Suspense> },
-      { path: '/solana', element: <Suspense fallback={<PageLoader />}><SolanaPage /></Suspense> },
-      { path: '/settings', element: <Suspense fallback={<PageLoader />}><SettingsPage /></Suspense> },
+      { path: '/', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><DashboardPage /></Suspense></PageErrorBoundary> },
+      { path: '/trades', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><TradesPage /></Suspense></PageErrorBoundary> },
+      { path: '/agents', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><AgentsPage /></Suspense></PageErrorBoundary> },
+      { path: '/risk', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><RiskPage /></Suspense></PageErrorBoundary> },
+      { path: '/strategies', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><StrategiesPage /></Suspense></PageErrorBoundary> },
+      { path: '/charts', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><ChartsPage /></Suspense></PageErrorBoundary> },
+      { path: '/markets', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><MarketsPage /></Suspense></PageErrorBoundary> },
+      { path: '/analytics', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><AnalyticsPage /></Suspense></PageErrorBoundary> },
+      { path: '/journal', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><JournalPage /></Suspense></PageErrorBoundary> },
+      { path: '/solana', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><SolanaPage /></Suspense></PageErrorBoundary> },
+      { path: '/settings', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><SettingsPage /></Suspense></PageErrorBoundary> },
     ],
   },
 ]);

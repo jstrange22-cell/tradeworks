@@ -1,4 +1,11 @@
 // ---------------------------------------------------------------------------
+// Drizzle ORM re-exports (use these instead of importing drizzle-orm directly
+// to avoid duplicate-instance type conflicts in workspace packages)
+// ---------------------------------------------------------------------------
+
+export { eq, ne, gt, gte, lt, lte, and, or, not, desc, asc, sql, count, sum, avg, min, max, inArray, notInArray, isNull, isNotNull, between, like, ilike, exists, notExists } from 'drizzle-orm';
+
+// ---------------------------------------------------------------------------
 // Postgres
 // ---------------------------------------------------------------------------
 
@@ -29,6 +36,7 @@ export {
   apiKeys,
   guardrails,
   userSettings,
+  tradeJournals,
   // Relations
   portfoliosRelations,
   strategiesRelations,
@@ -36,6 +44,7 @@ export {
   ordersRelations,
   riskSnapshotsRelations,
   backtestRunsRelations,
+  tradeJournalsRelations,
   // Types
   type Portfolio,
   type NewPortfolio,
@@ -59,6 +68,9 @@ export {
   type NewGuardrail,
   type UserSetting,
   type NewUserSetting,
+  type TradeJournal,
+  type NewTradeJournal,
+  emotionalStateEnum,
 } from './postgres/schema.js';
 
 export {
@@ -135,6 +147,17 @@ export {
   setSetting,
   deleteSetting,
 } from './postgres/queries/user-settings.js';
+
+export {
+  getJournalEntries,
+  getJournalEntry,
+  getJournalByTradeId,
+  getJournalEntriesByDateRange,
+  createJournalEntry,
+  updateJournalEntry,
+  deleteJournalEntry,
+  getJournalTagStats,
+} from './postgres/queries/trade-journal.js';
 
 // ---------------------------------------------------------------------------
 // ClickHouse

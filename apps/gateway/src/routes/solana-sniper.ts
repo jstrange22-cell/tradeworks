@@ -346,6 +346,20 @@ async function checkPositions(): Promise<void> {
       position.currentPrice = currentPrice;
       position.pnlPercent = ((currentPrice - position.buyPrice) / position.buyPrice) * 100;
 
+      // Broadcast live P&L to dashboard via WebSocket
+      broadcast('solana:sniper', {
+        event: 'position:pnl_update',
+        mint,
+        symbol: position.symbol,
+        name: position.name,
+        buyPrice: position.buyPrice,
+        currentPrice,
+        amountTokens: position.amountTokens,
+        pnlPercent: position.pnlPercent,
+        unrealizedPnlUsd: position.amountTokens * (currentPrice - position.buyPrice),
+        boughtAt: position.boughtAt,
+      });
+
       // Check take-profit
       if (config.takeProfitPercent > 0 && position.pnlPercent >= config.takeProfitPercent) {
         console.log(`[Sniper] Take profit triggered for ${position.symbol}: +${position.pnlPercent.toFixed(1)}%`);

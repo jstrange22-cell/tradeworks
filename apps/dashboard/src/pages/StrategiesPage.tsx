@@ -4,7 +4,6 @@ import {
   Play,
   Pause,
   Settings2,
-  BarChart3,
   ChevronDown,
   ChevronUp,
   Plus,
@@ -19,7 +18,6 @@ import {
   Store,
   Brain,
   Info,
-  ShieldCheck,
   Sparkles,
   CheckCircle2,
 } from 'lucide-react';

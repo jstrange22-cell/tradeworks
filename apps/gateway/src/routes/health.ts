@@ -1,6 +1,6 @@
 import { Router, type Router as RouterType } from 'express';
-import { db, pool, getRedisClient } from '@tradeworks/db';
-import { sql } from 'drizzle-orm';
+import { db, pool, getRedisClient, sql } from '@tradeworks/db';
+import { getEngineState } from './engine.js';
 
 /**
  * Health check endpoint.
@@ -33,6 +33,22 @@ healthRouter.get('/', async (_req, res) => {
     redisStatus = 'disconnected';
   }
 
+  // Check engine status
+  const engineStatus = getEngineState().status === 'running' ? 'running' : 'stopped';
+
+  // Check ingest status via Redis heartbeat (best-effort)
+  let ingestStatus = 'unknown';
+  try {
+    const redis = getRedisClient();
+    const heartbeat = await redis.get('ingest:heartbeat');
+    if (heartbeat) {
+      const lastBeat = parseInt(heartbeat, 10);
+      ingestStatus = Date.now() - lastBeat < 60000 ? 'running' : 'stale';
+    }
+  } catch {
+    ingestStatus = 'unknown';
+  }
+
   const allHealthy = dbStatus === 'connected' && redisStatus === 'connected';
 
   res.json({
@@ -46,8 +62,8 @@ healthRouter.get('/', async (_req, res) => {
     environment: process.env.NODE_ENV ?? 'development',
     services: {
       gateway: 'running',
-      engine: 'unknown', // TODO: Check engine health via internal call
-      ingest: 'unknown', // TODO: Check ingest health
+      engine: engineStatus,
+      ingest: ingestStatus,
       database: dbStatus,
       redis: redisStatus,
     },
@@ -78,6 +94,26 @@ healthRouter.get('/detailed', async (_req, res) => {
     checks.redis = { status: 'healthy', latencyMs: Date.now() - start };
   } catch (error) {
     checks.redis = { status: 'unhealthy', error: String(error) };
+  }
+
+  // Check engine status
+  checks.engine = { status: getEngineState().status === 'running' ? 'healthy' : 'stopped' };
+
+  // Check ingest status via Redis heartbeat
+  try {
+    const redis = getRedisClient();
+    const heartbeat = await redis.get('ingest:heartbeat');
+    if (heartbeat) {
+      const lastBeat = parseInt(heartbeat, 10);
+      const age = Date.now() - lastBeat;
+      checks.ingest = age < 60000
+        ? { status: 'healthy', latencyMs: age }
+        : { status: 'stale', latencyMs: age };
+    } else {
+      checks.ingest = { status: 'unknown', error: 'No heartbeat key found' };
+    }
+  } catch (error) {
+    checks.ingest = { status: 'unknown', error: String(error) };
   }
 
   // Postgres pool stats

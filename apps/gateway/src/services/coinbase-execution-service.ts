@@ -1,0 +1,61 @@
+// ---------------------------------------------------------------------------
+// Coinbase Execution Service — Order placement via Coinbase Advanced Trade API
+// ---------------------------------------------------------------------------
+
+import { coinbaseSignedRequest } from './coinbase-auth-service.js';
+
+/** Map our instrument names to Coinbase product IDs */
+export const COINBASE_PRODUCT_MAP: Record<string, string> = {
+  'BTC-USD': 'BTC-USD',
+  'ETH-USD': 'ETH-USD',
+  'SOL-USD': 'SOL-USD',
+  'AVAX-USD': 'AVAX-USD',
+  'LINK-USD': 'LINK-USD',
+};
+
+export async function placeCoinbaseOrder(
+  productId: string,
+  side: 'BUY' | 'SELL',
+  quoteSize: string,
+  apiKey: string,
+  apiSecret: string,
+): Promise<{ success: boolean; orderId?: string; error?: string }> {
+  const clientOrderId = `tw-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const orderBody = JSON.stringify({
+    client_order_id: clientOrderId,
+    product_id: productId,
+    side,
+    order_configuration: {
+      market_market_ioc: { quote_size: quoteSize },
+    },
+  });
+
+  try {
+    const res = await coinbaseSignedRequest(
+      'POST',
+      '/api/v3/brokerage/orders',
+      apiKey,
+      apiSecret,
+      orderBody,
+    );
+
+    const data = (await res.json()) as {
+      success?: boolean;
+      order_id?: string;
+      error_response?: { error?: string; message?: string };
+    };
+
+    if (res.ok && data.success !== false) {
+      console.log(`[Engine] Coinbase order placed: ${side} ${productId} $${quoteSize} — orderId: ${data.order_id ?? clientOrderId}`);
+      return { success: true, orderId: data.order_id ?? clientOrderId };
+    } else {
+      const errMsg = data.error_response?.message ?? data.error_response?.error ?? `HTTP ${res.status}`;
+      console.error(`[Engine] Coinbase order FAILED: ${errMsg}`);
+      return { success: false, error: errMsg };
+    }
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error(`[Engine] Coinbase order error: ${errMsg}`);
+    return { success: false, error: errMsg };
+  }
+}

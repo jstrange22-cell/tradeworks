@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { TrendingUp, BarChart3, Target, Activity } from 'lucide-react';
+import { BarChart3, Target, Activity } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 

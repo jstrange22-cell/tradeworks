@@ -1,8 +1,15 @@
 import { Outlet } from 'react-router-dom';
+import { Toaster } from 'sonner';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
+import { CommandPalette } from '@/components/CommandPalette';
+import { useWebSocket } from '@/hooks/useWebSocket';
+import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 
 export function AppShell() {
+  useWebSocket();
+  useKeyboardShortcuts();
+
   return (
     <div className="flex h-screen overflow-hidden bg-slate-900">
       <Sidebar />
@@ -12,6 +19,18 @@ export function AppShell() {
           <Outlet />
         </main>
       </div>
+      <CommandPalette />
+      <Toaster
+        position="bottom-right"
+        theme="dark"
+        toastOptions={{
+          style: {
+            background: '#1e293b',
+            border: '1px solid rgba(51, 65, 85, 0.5)',
+            color: '#e2e8f0',
+          },
+        }}
+      />
     </div>
   );
 }
