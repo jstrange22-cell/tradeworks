@@ -53,16 +53,16 @@ export function Sidebar() {
 
       <aside
         className={`
-          fixed inset-y-0 left-0 z-50 flex flex-col border-r border-slate-700/50 bg-slate-900 transition-all duration-300
+          fixed inset-y-0 left-0 z-50 flex flex-col border-r border-gray-200 bg-white dark:border-slate-700/50 dark:bg-slate-900 transition-all duration-300
           md:static md:translate-x-0
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
           ${collapsed ? 'md:w-16 w-56' : 'w-56'}
         `}
       >
         {/* Logo + mobile close */}
-        <div className="flex h-14 items-center justify-between border-b border-slate-700/50 px-4">
+        <div className="flex h-14 items-center justify-between border-b border-gray-200 dark:border-slate-700/50 px-4">
           {(!collapsed || sidebarOpen) && (
-            <span className="text-lg font-bold tracking-tight text-slate-100">
+            <span className="text-lg font-bold tracking-tight text-gray-900 dark:text-slate-100">
               Trade<span className="text-blue-500">Works</span>
             </span>
           )}
@@ -71,7 +71,7 @@ export function Sidebar() {
           )}
           <button
             onClick={() => setSidebarOpen(false)}
-            className="rounded-md p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200 md:hidden"
+            className="rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200 md:hidden"
           >
             <X className="h-5 w-5" />
           </button>
@@ -88,7 +88,7 @@ export function Sidebar() {
                 `flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
                   isActive
                     ? 'bg-blue-600/10 text-blue-400'
-                    : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                    : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200'
                 } ${collapsed && !sidebarOpen ? 'md:justify-center' : ''}`
               }
               title={collapsed && !sidebarOpen ? label : undefined}
@@ -100,10 +100,10 @@ export function Sidebar() {
         </nav>
 
         {/* Collapse toggle (desktop only) */}
-        <div className="hidden border-t border-slate-700/50 p-2 md:block">
+        <div className="hidden border-t border-gray-200 dark:border-slate-700/50 p-2 md:block">
           <button
             onClick={toggleSidebar}
-            className="flex w-full items-center justify-center rounded-md p-2 text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
+            className="flex w-full items-center justify-center rounded-md p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
           >
             {collapsed ? (
               <ChevronRight className="h-4 w-4" />

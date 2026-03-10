@@ -1,3 +1,5 @@
+import { useAuthStore } from '@/stores/auth-store';
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/v1';
 
 interface RequestOptions extends Omit<RequestInit, 'body'> {
@@ -31,12 +33,21 @@ class ApiClient {
     return fullUrl;
   }
 
+  private getAuthHeaders(): Record<string, string> {
+    const token = useAuthStore.getState().token;
+    if (token) {
+      return { Authorization: `Bearer ${token}` };
+    }
+    return {};
+  }
+
   async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const { body, params, ...init } = options;
     const url = this.buildUrl(path, params);
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      ...this.getAuthHeaders(),
       ...(init.headers as Record<string, string>),
     };
 
@@ -45,6 +56,15 @@ class ApiClient {
       headers,
       body: body ? JSON.stringify(body) : undefined,
     });
+
+    // Auto-logout on 401 (token expired or invalid)
+    if (response.status === 401) {
+      const currentToken = useAuthStore.getState().token;
+      // Only auto-logout if we had a token (not on login/register endpoints)
+      if (currentToken && !path.startsWith('/auth/')) {
+        useAuthStore.getState().logout();
+      }
+    }
 
     if (!response.ok) {
       const errorBody = await response.text().catch(() => 'Unknown error');

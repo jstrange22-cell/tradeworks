@@ -16,12 +16,12 @@ export function StatCard({ label, value, sub, icon }: {
   label: string; value: string; sub: string; icon: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-slate-700/50 bg-slate-800/50 p-4">
-      <div className="flex items-center justify-between mb-1">
-        <span className="text-xs text-slate-400">{label}</span>{icon}
+    <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-slate-700/50 dark:bg-slate-800/50">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-xs text-gray-500 dark:text-slate-400">{label}</span>{icon}
       </div>
-      <div className="text-lg font-bold text-slate-100">{value}</div>
-      {sub && <div className="text-xs text-slate-500">{sub}</div>}
+      <div className="text-lg font-bold text-gray-900 dark:text-slate-100">{value}</div>
+      {sub && <div className="text-xs text-gray-500 dark:text-slate-500">{sub}</div>}
     </div>
   );
 }
@@ -39,7 +39,7 @@ export function SafetyCheck({ label, passed, passText, failText }: {
         ? <CheckCircle className="h-4 w-4 text-green-400" />
         : <ShieldOff className="h-4 w-4 text-red-400" />}
       <div>
-        <div className="text-[10px] text-slate-400">{label}</div>
+        <div className="text-[10px] text-gray-500 dark:text-slate-400">{label}</div>
         <div className={`text-xs font-medium ${passed ? 'text-green-400' : 'text-red-400'}`}>
           {passed ? passText : failText}
         </div>
@@ -57,7 +57,7 @@ export function ConfigInput({ label, value, onChange }: {
   useEffect(() => { setLocal(String(value ?? '')); }, [value]);
   return (
     <div>
-      <label className="text-[10px] text-slate-400">{label}</label>
+      <label className="text-[10px] text-gray-500 dark:text-slate-400">{label}</label>
       <input
         type="text"
         value={local}

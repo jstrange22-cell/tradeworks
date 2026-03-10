@@ -9,7 +9,15 @@ export type StrategyType =
   | 'options_spread'
   | 'arbitrage'
   | 'event_driven'
-  | 'market_making';
+  | 'market_making'
+  | 'ema_crossover'
+  | 'rsi_divergence'
+  | 'bollinger_squeeze'
+  | 'macd_histogram_reversal'
+  | 'vwap_reversion'
+  | 'supertrend'
+  | 'smart_money_concepts'
+  | 'multi_timeframe_momentum';
 
 export interface Strategy {
   id: string;

@@ -12,34 +12,34 @@ export function Header() {
   const pnlBg = dailyPnl >= 0 ? 'bg-green-500/10' : 'bg-red-500/10';
 
   return (
-    <header className="flex h-14 items-center justify-between border-b border-slate-700/50 bg-slate-900/80 px-4 backdrop-blur-sm md:px-6">
+    <header className="flex h-14 items-center justify-between border-b border-gray-200 bg-white/80 dark:border-slate-700/50 dark:bg-slate-900/80 px-4 backdrop-blur-sm md:px-6">
       {/* Left: Hamburger (mobile) + label */}
       <div className="flex items-center gap-3">
         <button
           onClick={() => setSidebarOpen(true)}
-          className="rounded-md p-1.5 text-slate-400 hover:bg-slate-800 hover:text-slate-200 md:hidden"
+          className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200 md:hidden"
           aria-label="Open menu"
         >
           <Menu className="h-5 w-5" />
         </button>
-        <span className="hidden text-sm text-slate-500 md:block">TradeWorks Engine</span>
+        <span className="hidden text-sm text-gray-500 dark:text-slate-500 md:block">TradeWorks Engine</span>
       </div>
 
       {/* Center: P&L */}
       <div className="flex items-center gap-4 md:gap-6">
         <div className="text-center">
-          <div className="text-xs text-slate-500">Equity</div>
-          <div className="text-base font-bold text-slate-100 md:text-lg">
+          <div className="text-xs text-gray-500 dark:text-slate-500">Equity</div>
+          <div className="text-base font-bold text-gray-900 dark:text-slate-100 md:text-lg">
             {equity > 0
               ? `$${equity.toLocaleString('en-US', { minimumFractionDigits: 2 })}`
-              : <span className="text-slate-500">--</span>
+              : <span className="text-gray-500 dark:text-slate-500">--</span>
             }
           </div>
         </div>
 
         {equity > 0 && (
           <div className={`hidden rounded-lg px-3 py-1.5 sm:block ${pnlBg}`}>
-            <div className="text-xs text-slate-500">Daily P&L</div>
+            <div className="text-xs text-gray-500 dark:text-slate-500">Daily P&L</div>
             <div className={`text-sm font-semibold ${pnlColor}`}>
               {dailyPnl >= 0 ? '+' : ''}
               ${Math.abs(dailyPnl).toLocaleString('en-US', { minimumFractionDigits: 2 })}
@@ -81,7 +81,7 @@ export function Header() {
         {/* Theme toggle */}
         <button
           onClick={toggleTheme}
-          className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
+          className="rounded-md p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
           {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}

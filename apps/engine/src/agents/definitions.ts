@@ -82,6 +82,49 @@ export const AGENT_DEFINITIONS = {
     maxTokens: 4096,
     temperature: 0.1,
   },
+
+  orderFlowAnalyst: {
+    name: 'Order Flow Analyst',
+    role: 'Order book imbalance and trade flow analysis',
+    systemPrompt: 'order-flow-analyst', // Loaded from dedicated prompt file
+    model: 'haiku' as const,
+    tools: [
+      'getOrderBook',
+      'getRecentTrades',
+      'analyzeOrderFlow',
+    ],
+    maxTokens: 2048,
+    temperature: 0.1,
+  },
+
+  correlationAnalyst: {
+    name: 'Correlation Analyst',
+    role: 'Cross-asset correlation tracking and regime detection',
+    systemPrompt: 'correlation-analyst', // Loaded from dedicated prompt file
+    model: 'haiku' as const,
+    tools: [
+      'getCandles',
+      'getCorrelationMatrix',
+      'analyzeCorrelations',
+    ],
+    maxTokens: 2048,
+    temperature: 0.2,
+  },
+
+  portfolioOptimizer: {
+    name: 'Portfolio Optimizer',
+    role: 'Dynamic position sizing using Kelly criterion and risk parity',
+    systemPrompt: 'portfolio-optimizer', // Loaded from dedicated prompt file
+    model: 'haiku' as const,
+    tools: [
+      'getPositions',
+      'calculatePositionSize',
+      'optimizePortfolio',
+      'getPortfolioHeat',
+    ],
+    maxTokens: 2048,
+    temperature: 0.1,
+  },
 } as const;
 
 export type AgentName = keyof typeof AGENT_DEFINITIONS;

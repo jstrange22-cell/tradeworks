@@ -27,6 +27,7 @@ import { engineRouter, initEngine } from './routes/engine.js';
 import { settingsRouter } from './routes/settings.js';
 import { balancesRouter } from './routes/balances.js';
 import { assetProtectionRouter } from './routes/asset-protection.js';
+import { authRouter } from './routes/auth.js';
 import { solanaBalancesRouter } from './routes/solana-balances.js';
 import { solanaSwapRouter } from './routes/solana-swap.js';
 import { solanaScannerRouter } from './routes/solana-scanner.js';
@@ -67,6 +68,7 @@ app.use(metricsMiddleware);
 // --- Public Routes ---
 
 app.use('/api/v1/health', healthRouter);
+app.use('/api/v1/auth', authRouter);
 app.use('/metrics', metricsRouter);
 app.use('/api/v1/market', marketDataRouter);
 app.use('/api/v1/market/instruments', instrumentsRouter);

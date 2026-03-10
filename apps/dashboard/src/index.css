@@ -4,19 +4,30 @@
 
 @layer base {
   :root {
+    --color-profit: #16a34a;
+    --color-loss: #dc2626;
+    --color-warning: #d97706;
+    --color-info: #2563eb;
+
+    /* Scrollbar — light mode */
+    --scrollbar-thumb: #cbd5e1;
+    --scrollbar-track: #f1f5f9;
+  }
+
+  .dark {
     --color-profit: #22c55e;
     --color-loss: #ef4444;
     --color-warning: #f59e0b;
     --color-info: #3b82f6;
-    --color-surface-900: #0f172a;
-    --color-surface-800: #1e293b;
-    --color-surface-700: #334155;
-    --color-surface-600: #475569;
+
+    /* Scrollbar — dark mode */
+    --scrollbar-thumb: #334155;
+    --scrollbar-track: #0f172a;
   }
 
   * {
     scrollbar-width: thin;
-    scrollbar-color: #334155 #0f172a;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
   }
 
   *::-webkit-scrollbar {
@@ -25,82 +36,122 @@
   }
 
   *::-webkit-scrollbar-track {
-    background: #0f172a;
+    background: var(--scrollbar-track);
   }
 
   *::-webkit-scrollbar-thumb {
-    background-color: #334155;
+    background-color: var(--scrollbar-thumb);
     border-radius: 3px;
   }
 
   body {
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    @apply bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100;
   }
 }
 
 @layer components {
+  /* ---------------------------------------------------------------
+     Cards
+  --------------------------------------------------------------- */
   .card {
-    @apply rounded-lg border border-slate-700/50 bg-slate-800/50 p-4 shadow-lg backdrop-blur-sm;
+    @apply rounded-lg border border-slate-200 bg-white/80 p-4 shadow-sm backdrop-blur-sm
+           dark:border-slate-700/50 dark:bg-slate-800/50 dark:shadow-lg;
   }
 
   .card-header {
-    @apply mb-3 text-xs font-medium uppercase tracking-wider text-slate-400;
+    @apply mb-3 text-xs font-medium uppercase tracking-wider text-slate-500
+           dark:text-slate-400;
   }
 
+  /* ---------------------------------------------------------------
+     Stats
+  --------------------------------------------------------------- */
   .stat-value {
-    @apply text-2xl font-bold tracking-tight;
+    @apply text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100;
   }
 
   .stat-value-lg {
-    @apply text-3xl font-bold tracking-tight;
+    @apply text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100;
   }
 
+  /* ---------------------------------------------------------------
+     Badges
+  --------------------------------------------------------------- */
   .badge {
     @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
   }
 
   .badge-profit {
-    @apply badge bg-green-500/10 text-green-400 ring-1 ring-green-500/20;
+    @apply badge bg-green-100 text-green-700 ring-1 ring-green-600/20
+           dark:bg-green-500/10 dark:text-green-400 dark:ring-green-500/20;
   }
 
   .badge-loss {
-    @apply badge bg-red-500/10 text-red-400 ring-1 ring-red-500/20;
+    @apply badge bg-red-100 text-red-700 ring-1 ring-red-600/20
+           dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/20;
   }
 
   .badge-neutral {
-    @apply badge bg-slate-500/10 text-slate-400 ring-1 ring-slate-500/20;
+    @apply badge bg-slate-100 text-slate-600 ring-1 ring-slate-400/20
+           dark:bg-slate-500/10 dark:text-slate-400 dark:ring-slate-500/20;
   }
 
   .badge-warning {
-    @apply badge bg-amber-500/10 text-amber-400 ring-1 ring-amber-500/20;
+    @apply badge bg-amber-100 text-amber-700 ring-1 ring-amber-600/20
+           dark:bg-amber-500/10 dark:text-amber-400 dark:ring-amber-500/20;
   }
 
   .badge-info {
-    @apply badge bg-blue-500/10 text-blue-400 ring-1 ring-blue-500/20;
+    @apply badge bg-blue-100 text-blue-700 ring-1 ring-blue-600/20
+           dark:bg-blue-500/10 dark:text-blue-400 dark:ring-blue-500/20;
   }
 
+  /* ---------------------------------------------------------------
+     Table rows
+  --------------------------------------------------------------- */
   .table-row {
-    @apply border-b border-slate-700/50 transition-colors hover:bg-slate-800/80;
+    @apply border-b border-slate-200 transition-colors hover:bg-slate-50
+           dark:border-slate-700/50 dark:hover:bg-slate-800/80;
   }
 
+  /* ---------------------------------------------------------------
+     Buttons
+  --------------------------------------------------------------- */
   .btn {
-    @apply inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:pointer-events-none disabled:opacity-50;
+    @apply inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium
+           transition-colors
+           focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:ring-offset-2
+           focus:ring-offset-white dark:focus:ring-offset-slate-900
+           disabled:pointer-events-none disabled:opacity-50;
   }
 
   .btn-primary {
-    @apply btn bg-blue-600 text-white hover:bg-blue-700;
+    @apply btn bg-blue-600 text-white hover:bg-blue-700
+           dark:bg-blue-600 dark:hover:bg-blue-700;
   }
 
   .btn-ghost {
-    @apply btn text-slate-400 hover:bg-slate-800 hover:text-slate-100;
+    @apply btn text-slate-600 hover:bg-slate-100 hover:text-slate-900
+           dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100;
   }
 
+  /* ---------------------------------------------------------------
+     Inputs
+  --------------------------------------------------------------- */
   .input {
-    @apply rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500;
+    @apply rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900
+           placeholder-slate-400
+           focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500
+           dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100
+           dark:placeholder-slate-500;
   }
 }
 
-/* cmdk command palette */
+/* -----------------------------------------------------------------
+   cmdk command palette
+----------------------------------------------------------------- */
 [cmdk-group-heading] {
-  @apply px-3 pb-1 pt-2 text-xs font-medium uppercase tracking-wider text-slate-500;
+  @apply px-3 pb-1 pt-2 text-xs font-medium uppercase tracking-wider
+         text-slate-400 dark:text-slate-500;
 }

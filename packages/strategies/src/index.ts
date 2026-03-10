@@ -5,6 +5,14 @@ export type { IndicatorConfig } from './base-strategy.js';
 export { TrendFollowingStrategy } from './crypto/trend-following.js';
 export { MeanReversionStrategy } from './crypto/mean-reversion.js';
 export { BreakoutStrategy } from './crypto/breakout.js';
+export { EmaCrossoverStrategy } from './crypto/ema-crossover.js';
+export { RsiDivergenceStrategy } from './crypto/rsi-divergence.js';
+export { BollingerSqueezeStrategy } from './crypto/bollinger-squeeze.js';
+export { MacdHistogramReversalStrategy } from './crypto/macd-histogram-reversal.js';
+export { VwapReversionStrategy } from './crypto/vwap-reversion.js';
+export { SupertrendStrategy } from './crypto/supertrend-strategy.js';
+export { SmartMoneyConceptsStrategy } from './crypto/smart-money-concepts.js';
+export { MultiTimeframeMomentumStrategy } from './crypto/multi-timeframe-momentum.js';
 
 // Prediction market strategies
 export { PredictionArbitrageStrategy } from './prediction/arbitrage.js';

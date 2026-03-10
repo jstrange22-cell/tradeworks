@@ -1,8 +1,10 @@
 import { lazy, Suspense } from 'react';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { AppShell } from '@/components/layout/AppShell';
+import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { PageErrorBoundary } from '@/components/ErrorBoundary';
 import { SolanaWalletProvider } from '@/providers/SolanaWalletProvider';
+import { LoginPage } from '@/pages/LoginPage';
 
 const DashboardPage = lazy(() => import('@/pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
 const TradesPage = lazy(() => import('@/pages/TradesPage').then(m => ({ default: m.TradesPage })));
@@ -26,7 +28,15 @@ function PageLoader() {
 
 const router = createBrowserRouter([
   {
-    element: <AppShell />,
+    path: '/login',
+    element: <LoginPage />,
+  },
+  {
+    element: (
+      <ProtectedRoute>
+        <AppShell />
+      </ProtectedRoute>
+    ),
     children: [
       { path: '/', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><DashboardPage /></Suspense></PageErrorBoundary> },
       { path: '/trades', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><TradesPage /></Suspense></PageErrorBoundary> },

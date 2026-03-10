@@ -8,8 +8,15 @@ export const INDICATORS = [
   { id: 'ema12', label: 'EMA 12', color: '#06b6d4', type: 'overlay' },
   { id: 'ema26', label: 'EMA 26', color: '#ec4899', type: 'overlay' },
   { id: 'boll', label: 'BB', color: '#64748b', type: 'overlay' },
+  { id: 'supertrend', label: 'SuperTrend', color: '#22d3ee', type: 'overlay' },
+  { id: 'vwap', label: 'VWAP', color: '#f472b6', type: 'overlay' },
+  { id: 'keltner', label: 'Keltner', color: '#2dd4bf', type: 'overlay' },
   { id: 'rsi', label: 'RSI', color: '#a855f7', type: 'panel' },
   { id: 'macd', label: 'MACD', color: '#3b82f6', type: 'panel' },
+  { id: 'stochastic', label: 'Stoch', color: '#facc15', type: 'panel' },
+  { id: 'cci', label: 'CCI', color: '#fb923c', type: 'panel' },
+  { id: 'obv', label: 'OBV', color: '#a3e635', type: 'panel' },
+  { id: 'volumeProfile', label: 'Vol Profile', color: '#8b5cf6', type: 'overlay' },
 ] as const;
 
 export type IndicatorId = typeof INDICATORS[number]['id'];
@@ -51,7 +58,7 @@ export function IndicatorToolbar({
       </div>
 
       {/* Indicator Chips */}
-      <div className="flex items-center gap-1">
+      <div className="flex flex-wrap items-center gap-1">
         {INDICATORS.map((ind) => {
           const isActive = activeIndicators.has(ind.id);
           return (
