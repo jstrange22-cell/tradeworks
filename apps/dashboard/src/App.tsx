@@ -1,10 +1,13 @@
 import { lazy, Suspense } from 'react';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
+import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AppShell } from '@/components/layout/AppShell';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { PageErrorBoundary } from '@/components/ErrorBoundary';
 import { SolanaWalletProvider } from '@/providers/SolanaWalletProvider';
 import { LoginPage } from '@/pages/LoginPage';
+
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID as string ?? '';
 
 const DashboardPage = lazy(() => import('@/pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
 const TradesPage = lazy(() => import('@/pages/TradesPage').then(m => ({ default: m.TradesPage })));
@@ -55,8 +58,10 @@ const router = createBrowserRouter([
 
 export function App() {
   return (
-    <SolanaWalletProvider>
-      <RouterProvider router={router} />
-    </SolanaWalletProvider>
+    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+      <SolanaWalletProvider>
+        <RouterProvider router={router} />
+      </SolanaWalletProvider>
+    </GoogleOAuthProvider>
   );
 }

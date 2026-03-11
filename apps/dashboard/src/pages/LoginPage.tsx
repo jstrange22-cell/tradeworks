@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { GoogleLogin, type CredentialResponse } from '@react-oauth/google';
 import { useAuthStore } from '@/stores/auth-store';
 import { apiClient, ApiError } from '@/lib/api-client';
 
@@ -12,6 +13,7 @@ interface AuthResponse {
     email: string;
     name: string;
     role: string;
+    avatarUrl?: string;
   };
 }
 
@@ -59,6 +61,37 @@ export function LoginPage() {
   function switchTab(tab: AuthTab) {
     setActiveTab(tab);
     setError('');
+  }
+
+  async function handleGoogleSuccess(credentialResponse: CredentialResponse) {
+    if (!credentialResponse.credential) {
+      setError('Google sign-in did not return a credential');
+      return;
+    }
+
+    setError('');
+    setIsLoading(true);
+
+    try {
+      const response = await apiClient.post<AuthResponse>('/auth/google', {
+        credential: credentialResponse.credential,
+      });
+      login(response.token, response.user);
+      navigate('/', { replace: true });
+    } catch (err) {
+      if (err instanceof ApiError) {
+        try {
+          const parsed = JSON.parse(err.body) as { error?: string };
+          setError(parsed.error ?? `Google sign-in failed (${err.status})`);
+        } catch {
+          setError(`Google sign-in failed (${err.status})`);
+        }
+      } else {
+        setError('Network error. Is the gateway running?');
+      }
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   return (
@@ -186,6 +219,26 @@ export function LoginPage() {
               )}
             </button>
           </form>
+
+          {/* Divider */}
+          <div className="my-6 flex items-center gap-3">
+            <div className="h-px flex-1 bg-slate-200 dark:bg-surface-700" />
+            <span className="text-xs font-medium text-slate-400 dark:text-slate-500">OR</span>
+            <div className="h-px flex-1 bg-slate-200 dark:bg-surface-700" />
+          </div>
+
+          {/* Google Sign-In */}
+          <div className="flex justify-center">
+            <GoogleLogin
+              onSuccess={handleGoogleSuccess}
+              onError={() => setError('Google sign-in was cancelled or failed')}
+              theme="outline"
+              size="large"
+              width="100%"
+              text={activeTab === 'login' ? 'signin_with' : 'signup_with'}
+              shape="rectangular"
+            />
+          </div>
         </div>
 
         {/* Footer */}

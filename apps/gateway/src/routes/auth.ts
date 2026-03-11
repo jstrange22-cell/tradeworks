@@ -1,6 +1,7 @@
 import { Router, type Router as RouterType } from 'express';
 import { z } from 'zod';
 import jwt from 'jsonwebtoken';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -11,6 +12,7 @@ import { logger } from '../lib/logger.js';
  * Authentication routes.
  * POST /api/v1/auth/register  — Create user, return JWT
  * POST /api/v1/auth/login     — Validate credentials, return JWT
+ * POST /api/v1/auth/google    — Google Sign-In, verify ID token, return JWT
  * GET  /api/v1/auth/me        — Return current user from JWT
  */
 
@@ -27,6 +29,8 @@ interface StoredUser {
   passwordHash: string;
   salt: string;
   role: 'admin' | 'trader' | 'viewer';
+  authProvider: 'local' | 'google';
+  avatarUrl?: string;
   createdAt: string;
 }
 
@@ -48,6 +52,22 @@ const USERS_FILE = join(DATA_DIR, 'users.json');
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'tradeworks-dev-secret-change-in-production';
 const JWT_EXPIRY = '7d';
+
+// Google OAuth — verify ID tokens via Google's JWKS endpoint
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? '';
+const GOOGLE_JWKS = createRemoteJWKSet(
+  new URL('https://www.googleapis.com/oauth2/v3/certs'),
+);
+
+interface GoogleIdTokenPayload {
+  iss: string;
+  sub: string;
+  email: string;
+  email_verified: boolean;
+  name: string;
+  picture?: string;
+  aud: string;
+}
 
 function ensureDataDir(): void {
   if (!existsSync(DATA_DIR)) {
@@ -150,6 +170,7 @@ authRouter.post('/register', (req, res) => {
       passwordHash,
       salt,
       role: 'admin',
+      authProvider: 'local',
       createdAt: new Date().toISOString(),
     };
 
@@ -220,6 +241,82 @@ authRouter.post('/login', (req, res) => {
     }
     logger.error({ error }, '[Auth] Login failed');
     res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+/**
+ * POST /google
+ * Authenticate via Google Sign-In.
+ * Receives a Google ID token (credential), verifies it, creates or finds user.
+ */
+authRouter.post('/google', async (req, res) => {
+  try {
+    const { credential } = z.object({ credential: z.string().min(1) }).parse(req.body);
+
+    if (!GOOGLE_CLIENT_ID) {
+      res.status(500).json({ error: 'Google Sign-In is not configured on the server' });
+      return;
+    }
+
+    // Verify the Google ID token against Google's JWKS
+    const { payload } = await jwtVerify(credential, GOOGLE_JWKS, {
+      issuer: ['https://accounts.google.com', 'accounts.google.com'],
+      audience: GOOGLE_CLIENT_ID,
+    });
+
+    const googleUser = payload as unknown as GoogleIdTokenPayload;
+
+    if (!googleUser.email || !googleUser.email_verified) {
+      res.status(400).json({ error: 'Google account email is not verified' });
+      return;
+    }
+
+    const users = loadUsers();
+    let user = users.find((u) => u.email.toLowerCase() === googleUser.email.toLowerCase());
+
+    if (!user) {
+      // Auto-register on first Google sign-in
+      user = {
+        id: `user-${randomBytes(8).toString('hex')}`,
+        email: googleUser.email.toLowerCase(),
+        name: googleUser.name ?? googleUser.email.split('@')[0],
+        passwordHash: '',
+        salt: '',
+        role: 'admin',
+        authProvider: 'google',
+        avatarUrl: googleUser.picture,
+        createdAt: new Date().toISOString(),
+      };
+      users.push(user);
+      saveUsers(users);
+      logger.info({ userId: user.id, email: user.email }, '[Auth] Google user auto-registered');
+    } else if (!user.avatarUrl && googleUser.picture) {
+      // Update avatar if user exists but had no avatar
+      user.avatarUrl = googleUser.picture;
+      saveUsers(users);
+    }
+
+    const token = generateAuthToken(user);
+
+    logger.info({ userId: user.id, email: user.email }, '[Auth] Google sign-in');
+
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        avatarUrl: user.avatarUrl,
+      },
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: 'Missing Google credential' });
+      return;
+    }
+    logger.error({ error }, '[Auth] Google sign-in failed');
+    res.status(401).json({ error: 'Google authentication failed' });
   }
 });
 

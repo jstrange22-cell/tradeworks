@@ -13,6 +13,7 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
+    "@react-oauth/google": "^0.13.4",
     "@solana/wallet-adapter-base": "^0.9.27",
     "@solana/wallet-adapter-phantom": "^0.9.28",
     "@solana/wallet-adapter-react": "^0.15.39",
