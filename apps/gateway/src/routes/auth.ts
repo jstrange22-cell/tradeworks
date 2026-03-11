@@ -247,52 +247,96 @@ authRouter.post('/login', (req, res) => {
 /**
  * POST /google
  * Authenticate via Google Sign-In.
- * Receives a Google ID token (credential), verifies it, creates or finds user.
+ * Accepts either:
+ *   - { credential: string }  — Google ID token (One Tap / renderButton flow)
+ *   - { accessToken: string } — OAuth2 access token (implicit flow via useGoogleLogin)
  */
 authRouter.post('/google', async (req, res) => {
   try {
-    const { credential } = z.object({ credential: z.string().min(1) }).parse(req.body);
+    const body = z.object({
+      credential: z.string().min(1).optional(),
+      accessToken: z.string().min(1).optional(),
+    }).refine(
+      (data) => data.credential ?? data.accessToken,
+      { message: 'Either credential or accessToken is required' },
+    ).parse(req.body);
 
-    if (!GOOGLE_CLIENT_ID) {
-      res.status(500).json({ error: 'Google Sign-In is not configured on the server' });
-      return;
+    let googleEmail: string;
+    let googleName: string;
+    let googlePicture: string | undefined;
+    let emailVerified: boolean;
+
+    if (body.credential) {
+      // ---------- ID token flow (legacy / One Tap) ----------
+      if (!GOOGLE_CLIENT_ID) {
+        res.status(500).json({ error: 'Google Sign-In is not configured on the server' });
+        return;
+      }
+
+      const { payload } = await jwtVerify(body.credential, GOOGLE_JWKS, {
+        issuer: ['https://accounts.google.com', 'accounts.google.com'],
+        audience: GOOGLE_CLIENT_ID,
+      });
+
+      const idToken = payload as unknown as GoogleIdTokenPayload;
+      googleEmail = idToken.email;
+      googleName = idToken.name;
+      googlePicture = idToken.picture;
+      emailVerified = idToken.email_verified;
+    } else {
+      // ---------- Access token flow (implicit / useGoogleLogin) ----------
+      const userinfoRes = await fetch(
+        'https://www.googleapis.com/oauth2/v3/userinfo',
+        { headers: { Authorization: `Bearer ${body.accessToken}` } },
+      );
+
+      if (!userinfoRes.ok) {
+        logger.warn({ status: userinfoRes.status }, '[Auth] Google userinfo fetch failed');
+        res.status(401).json({ error: 'Invalid Google access token' });
+        return;
+      }
+
+      const userinfo = (await userinfoRes.json()) as {
+        sub: string;
+        email: string;
+        email_verified: boolean;
+        name: string;
+        picture?: string;
+      };
+
+      googleEmail = userinfo.email;
+      googleName = userinfo.name;
+      googlePicture = userinfo.picture;
+      emailVerified = userinfo.email_verified;
     }
 
-    // Verify the Google ID token against Google's JWKS
-    const { payload } = await jwtVerify(credential, GOOGLE_JWKS, {
-      issuer: ['https://accounts.google.com', 'accounts.google.com'],
-      audience: GOOGLE_CLIENT_ID,
-    });
-
-    const googleUser = payload as unknown as GoogleIdTokenPayload;
-
-    if (!googleUser.email || !googleUser.email_verified) {
+    if (!googleEmail || !emailVerified) {
       res.status(400).json({ error: 'Google account email is not verified' });
       return;
     }
 
     const users = loadUsers();
-    let user = users.find((u) => u.email.toLowerCase() === googleUser.email.toLowerCase());
+    let user = users.find((u) => u.email.toLowerCase() === googleEmail.toLowerCase());
 
     if (!user) {
       // Auto-register on first Google sign-in
       user = {
         id: `user-${randomBytes(8).toString('hex')}`,
-        email: googleUser.email.toLowerCase(),
-        name: googleUser.name ?? googleUser.email.split('@')[0],
+        email: googleEmail.toLowerCase(),
+        name: googleName ?? googleEmail.split('@')[0],
         passwordHash: '',
         salt: '',
         role: 'admin',
         authProvider: 'google',
-        avatarUrl: googleUser.picture,
+        avatarUrl: googlePicture,
         createdAt: new Date().toISOString(),
       };
       users.push(user);
       saveUsers(users);
       logger.info({ userId: user.id, email: user.email }, '[Auth] Google user auto-registered');
-    } else if (!user.avatarUrl && googleUser.picture) {
+    } else if (!user.avatarUrl && googlePicture) {
       // Update avatar if user exists but had no avatar
-      user.avatarUrl = googleUser.picture;
+      user.avatarUrl = googlePicture;
       saveUsers(users);
     }
 
@@ -312,7 +356,7 @@ authRouter.post('/google', async (req, res) => {
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
-      res.status(400).json({ error: 'Missing Google credential' });
+      res.status(400).json({ error: 'Missing Google credential or access token' });
       return;
     }
     logger.error({ error }, '[Auth] Google sign-in failed');
