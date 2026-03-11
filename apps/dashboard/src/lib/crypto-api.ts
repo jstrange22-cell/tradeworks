@@ -58,20 +58,6 @@ export interface CryptoTrade {
 
 // --- Instrument mapping ---
 
-const INSTRUMENT_MAP: Record<string, string> = {
-  'BTC-USD': 'BTC_USDT',
-  'ETH-USD': 'ETH_USDT',
-  'SOL-USD': 'SOL_USDT',
-  'AVAX-USD': 'AVAX_USDT',
-  'LINK-USD': 'LINK_USDT',
-  'UNI-USD': 'UNI_USDT',
-  'AAVE-USD': 'AAVE_USDT',
-  'DOGE-USD': 'DOGE_USDT',
-  'ADA-USD': 'ADA_USDT',
-  'DOT-USD': 'DOT_USDT',
-  'CRO-USD': 'CRO_USDT',
-};
-
 const TIMEFRAME_MAP: Record<string, string> = {
   '1m': '1m',
   '5m': '5m',
@@ -81,13 +67,16 @@ const TIMEFRAME_MAP: Record<string, string> = {
   '1d': '1D',
 };
 
+/** Convert display name (BTC-USD) to Crypto.com instrument (BTC_USDT) */
 export function toCryptoInstrument(displayName: string): string {
-  return INSTRUMENT_MAP[displayName] || displayName.replace('-', '_');
+  // Strip -USD suffix and append _USDT (Crypto.com uses USDT pairs)
+  const base = displayName.replace(/-USD$/, '');
+  return `${base}_USDT`;
 }
 
+/** Convert Crypto.com instrument (BTC_USDT) to display name (BTC-USD) */
 export function toDisplayName(cryptoName: string): string {
-  const entry = Object.entries(INSTRUMENT_MAP).find(([, v]) => v === cryptoName);
-  return entry ? entry[0] : cryptoName.replace('_USDT', '-USD').replace('_', '-');
+  return cryptoName.replace('_USDT', '-USD').replace('_', '-');
 }
 
 // --- Raw API call ---
@@ -136,6 +125,35 @@ export async function getMultipleTickers(instruments: string[]): Promise<CryptoT
   return results
     .filter((r): r is PromiseFulfilledResult<CryptoTicker> => r.status === 'fulfilled')
     .map((r) => r.value);
+}
+
+/**
+ * Fetch ALL tickers in a single API call, filtered to spot _USDT pairs.
+ * Returns tickers pre-sorted by volume_value descending for market overview.
+ * Much more efficient than individual getTicker calls.
+ */
+export async function getAllSpotTickers(): Promise<CryptoTicker[]> {
+  type RawTicker = {
+    i: string; a: string; b: string; k: string;
+    c: string; h: string; l: string; v: string; vv: string; t: number;
+  };
+
+  const result = await fetchRaw('get-tickers') as { data: RawTicker[] };
+
+  return result.data
+    .filter((raw) => raw.i.endsWith('_USDT') && !raw.i.includes('PERP'))
+    .map((raw) => ({
+      instrument_name: raw.i,
+      last: raw.a,
+      best_bid: raw.b,
+      best_ask: raw.k,
+      change: raw.c,
+      high: raw.h,
+      low: raw.l,
+      volume: raw.v,
+      volume_value: raw.vv,
+      timestamp: raw.t,
+    }));
 }
 
 // --- Candlesticks ---

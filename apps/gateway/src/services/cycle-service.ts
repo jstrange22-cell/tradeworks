@@ -470,8 +470,11 @@ export async function runAnalysisCycle(): Promise<CycleResult> {
       const analysis = valid.find(a => a.instrument === d.instrument);
       const price = analysis?.price ?? 0;
       const side = d.direction === 'long' ? 'buy' : 'sell';
-      const quoteSize = '100'; // $100 per trade
-      const quantity = Math.round((100 / Math.max(price, 1)) * 1000) / 1000;
+      // Dynamic trade sizing: 20% of remaining budget, capped $5–$25
+      const budgetRemaining = getRemainingBudget();
+      const quoteSizeNum = Math.min(25, Math.max(5, Math.floor(budgetRemaining * 0.2)));
+      const quoteSize = String(quoteSizeNum);
+      const quantity = Math.round((quoteSizeNum / Math.max(price, 1)) * 1000) / 1000;
 
       if (useLiveExecution && coinbaseKeys) {
         // -- Asset Protection Checks (5 gates) --

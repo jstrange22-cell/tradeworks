@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Globe, Loader2, RefreshCw } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { getMultipleTickers, toDisplayName, type CryptoTicker } from '@/lib/crypto-api';
+import { getAllSpotTickers, toDisplayName, type CryptoTicker } from '@/lib/crypto-api';
 import { useInstruments } from '@/hooks/useInstrumentSearch';
 import { apiClient } from '@/lib/api-client';
 import {
@@ -33,7 +33,6 @@ export function MarketsPage() {
 
   const tabs: TabType[] = ['crypto', 'prediction', 'equity'];
 
-  const { data: cryptoInstruments } = useInstruments('crypto', 100);
   const { data: predictionInstruments, isLoading: loadingPrediction } = useInstruments('prediction', 100);
   const { data: equityInstruments, isLoading: loadingEquity } = useInstruments('equities', 100);
 
@@ -47,13 +46,12 @@ export function MarketsPage() {
   const hasPolymarket = connectedExchanges.has('polymarket');
   const hasAlpaca = connectedExchanges.has('alpaca');
 
-  const cryptoSymbols = (cryptoInstruments?.data ?? []).slice(0, 50).map((inst) => inst.symbol);
-
+  // Fetch ALL spot tickers in one API call — returns _USDT pairs with volume data
   const { data: tickers, isLoading, refetch } = useQuery({
-    queryKey: ['market-tickers', cryptoSymbols],
-    queryFn: () => getMultipleTickers(cryptoSymbols),
+    queryKey: ['market-tickers-all'],
+    queryFn: getAllSpotTickers,
     refetchInterval: 60_000,
-    enabled: tab === 'crypto' && cryptoSymbols.length > 0,
+    enabled: tab === 'crypto',
   });
 
   const processedTickers = useMemo(() => {

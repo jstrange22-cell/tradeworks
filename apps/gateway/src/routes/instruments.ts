@@ -83,6 +83,9 @@ async function fetchCryptoInstruments(): Promise<InstrumentInfo[]> {
       const name = rec.instrument_name ?? rec.symbol ?? '';
       if (!name) continue;
 
+      // Skip perpetual / futures / non-spot pairs
+      if (name.includes('PERP') || name.includes('-SWAP') || name.endsWith('_CRO')) continue;
+
       // Skip _USD pair if we already have a _USDT pair for the same base
       if (name.endsWith('_USD') && !name.endsWith('_USDT')) {
         const base = name.replace('_USD', '');
