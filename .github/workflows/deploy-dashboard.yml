@@ -39,6 +39,7 @@ jobs:
         run: pnpm turbo build --filter=@tradeworks/dashboard
         env:
           VITE_API_URL: ${{ vars.VITE_API_URL || 'http://localhost:4000' }}
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID || '876322383528-m7m14741jt7gt4im7cpq67pu44pbfhef.apps.googleusercontent.com' }}
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
