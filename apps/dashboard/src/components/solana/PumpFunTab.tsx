@@ -1,12 +1,50 @@
-import { Rocket, Play, Square, Sparkles, Activity, RefreshCw, Loader2 } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { Rocket, Play, Square, Sparkles, Activity, RefreshCw, Loader2, Search, Shield, ShieldOff } from 'lucide-react';
 import { StatCard, formatCompact } from '@/components/solana/shared';
 import { usePumpFunLatest, usePumpFunStatus, usePumpFunToggle, useSniperExecute } from '@/hooks/useSolana';
+import type { PumpFunToken } from '@/types/solana';
+
+interface PumpFilters {
+  hideGraduated: boolean;
+  minMarketCap: number;
+  minBonding: number;
+}
+
+function filterPumpTokens(tokens: PumpFunToken[], search: string, filters: PumpFilters): PumpFunToken[] {
+  let filtered = tokens;
+  if (search.trim()) {
+    const q = search.trim().toLowerCase();
+    filtered = filtered.filter(
+      (t) => t.symbol.toLowerCase().includes(q) || t.name.toLowerCase().includes(q) || t.mint.toLowerCase().includes(q),
+    );
+  }
+  if (filters.hideGraduated) {
+    filtered = filtered.filter((t) => !t.graduated);
+  }
+  if (filters.minMarketCap > 0) {
+    filtered = filtered.filter((t) => t.usdMarketCap >= filters.minMarketCap);
+  }
+  if (filters.minBonding > 0) {
+    filtered = filtered.filter((t) => t.bondingCurveProgress >= filters.minBonding);
+  }
+  return filtered;
+}
 
 export function PumpFunTab() {
+  const [search, setSearch] = useState('');
+  const [filters, setFilters] = useState<PumpFilters>({
+    hideGraduated: false,
+    minMarketCap: 0,
+    minBonding: 0,
+  });
+
   const pumpfunLatest = usePumpFunLatest(true);
   const pumpfunStatus = usePumpFunStatus(true);
   const pumpfunToggle = usePumpFunToggle();
   const sniperExecute = useSniperExecute();
+
+  const rawTokens = pumpfunLatest.data?.data ?? [];
+  const filteredTokens = useMemo(() => filterPumpTokens(rawTokens, search, filters), [rawTokens, search, filters]);
 
   return (
     <div className="space-y-4">
@@ -59,6 +97,58 @@ export function PumpFunTab() {
 
       <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-slate-700/50 dark:bg-slate-800/50">
         <h3 className="mb-3 text-sm font-semibold text-gray-800 dark:text-slate-200">Latest pump.fun Launches</h3>
+
+        {/* Search + Filters */}
+        <div className="mb-3 space-y-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400 dark:text-slate-500" />
+            <input
+              type="text"
+              placeholder="Search by name, symbol, or mint..."
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              className="input w-full pl-9 text-xs"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setFilters((prev) => ({ ...prev, hideGraduated: !prev.hideGraduated }))}
+              className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-medium transition ${
+                filters.hideGraduated
+                  ? 'bg-pink-500/20 text-pink-400 border border-pink-500/30'
+                  : 'bg-gray-100 text-gray-500 border border-gray-200 dark:bg-slate-700 dark:text-slate-400 dark:border-slate-600'
+              }`}
+            >
+              {filters.hideGraduated ? <Shield className="h-3 w-3" /> : <ShieldOff className="h-3 w-3" />} Hide Graduated
+            </button>
+            <button
+              onClick={() => setFilters((prev) => ({ ...prev, minMarketCap: prev.minMarketCap > 0 ? 0 : 5000 }))}
+              className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-medium transition ${
+                filters.minMarketCap > 0
+                  ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                  : 'bg-gray-100 text-gray-500 border border-gray-200 dark:bg-slate-700 dark:text-slate-400 dark:border-slate-600'
+              }`}
+            >
+              <Shield className="h-3 w-3" /> Min MCap $5K
+            </button>
+            <button
+              onClick={() => setFilters((prev) => ({ ...prev, minBonding: prev.minBonding > 0 ? 0 : 20 }))}
+              className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-medium transition ${
+                filters.minBonding > 0
+                  ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                  : 'bg-gray-100 text-gray-500 border border-gray-200 dark:bg-slate-700 dark:text-slate-400 dark:border-slate-600'
+              }`}
+            >
+              <Shield className="h-3 w-3" /> Min Bonding 20%
+            </button>
+            {(search || filters.hideGraduated || filters.minMarketCap > 0 || filters.minBonding > 0) && (
+              <span className="text-[10px] text-gray-400 dark:text-slate-500">
+                {filteredTokens.length} of {rawTokens.length} tokens
+              </span>
+            )}
+          </div>
+        </div>
+
         {pumpfunLatest.isLoading ? (
           <Loader2 className="mx-auto h-6 w-6 animate-spin text-pink-600 dark:text-pink-400" />
         ) : (
@@ -75,7 +165,7 @@ export function PumpFunTab() {
                 </tr>
               </thead>
               <tbody>
-                {(pumpfunLatest.data?.data ?? []).map((token) => (
+                {filteredTokens.map((token) => (
                   <tr key={token.mint} className="border-b border-gray-100 hover:bg-gray-50 dark:border-slate-700/30 dark:hover:bg-slate-700/20">
                     <td className="py-2 pr-3">
                       <div className="font-medium text-gray-800 dark:text-slate-200">{token.symbol}</div>

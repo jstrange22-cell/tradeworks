@@ -1,4 +1,10 @@
-import 'dotenv/config';
+import { config } from 'dotenv';
+import { resolve } from 'path';
+
+// Load .env from monorepo root (pnpm --filter sets CWD to apps/gateway/)
+config({ path: resolve(process.cwd(), '../../.env') });
+// Also load local .env if it exists (won't override root values)
+config();
 import express, { type Express } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';

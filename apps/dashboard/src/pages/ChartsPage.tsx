@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { TradePanel } from '@/components/trade/TradePanel';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getCandlesticks, getOrderBook, getRecentTrades } from '@/lib/crypto-api';
+import { RefreshCw, AlertTriangle } from 'lucide-react';
 import { CandlestickChart } from '@/components/charts/CandlestickChart';
 import { OrderBookPanel } from '@/components/charts/OrderBookPanel';
 import { RecentTradesPanel } from '@/components/charts/RecentTradesPanel';
@@ -46,22 +47,28 @@ export function ChartsPage() {
     setInstrumentMarket(market);
   }, []);
 
+  const queryClient = useQueryClient();
+
   const { data: candleData, isLoading, error } = useQuery({
     queryKey: ['candles', instrument, timeframe],
     queryFn: () => getCandlesticks(instrument, timeframe),
     refetchInterval: 30_000,
+    retry: 2,
+    staleTime: 10_000,
   });
 
   const { data: bookData } = useQuery({
     queryKey: ['orderbook', instrument],
     queryFn: () => getOrderBook(instrument, 10),
     refetchInterval: 10_000,
+    retry: 2,
   });
 
   const { data: tradesData } = useQuery({
     queryKey: ['recent-trades', instrument],
     queryFn: () => getRecentTrades(instrument, 20),
     refetchInterval: 10_000,
+    retry: 2,
   });
 
   const priceInfo = (() => {
@@ -87,8 +94,17 @@ export function ChartsPage() {
       />
 
       {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-400">
-          Failed to load chart data: {(error as Error).message}
+        <div className="flex items-center justify-between rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-400">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            Failed to load chart data: {(error as Error).message}
+          </div>
+          <button
+            onClick={() => queryClient.invalidateQueries({ queryKey: ['candles', instrument, timeframe] })}
+            className="flex items-center gap-1 rounded-md bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300 transition hover:bg-red-500/20"
+          >
+            <RefreshCw className="h-3 w-3" /> Retry
+          </button>
         </div>
       )}
 

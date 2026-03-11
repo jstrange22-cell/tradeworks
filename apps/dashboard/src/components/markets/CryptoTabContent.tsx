@@ -57,18 +57,8 @@ export function CryptoTabContent({
         </div>
       </div>
 
-      {/* Table header */}
-      <div className="hidden items-center gap-3 border-b border-slate-200 px-3 py-2 text-[11px] font-medium uppercase tracking-wider text-slate-500 sm:flex sm:gap-4 sm:px-4 dark:border-slate-700/50">
-        <span className="w-6 shrink-0 text-center">#</span>
-        <span className="min-w-0 flex-1">Coin</span>
-        <span className="hidden w-20 sm:block">Chart</span>
-        <span className="shrink-0 text-right">Price</span>
-        <span className="shrink-0">24h</span>
-        <span className="hidden w-20 shrink-0 text-right md:block">Volume</span>
-      </div>
-
-      {/* Rows */}
-      <div className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white dark:divide-slate-700/30 dark:border-slate-700/50 dark:bg-slate-800/30">
+      {/* Grid */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {processedTickers.map((ticker, index) => (
           <CryptoMarketRow key={ticker.instrument_name} ticker={ticker} rank={index + 1} />
         ))}

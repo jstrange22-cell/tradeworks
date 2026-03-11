@@ -4,6 +4,7 @@ import { usePortfolio } from '@/hooks/usePortfolio';
 import { apiClient } from '@/lib/api-client';
 import { GettingStartedWizard } from '@/components/onboarding/GettingStartedWizard';
 import { WalletOverview } from '@/components/portfolio/WalletOverview';
+import { CryptoPortfolioPanel } from '@/components/portfolio/CryptoPortfolioPanel';
 import { PortfolioSummary } from '@/components/dashboard/PortfolioSummary';
 import { EquityCurveChart } from '@/components/dashboard/EquityCurveChart';
 import { AssetAllocationChart } from '@/components/dashboard/AssetAllocationChart';
@@ -97,6 +98,8 @@ export function DashboardPage() {
       />
 
       <WalletOverview />
+
+      <CryptoPortfolioPanel />
 
       <EngineStatusCard hasSolana={hasSolana} />
 

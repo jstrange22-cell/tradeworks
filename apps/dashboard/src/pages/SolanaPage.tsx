@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { Zap, Wallet, TrendingUp, Sparkles, Rocket, Crosshair, Eye, Brain } from 'lucide-react';
+import { Zap, Wallet, TrendingUp, Sparkles, Rocket, Crosshair, Eye, Brain, PieChart, AlertTriangle, Info } from 'lucide-react';
 import { StatCard } from '@/components/solana/shared';
-import { ScannerTab, PumpFunTab, SniperTab, WhaleTab, MoonshotTab, BotWalletGuide } from '@/components/solana';
+import { ScannerTab, PumpFunTab, SniperTab, WhaleTab, MoonshotTab, ActiveTradesPanel } from '@/components/solana';
+import { HoldingsTab } from '@/components/solana/HoldingsTab';
 import { useWalletStatus, useBalances } from '@/hooks/useSolana';
 import { usePhantomBalance } from '@/hooks/usePhantomBalance';
 import type { PageTab } from '@/types/solana';
@@ -13,6 +14,7 @@ const TABS: ReadonlyArray<{ key: PageTab; label: string; icon: React.ReactNode }
   { key: 'sniper', label: 'Sniper', icon: <Crosshair className="h-3.5 w-3.5" /> },
   { key: 'whales', label: 'Whales', icon: <Eye className="h-3.5 w-3.5" /> },
   { key: 'moonshot', label: 'Moonshot AI', icon: <Brain className="h-3.5 w-3.5" /> },
+  { key: 'holdings', label: 'Holdings', icon: <PieChart className="h-3.5 w-3.5" /> },
 ] as const;
 
 export function SolanaPage() {
@@ -62,6 +64,20 @@ export function SolanaPage() {
         </div>
       </div>
 
+      {/* Wallet Status Alerts */}
+      {walletQuery.isError && (
+        <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-50 p-3 text-xs text-red-700 dark:bg-red-500/10 dark:text-red-400">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          Failed to reach gateway: {walletQuery.error instanceof Error ? walletQuery.error.message : 'Unknown error'}
+        </div>
+      )}
+      {!walletQuery.isLoading && !botConnected && !walletQuery.isError && (
+        <div className="flex items-center gap-2 rounded-lg border border-yellow-500/30 bg-yellow-50 p-3 text-xs text-yellow-700 dark:bg-yellow-500/10 dark:text-yellow-400">
+          <Info className="h-4 w-4 shrink-0" />
+          Bot wallet not connected. Add your Solana private key in Settings → API Keys, then restart the gateway.
+        </div>
+      )}
+
       {/* Stats row */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard
@@ -90,13 +106,8 @@ export function SolanaPage() {
         />
       </div>
 
-      {/* Bot Wallet Guide */}
-      <BotWalletGuide
-        botWallet={botWallet}
-        botConnected={botConnected}
-        solBalance={balances ? `${balances.solBalance.toFixed(4)} SOL` : '--'}
-        solValueUsd={balances ? `$${balances.solValueUsd.toFixed(2)}` : ''}
-      />
+      {/* Active Trades Dashboard */}
+      <ActiveTradesPanel />
 
       {/* Tab Navigation */}
       <div className="flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-slate-800/50">
@@ -121,6 +132,7 @@ export function SolanaPage() {
       {activeTab === 'sniper' && <SniperTab />}
       {activeTab === 'whales' && <WhaleTab />}
       {activeTab === 'moonshot' && <MoonshotTab />}
+      {activeTab === 'holdings' && <HoldingsTab />}
     </div>
   );
 }

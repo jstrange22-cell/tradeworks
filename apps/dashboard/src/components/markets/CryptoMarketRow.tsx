@@ -1,4 +1,4 @@
-import { TrendingUp, TrendingDown } from 'lucide-react';
+import { TrendingUp, TrendingDown, ExternalLink } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 import { getCandlesticks, toDisplayName, type CryptoTicker } from '@/lib/crypto-api';
@@ -37,16 +37,17 @@ function SparklineChart({ instrument, isPositive }: { instrument: string; isPosi
         .map((candle, index) => ({ x: index, y: candle.close }));
     },
     staleTime: 60_000,
+    retry: 1,
   });
 
-  if (!data) return <div className="h-10 w-20" />;
+  if (!data) return <div className="h-10 w-full" />;
 
   const strokeColor = isPositive
     ? (theme === 'dark' ? '#4ade80' : '#16a34a')
     : (theme === 'dark' ? '#f87171' : '#dc2626');
 
   return (
-    <div className="h-10 w-20">
+    <div className="h-10 w-full">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data}>
           <Line
@@ -62,7 +63,7 @@ function SparklineChart({ instrument, isPositive }: { instrument: string; isPosi
   );
 }
 
-export function CryptoMarketRow({ ticker, rank }: CryptoMarketRowProps) {
+export function CryptoMarketRow({ ticker }: CryptoMarketRowProps) {
   const displayName = toDisplayName(ticker.instrument_name);
   const symbol = extractSymbol(ticker.instrument_name);
   const price = parseFloat(ticker.last);
@@ -70,56 +71,59 @@ export function CryptoMarketRow({ ticker, rank }: CryptoMarketRowProps) {
   const isPositive = change >= 0;
   const volumeValue = parseFloat(ticker.volume_value);
 
-  return (
-    <div className="table-row flex items-center gap-3 px-3 py-3 sm:gap-4 sm:px-4">
-      {/* Rank */}
-      <span className="w-6 shrink-0 text-center text-xs font-medium text-slate-400 dark:text-slate-500">
-        {rank}
-      </span>
+  const handleDexScreener = () => {
+    window.open(`https://dexscreener.com/search?q=${symbol}`, '_blank', 'noopener,noreferrer');
+  };
 
-      {/* Symbol + Name */}
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
-          {symbol}
-        </p>
-        <p className="truncate text-xs text-slate-500 dark:text-slate-400">
-          {displayName}
-        </p>
+  return (
+    <div
+      onClick={handleDexScreener}
+      className="group cursor-pointer rounded-lg border border-slate-200 bg-white p-3 transition hover:border-blue-400 hover:shadow-sm dark:border-slate-700/50 dark:bg-slate-800/50 dark:hover:border-blue-500/50"
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => { if (event.key === 'Enter') handleDexScreener(); }}
+    >
+      {/* Header: Symbol + DexScreener icon */}
+      <div className="flex items-center justify-between">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-bold text-slate-900 dark:text-slate-100">
+            {symbol}
+          </p>
+          <p className="truncate text-[10px] text-slate-500 dark:text-slate-400">
+            {displayName}
+          </p>
+        </div>
+        <ExternalLink className="h-3.5 w-3.5 shrink-0 text-slate-400 opacity-0 transition group-hover:opacity-100 dark:text-slate-500" />
       </div>
 
-      {/* Sparkline (hidden on small screens) */}
-      <div className="hidden sm:block">
+      {/* Sparkline */}
+      <div className="my-2">
         <SparklineChart instrument={displayName} isPositive={isPositive} />
       </div>
 
-      {/* Price */}
-      <div className="shrink-0 text-right">
+      {/* Price + Change */}
+      <div className="flex items-end justify-between gap-2">
         <p className="text-sm font-bold text-slate-900 dark:text-slate-100">
           {formatPrice(price)}
         </p>
+        <div
+          className={`flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-semibold ${
+            isPositive
+              ? 'bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400'
+              : 'bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400'
+          }`}
+        >
+          {isPositive
+            ? <TrendingUp className="h-3 w-3" />
+            : <TrendingDown className="h-3 w-3" />}
+          <span>{isPositive ? '+' : ''}{(change * 100).toFixed(2)}%</span>
+        </div>
       </div>
 
-      {/* 24h Change */}
-      <div
-        className={`flex shrink-0 items-center gap-0.5 rounded-full px-2 py-1 text-xs font-semibold ${
-          isPositive
-            ? 'bg-green-100 text-green-700 dark:bg-green-500/10 dark:text-green-400'
-            : 'bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-400'
-        }`}
-      >
-        {isPositive
-          ? <TrendingUp className="h-3 w-3" />
-          : <TrendingDown className="h-3 w-3" />}
-        <span>{isPositive ? '+' : ''}{(change * 100).toFixed(2)}%</span>
-      </div>
-
-      {/* Volume (hidden on mobile) */}
-      <div className="hidden w-20 shrink-0 text-right md:block">
-        <p className="text-xs font-medium text-slate-600 dark:text-slate-400">
-          {formatVolume(volumeValue)}
-        </p>
-        <p className="text-[10px] text-slate-400 dark:text-slate-500">Vol</p>
-      </div>
+      {/* Volume */}
+      <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
+        Vol: {formatVolume(volumeValue)}
+      </p>
     </div>
   );
 }

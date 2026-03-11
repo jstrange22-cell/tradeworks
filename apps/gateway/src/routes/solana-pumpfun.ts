@@ -1,12 +1,16 @@
 import { Router, type Router as RouterType } from 'express';
+import WebSocket from 'ws';
 import { broadcast } from '../websocket/server.js';
+import { onNewTokenDetected } from './solana-sniper.js';
 
 /**
- * pump.fun Real-Time Monitor — Sprint 8.1
+ * pump.fun Real-Time Monitor — Sprint 12.4
  *
- * Monitors for new token launches on pump.fun via:
- *   1. Polling pump.fun unofficial API for latest coins
- *   2. Broadcasting new launches to 'solana:tokens' WebSocket channel
+ * Monitors for new token launches on pump.fun via PumpPortal WebSocket:
+ *   1. Connects to wss://pumpportal.fun/api/data
+ *   2. Subscribes to 'subscribeNewToken' for real-time creation events
+ *   3. Feeds new tokens into sniper engine via onNewTokenDetected()
+ *   4. Broadcasts to 'solana:tokens' WebSocket channel for dashboard
  *
  * Routes:
  *   GET  /api/v1/solana/pumpfun/latest        — Latest pump.fun launches
@@ -41,7 +45,7 @@ export interface PumpFunToken {
 
 // ── Monitor State ──────────────────────────────────────────────────────
 
-let monitorInterval: ReturnType<typeof setInterval> | null = null;
+let wsConnection: WebSocket | null = null;
 let monitorRunning = false;
 let lastSeenMints = new Set<string>();
 let totalDetected = 0;
@@ -49,43 +53,56 @@ let monitorStartedAt: Date | null = null;
 const recentLaunches: PumpFunToken[] = [];
 const MAX_RECENT = 100;
 
-// ── pump.fun API helpers ───────────────────────────────────────────────
+// ── PumpPortal WebSocket ─────────────────────────────────────────────
 
-const PUMPFUN_API = 'https://frontend-api.pump.fun';
+const PUMPPORTAL_WS = 'wss://pumpportal.fun/api/data';
 
-async function fetchLatestPumpFun(limit = 50): Promise<PumpFunToken[]> {
-  try {
-    const res = await fetch(
-      `${PUMPFUN_API}/coins?offset=0&limit=${limit}&sort=created_timestamp&order=DESC&includeNsfw=false`,
-    );
-    if (!res.ok) return [];
+// REST fallback for /latest endpoint (v3 API or cache)
+const PUMPFUN_API_V3 = 'https://frontend-api-v3.pump.fun';
 
-    const data = (await res.json()) as Array<Record<string, unknown>>;
-    return data.map(parsePumpFunToken).filter((t): t is PumpFunToken => t !== null);
-  } catch (err) {
-    console.error('[PumpFun] API fetch failed:', err);
-    return [];
-  }
+/**
+ * Parse a PumpPortal WebSocket `subscribeNewToken` event into our PumpFunToken format.
+ *
+ * PumpPortal fields: mint, name, symbol, uri, traderPublicKey, initialBuy,
+ * bondingCurveKey, vTokensInBondingCurve, vSolInBondingCurve, marketCapSol,
+ * signature, txType
+ */
+function parsePumpPortalToken(data: Record<string, unknown>): PumpFunToken {
+  // Estimate USD market cap from SOL market cap
+  // Sniper engine does its own Jupiter price check before buying
+  const solPrice = 170; // conservative estimate
+  const marketCapSol = Number(data.marketCapSol ?? 0);
+  const usdMarketCap = marketCapSol * solPrice;
+
+  return {
+    mint: data.mint as string,
+    name: (data.name as string) ?? 'Unknown',
+    symbol: (data.symbol as string) ?? '???',
+    description: '',
+    imageUri: (data.uri as string) ?? null,
+    creator: (data.traderPublicKey as string) ?? '',
+    createdAt: new Date().toISOString(),
+    marketCap: marketCapSol,
+    usdMarketCap,
+    replyCount: 0,
+    bondingCurveProgress: 0,
+    graduated: false,
+    website: null,
+    twitter: null,
+    telegram: null,
+    kingOfTheHill: false,
+  };
 }
 
-async function fetchPumpFunToken(mint: string): Promise<PumpFunToken | null> {
-  try {
-    const res = await fetch(`${PUMPFUN_API}/coins/${mint}`);
-    if (!res.ok) return null;
-
-    const data = (await res.json()) as Record<string, unknown>;
-    return parsePumpFunToken(data);
-  } catch {
-    return null;
-  }
-}
-
+/**
+ * Parse a pump.fun REST API response (v3) into PumpFunToken.
+ * Kept for /latest and /token/:mint endpoints.
+ */
 function parsePumpFunToken(data: Record<string, unknown>): PumpFunToken | null {
   try {
     const mint = data.mint as string;
     if (!mint) return null;
 
-    // Bonding curve: pump.fun tokens start at 0% and graduate to Raydium at 100%
     const bondingCurveProgress = typeof data.bonding_curve_progress === 'number'
       ? data.bonding_curve_progress
       : (typeof data.progress === 'number' ? data.progress : 0);
@@ -117,68 +134,152 @@ function parsePumpFunToken(data: Record<string, unknown>): PumpFunToken | null {
   }
 }
 
+// ── WebSocket Connection ──────────────────────────────────────────────
+
+let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function connectWebSocket(): void {
+  if (wsConnection) {
+    try { wsConnection.close(); } catch { /* ignore */ }
+    wsConnection = null;
+  }
+
+  console.log('[PumpFun] Connecting to PumpPortal WebSocket...');
+  const ws = new WebSocket(PUMPPORTAL_WS);
+  wsConnection = ws;
+
+  ws.on('open', () => {
+    console.log('[PumpFun] Connected to PumpPortal WebSocket — subscribing to new tokens');
+    ws.send(JSON.stringify({ method: 'subscribeNewToken' }));
+  });
+
+  ws.on('message', (raw: Buffer) => {
+    try {
+      const data = JSON.parse(raw.toString()) as Record<string, unknown>;
+      handleNewToken(data);
+    } catch (err) {
+      console.error('[PumpFun] WS message parse error:', err);
+    }
+  });
+
+  ws.on('close', () => {
+    wsConnection = null;
+    if (monitorRunning) {
+      console.log('[PumpFun] WebSocket closed — reconnecting in 5s...');
+      reconnectTimeout = setTimeout(connectWebSocket, 5000);
+    }
+  });
+
+  ws.on('error', (err: Error) => {
+    console.error('[PumpFun] WebSocket error:', err.message);
+    // 'close' event fires after 'error', so reconnect logic is handled there
+  });
+}
+
+function handleNewToken(data: Record<string, unknown>): void {
+  const mint = data.mint as string;
+  if (!mint || lastSeenMints.has(mint)) return;
+
+  lastSeenMints.add(mint);
+  totalDetected++;
+
+  const token = parsePumpPortalToken(data);
+
+  // Keep recent launches bounded
+  recentLaunches.unshift(token);
+  if (recentLaunches.length > MAX_RECENT) recentLaunches.pop();
+
+  // Broadcast to dashboard WebSocket subscribers
+  broadcast('solana:tokens' as Parameters<typeof broadcast>[0], {
+    event: 'pumpfun:new_token',
+    token,
+  });
+
+  // Feed into sniper engine for auto-buy evaluation
+  onNewTokenDetected({
+    mint: token.mint,
+    symbol: token.symbol,
+    name: token.name,
+    usdMarketCap: token.usdMarketCap,
+    source: 'pumpfun',
+  });
+
+  console.log(
+    `[PumpFun] New token: ${token.symbol} (${token.mint.slice(0, 8)}...) mcap=$${token.usdMarketCap.toFixed(0)}`,
+  );
+
+  // Cap the seen set to prevent memory growth
+  if (lastSeenMints.size > 5000) {
+    const arr = [...lastSeenMints];
+    lastSeenMints = new Set(arr.slice(arr.length - 2000));
+  }
+}
+
 // ── Monitor Logic ──────────────────────────────────────────────────────
 
-function startMonitor(pollIntervalMs = 5000): void {
+function startMonitor(): void {
   if (monitorRunning) return;
 
   monitorRunning = true;
   monitorStartedAt = new Date();
-  console.log(`[PumpFun] Monitor started — polling every ${pollIntervalMs}ms`);
+  console.log('[PumpFun] Monitor started — connecting to PumpPortal WebSocket');
 
-  // Initial seed
-  fetchLatestPumpFun(20).then((tokens) => {
-    for (const t of tokens) lastSeenMints.add(t.mint);
-    console.log(`[PumpFun] Seeded with ${lastSeenMints.size} known tokens`);
-  });
-
-  monitorInterval = setInterval(async () => {
-    try {
-      const latest = await fetchLatestPumpFun(30);
-      const newTokens: PumpFunToken[] = [];
-
-      for (const token of latest) {
-        if (!lastSeenMints.has(token.mint)) {
-          lastSeenMints.add(token.mint);
-          newTokens.push(token);
-          totalDetected++;
-
-          // Keep recent launches bounded
-          recentLaunches.unshift(token);
-          if (recentLaunches.length > MAX_RECENT) recentLaunches.pop();
-        }
-      }
-
-      // Broadcast new tokens to WebSocket subscribers
-      if (newTokens.length > 0) {
-        for (const token of newTokens) {
-          broadcast('solana:tokens' as any, {
-            event: 'pumpfun:new_token',
-            token,
-          });
-        }
-        console.log(`[PumpFun] Detected ${newTokens.length} new launch(es)`);
-      }
-
-      // Cap the seen set to prevent memory growth
-      if (lastSeenMints.size > 5000) {
-        const arr = [...lastSeenMints];
-        lastSeenMints = new Set(arr.slice(arr.length - 2000));
-      }
-    } catch (err) {
-      console.error('[PumpFun] Monitor poll error:', err);
-    }
-  }, pollIntervalMs);
+  connectWebSocket();
 }
 
 function stopMonitor(): void {
   if (!monitorRunning) return;
-  if (monitorInterval) {
-    clearInterval(monitorInterval);
-    monitorInterval = null;
-  }
+
   monitorRunning = false;
+
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
+  }
+
+  if (wsConnection) {
+    try { wsConnection.close(); } catch { /* ignore */ }
+    wsConnection = null;
+  }
+
   console.log('[PumpFun] Monitor stopped');
+}
+
+// ── REST API helpers (for /latest and /token/:mint routes) ────────────
+
+async function fetchLatestPumpFun(limit = 50): Promise<PumpFunToken[]> {
+  // Try v3 REST API first
+  try {
+    const res = await fetch(
+      `${PUMPFUN_API_V3}/coins?offset=0&limit=${limit}&sort=created_timestamp&order=DESC&includeNsfw=false`,
+    );
+    if (res.ok) {
+      const data = (await res.json()) as Array<Record<string, unknown>>;
+      const parsed = data.map(parsePumpFunToken).filter((t): t is PumpFunToken => t !== null);
+      if (parsed.length > 0) return parsed;
+    }
+  } catch {
+    // v3 API may also be unavailable — fall through to cache
+  }
+
+  // Fallback: return cached tokens from WebSocket stream
+  return recentLaunches.slice(0, limit);
+}
+
+async function fetchPumpFunToken(mint: string): Promise<PumpFunToken | null> {
+  // Try v3 API
+  try {
+    const res = await fetch(`${PUMPFUN_API_V3}/coins/${mint}`);
+    if (res.ok) {
+      const data = (await res.json()) as Record<string, unknown>;
+      return parsePumpFunToken(data);
+    }
+  } catch {
+    // Fall through
+  }
+
+  // Check WebSocket cache
+  return recentLaunches.find(t => t.mint === mint) ?? null;
 }
 
 // ── Routes ─────────────────────────────────────────────────────────────
@@ -235,12 +336,11 @@ pumpFunRouter.get('/pumpfun/token/:mint', async (req, res) => {
 
 // POST /pumpfun/monitor/start — Start the real-time monitor
 pumpFunRouter.post('/pumpfun/monitor/start', (_req, res) => {
-  const interval = 5000; // 5 second poll
-  startMonitor(interval);
+  startMonitor();
   res.json({
-    message: 'pump.fun monitor started',
+    message: 'pump.fun monitor started (PumpPortal WebSocket)',
     status: 'running',
-    pollIntervalMs: interval,
+    source: 'wss://pumpportal.fun/api/data',
   });
 });
 
@@ -257,6 +357,8 @@ pumpFunRouter.post('/pumpfun/monitor/stop', (_req, res) => {
 pumpFunRouter.get('/pumpfun/monitor/status', (_req, res) => {
   res.json({
     running: monitorRunning,
+    wsConnected: wsConnection?.readyState === WebSocket.OPEN,
+    source: 'PumpPortal WebSocket',
     startedAt: monitorStartedAt?.toISOString() ?? null,
     totalDetected,
     knownTokens: lastSeenMints.size,
@@ -277,8 +379,8 @@ export function initPumpFunMonitor(): void {
     console.log('[PumpFun] Monitor already running, skipping auto-start');
     return;
   }
-  console.log('[PumpFun] Auto-starting monitor (polls pump.fun API every 5s)...');
-  startMonitor(5000);
+  console.log('[PumpFun] Auto-starting monitor (PumpPortal WebSocket)...');
+  startMonitor();
 }
 
 // Cleanup on shutdown
