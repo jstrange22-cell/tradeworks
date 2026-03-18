@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
-  Activity, Crosshair, Settings, Target, TrendingUp, Wallet, ChevronDown, ChevronRight, Clock, Coins,
+  Activity, Crosshair, Settings, Target, TrendingUp, Wallet, ChevronDown, ChevronRight, Clock, Coins, Zap, WifiOff,
 } from 'lucide-react';
 import { ConfigInput } from '@/components/solana/shared';
 import { ExecutionsList } from '@/components/solana/ExecutionsList';
@@ -147,8 +147,29 @@ function PositionRow({ pos, onSell, isPending }: { pos: ActivePosition; onSell: 
   );
 }
 
+function useTickEvery5s() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 5000);
+    return () => clearInterval(id);
+  }, []);
+}
+
+function lastTradeAgo(executions: SnipeExecution[]): string {
+  if (executions.length === 0) return 'no trades yet';
+  const latest = [...executions].sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+  )[0];
+  const seconds = Math.floor((Date.now() - new Date(latest.timestamp).getTime()) / 1000);
+  if (seconds < 60) return `last trade ${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `last trade ${minutes}m ago`;
+  return `last trade ${Math.floor(minutes / 60)}h ago`;
+}
+
 export function ActiveTradesPanel() {
   const [configOpen, setConfigOpen] = useState(false);
+  useTickEvery5s();
 
   const sniperStatus = useSniperStatus(true);
   const sniperConfig = useSniperConfig(true);
@@ -163,8 +184,63 @@ export function ActiveTradesPanel() {
   // Deduplicate by mint in case of status endpoint duplicates
   const uniquePositions = positions.filter((p, i, arr) => arr.findIndex(x => x.mint === p.mint) === i);
 
+  const isRunning = status?.running ?? false;
+  const isLoading = sniperStatus.isLoading;
+
   return (
     <div className="space-y-4">
+
+      {/* ── Live Status Banner ── */}
+      <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${
+        isRunning
+          ? 'border-emerald-500/30 bg-emerald-500/8 dark:bg-emerald-500/8'
+          : 'border-red-500/30 bg-red-500/8 dark:bg-red-500/8'
+      }`}>
+        {isRunning ? (
+          <>
+            <span className="relative flex h-3 w-3 shrink-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500" />
+            </span>
+            <Zap className="h-4 w-4 text-emerald-500 dark:text-emerald-400" />
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-emerald-700 dark:text-emerald-300">Bot is LIVE</p>
+              <p className="text-[10px] text-emerald-600/70 dark:text-emerald-400/70">
+                Scanning pump.fun 24/7 · {lastTradeAgo(executions)}
+              </p>
+            </div>
+          </>
+        ) : (
+          <>
+            <WifiOff className="h-4 w-4 text-red-500" />
+            <div>
+              <p className="text-sm font-bold text-red-600 dark:text-red-400">Bot is STOPPED</p>
+              <p className="text-[10px] text-red-500/70">Click Start to resume trading</p>
+            </div>
+          </>
+        )}
+        <div className="ml-auto flex items-center gap-4 text-right">
+          <div>
+            <p className="text-[10px] text-gray-400 dark:text-slate-500">Wallet SOL</p>
+            <p className="text-sm font-bold text-gray-900 dark:text-slate-100">
+              {isLoading ? '…' : (status?.walletSolBalance ?? 0).toFixed(4)}
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] text-gray-400 dark:text-slate-500">Today</p>
+            <p className="text-sm font-bold text-gray-900 dark:text-slate-100">
+              {(status?.dailySpentSol ?? 0).toFixed(3)} SOL
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] text-gray-400 dark:text-slate-500">All-time</p>
+            <p className="text-sm font-bold text-gray-900 dark:text-slate-100">
+              {status?.totalExecutions ?? 0} trades
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Section A: Open Positions */}
       <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-slate-700/50 dark:bg-slate-800/50">
         <div className="mb-3 flex items-center gap-2">

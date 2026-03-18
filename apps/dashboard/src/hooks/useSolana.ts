@@ -117,6 +117,9 @@ export function useSniperStatus(enabled: boolean) {
       anyRunning?: boolean;
       totalInvestedSol?: number;
       totalInvestedUsd?: number;
+      walletSolBalance?: number;
+      consecutiveLosses?: number;
+      circuitBreakerPaused?: boolean;
     }>('/solana/sniper/status'),
     enabled,
     refetchInterval: 5_000,
