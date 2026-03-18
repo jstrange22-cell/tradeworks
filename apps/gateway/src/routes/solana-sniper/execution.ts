@@ -1050,6 +1050,10 @@ export async function executeSellSnipe(
             });
           }
 
+          // Attach realized P&L to the execution record for analytics
+          execution.pnlSol = pnlSol;
+          execution.pnlPercent = buyAmountSol > 0 ? (pnlSol / buyAmountSol) * 100 : 0;
+
           // Persist state
           persistPositions();
           persistTemplateStats();

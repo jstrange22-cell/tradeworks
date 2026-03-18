@@ -175,6 +175,10 @@ export interface SnipeExecution {
   timestamp: string;
   /** Whether this execution was simulated (paper mode) */
   paperMode?: boolean;
+  /** Realized P&L in SOL for sell executions (sell amount - buy cost) */
+  pnlSol?: number;
+  /** Realized P&L as percentage for sell executions */
+  pnlPercent?: number;
 }
 
 // ── Positions ───────────────────────────────────────────────────────────

@@ -33,7 +33,7 @@ export function ExecutionsList({ executions, title = 'Live Activity' }: Executio
   // Newest first, cap at 30 rows
   const items = [...all].reverse().slice(0, 30);
 
-  // Build cumulative per-mint buy cost so sell rows can show PnL %
+  // Build cumulative per-mint buy cost as fallback for older executions without pnlPercent
   const buyMap = new Map<string, number>();
   for (const e of all) {
     if (e.action === 'buy') {
@@ -60,10 +60,13 @@ export function ExecutionsList({ executions, title = 'Live Activity' }: Executio
         <div className="space-y-1">
           {items.map((ex, idx) => {
             const isBuy = ex.action === 'buy';
+            // Use server-calculated pnlPercent if available, else fall back to local estimate
             const buyCost = buyMap.get(ex.mint) ?? 0;
-            const pnlPct =
-              !isBuy && buyCost > 0
-                ? ((ex.amountSol - buyCost) / buyCost) * 100
+            const pnlPct: number | null =
+              !isBuy
+                ? (ex.pnlPercent !== undefined ? ex.pnlPercent
+                  : buyCost > 0 ? ((ex.amountSol - buyCost) / buyCost) * 100
+                  : null)
                 : null;
             const isNewest = idx === 0;
 

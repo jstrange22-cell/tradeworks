@@ -468,8 +468,20 @@ sniperRouter.get('/sniper/status', (_req, res) => {
   const totalInvestedSol = openPositionsWithUsd.reduce((sum, p) => sum + p.buyCostSol, 0);
   const totalInvestedUsd = totalInvestedSol * cachedSolPriceUsd;
 
+  // Aggregate stats across all templates for top-level analytics
+  const aggStats = { totalTrades: 0, wins: 0, losses: 0, totalPnlSol: 0 };
+  for (const [, tpl] of sniperTemplates) {
+    aggStats.totalTrades += tpl.stats.totalTrades;
+    aggStats.wins += tpl.stats.wins;
+    aggStats.losses += tpl.stats.losses;
+    aggStats.totalPnlSol += tpl.stats.totalPnlSol;
+  }
+  const winRate = aggStats.totalTrades > 0
+    ? Math.round((aggStats.wins / aggStats.totalTrades) * 100)
+    : 0;
+
   res.json({
-    // Legacy fields (from default template)
+    // Runtime
     running: defaultRuntime.running,
     startedAt: defaultRuntime.startedAt?.toISOString() ?? null,
     dailySpentSol: defaultRuntime.dailySpentSol,
@@ -478,12 +490,29 @@ sniperRouter.get('/sniper/status', (_req, res) => {
       0,
       (defaultTemplate?.dailyBudgetSol ?? 0) - defaultRuntime.dailySpentSol,
     ),
+    consecutiveLosses: defaultRuntime.consecutiveLosses,
+    circuitBreakerPaused: defaultRuntime.circuitBreakerPausedUntil > Date.now(),
+    circuitBreakerResumesAt: defaultRuntime.circuitBreakerPausedUntil > Date.now()
+      ? new Date(defaultRuntime.circuitBreakerPausedUntil).toISOString()
+      : null,
+    walletSolBalance: cachedSolBalanceLamports / 1e9,
+    // Positions
     openPositions: openPositionsWithUsd,
     totalInvestedSol,
     totalInvestedUsd,
+    // Aggregated analytics
     totalExecutions: executionHistory.length,
-    recentExecutions: executionHistory.slice(0, 10),
-    // New template fields
+    stats: {
+      totalTrades: aggStats.totalTrades,
+      wins: aggStats.wins,
+      losses: aggStats.losses,
+      totalPnlSol: aggStats.totalPnlSol,
+      totalPnlUsd: aggStats.totalPnlSol * cachedSolPriceUsd,
+      winRate,
+      dailyRealizedLossSol: defaultRuntime.dailyRealizedLossSol,
+    },
+    recentExecutions: executionHistory.slice(0, 50),
+    // Template detail
     templates,
     anyRunning: isAnyTemplateRunning(),
   });

@@ -207,6 +207,10 @@ export interface SnipeExecution {
   templateName?: string;
   timestamp: string;
   paperMode?: boolean;
+  /** Realized P&L in SOL (sell executions only) */
+  pnlSol?: number;
+  /** Realized P&L as percentage (sell executions only) */
+  pnlPercent?: number;
 }
 
 // ─── Whale / Copy Trading Types ──────────────────────────────────────────

@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import {
-  Activity, Crosshair, Settings, Target, TrendingUp, Wallet, ChevronDown, ChevronRight, Clock, Coins, Zap, WifiOff,
+  Activity, Settings, Target, ChevronDown, ChevronRight, Clock, Coins, Zap, WifiOff,
 } from 'lucide-react';
 import { ConfigInput } from '@/components/solana/shared';
 import { ExecutionsList } from '@/components/solana/ExecutionsList';
+import { AnalyticsPanel } from '@/components/solana/AnalyticsPanel';
 import {
   useSniperStatus, useSniperConfig, useSniperUpdateConfig, useSniperExecute,
 } from '@/hooks/useSolana';
@@ -28,11 +29,6 @@ function formatPrice(price: number): string {
   return `$${str}`;
 }
 
-function calcWinRate(executions: SnipeExecution[]): string {
-  if (executions.length === 0) return '--';
-  const wins = executions.filter((e) => e.status === 'success').length;
-  return `${Math.round((wins / executions.length) * 100)}%`;
-}
 
 function PositionRow({ pos, onSell, isPending }: { pos: ActivePosition; onSell: () => void; isPending: boolean }) {
   const isProfit = pos.pnlPercent > 0;
@@ -271,49 +267,14 @@ export function ActiveTradesPanel() {
         )}
       </div>
 
-      {/* Section B: Quick Stats */}
-      <div className="grid grid-cols-4 gap-3">
-        <div className="rounded-xl border border-gray-200 bg-white p-3 dark:border-slate-700/50 dark:bg-slate-800/50">
-          <div className="mb-1 flex items-center justify-between">
-            <span className="text-[10px] text-gray-500 dark:text-slate-400">Spent Today</span>
-            <Wallet className="h-3.5 w-3.5 text-blue-400" />
-          </div>
-          <div className="text-sm font-bold text-gray-900 dark:text-slate-100">
-            {(status?.dailySpentSol ?? 0).toFixed(4)} SOL
-          </div>
-          <div className="text-[10px] text-gray-400 dark:text-slate-500">
-            ≈ ${((status?.dailySpentSol ?? 0) * 94.78).toFixed(2)} USD
-          </div>
-        </div>
-        <div className="rounded-xl border border-gray-200 bg-white p-3 dark:border-slate-700/50 dark:bg-slate-800/50">
-          <div className="mb-1 flex items-center justify-between">
-            <span className="text-[10px] text-gray-500 dark:text-slate-400">Open / Max</span>
-            <Target className="h-3.5 w-3.5 text-purple-400" />
-          </div>
-          <div className="text-sm font-bold text-gray-900 dark:text-slate-100">
-            {uniquePositions.length} <span className="font-normal text-gray-400">/ {config?.maxOpenPositions ?? '--'}</span>
-          </div>
-          <div className="text-[10px] text-gray-400 dark:text-slate-500">positions</div>
-        </div>
-        <div className="rounded-xl border border-gray-200 bg-white p-3 dark:border-slate-700/50 dark:bg-slate-800/50">
-          <div className="mb-1 flex items-center justify-between">
-            <span className="text-[10px] text-gray-500 dark:text-slate-400">Total Snipes</span>
-            <Crosshair className="h-3.5 w-3.5 text-orange-400" />
-          </div>
-          <div className="text-sm font-bold text-gray-900 dark:text-slate-100">{status?.totalExecutions ?? 0}</div>
-          <div className="text-[10px] text-gray-400 dark:text-slate-500">all time</div>
-        </div>
-        <div className="rounded-xl border border-gray-200 bg-white p-3 dark:border-slate-700/50 dark:bg-slate-800/50">
-          <div className="mb-1 flex items-center justify-between">
-            <span className="text-[10px] text-gray-500 dark:text-slate-400">Win Rate</span>
-            <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
-          </div>
-          <div className="text-sm font-bold text-gray-900 dark:text-slate-100">{calcWinRate(executions)}</div>
-          <div className="text-[10px] text-gray-400 dark:text-slate-500">
-            {executions.filter((e) => e.status === 'success').length}W / {executions.filter(e => e.status === 'failed').length}L recent
-          </div>
-        </div>
-      </div>
+      {/* Section B: Analytics */}
+      <AnalyticsPanel
+        stats={status?.stats}
+        consecutiveLosses={status?.consecutiveLosses ?? 0}
+        circuitBreakerPaused={status?.circuitBreakerPaused ?? false}
+        circuitBreakerResumesAt={status?.circuitBreakerResumesAt}
+        solPrice={94.78}
+      />
 
       {/* Section C: Collapsible Config */}
       <div className="rounded-xl border border-gray-200 bg-white dark:border-slate-700/50 dark:bg-slate-800/50">

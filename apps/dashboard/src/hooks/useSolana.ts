@@ -120,6 +120,16 @@ export function useSniperStatus(enabled: boolean) {
       walletSolBalance?: number;
       consecutiveLosses?: number;
       circuitBreakerPaused?: boolean;
+      circuitBreakerResumesAt?: string | null;
+      stats?: {
+        totalTrades: number;
+        wins: number;
+        losses: number;
+        totalPnlSol: number;
+        totalPnlUsd: number;
+        winRate: number;
+        dailyRealizedLossSol: number;
+      };
     }>('/solana/sniper/status'),
     enabled,
     refetchInterval: 5_000,
