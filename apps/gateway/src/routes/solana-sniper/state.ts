@@ -422,6 +422,20 @@ export function persistTemplateStats(): void {
   } catch { /* fire-and-forget */ }
 }
 
+export function persistTemplateConfigs(): void {
+  try {
+    const configs: Record<string, Partial<SniperConfigFields>> = {};
+    for (const [id, template] of sniperTemplates) {
+      const { stats: _stats, id: _id, name: _name, enabled: _enabled, ...configFields } = template;
+      configs[id] = configFields as Partial<SniperConfigFields>;
+    }
+    fs.writeFileSync(
+      path.join(DATA_DIR, 'template-configs.json'),
+      JSON.stringify(configs, null, 2),
+    );
+  } catch { /* fire-and-forget */ }
+}
+
 /** Load all persisted state on startup (before wallet sync) */
 export function loadPersistedState(): void {
   try {
@@ -484,6 +498,19 @@ export function loadPersistedState(): void {
         }
       }
       console.log('[Persistence] Loaded template stats from disk');
+    }
+
+    // 5. Load template configs (AI settings, dynamic sizing, etc.)
+    const configsPath = path.join(DATA_DIR, 'template-configs.json');
+    if (fs.existsSync(configsPath)) {
+      const rawConfigs = JSON.parse(fs.readFileSync(configsPath, 'utf-8')) as Record<string, Partial<SniperConfigFields>>;
+      for (const [id, fields] of Object.entries(rawConfigs)) {
+        const template = sniperTemplates.get(id);
+        if (template) {
+          Object.assign(template, fields);
+        }
+      }
+      console.log('[Persistence] Loaded template configs from disk');
     }
   } catch (err) {
     console.error('[Persistence] Failed to load state:', err instanceof Error ? err.message : err);

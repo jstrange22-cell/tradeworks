@@ -61,6 +61,7 @@ import {
   createTemplate,
   deleteTemplate,
   cachedSolBalanceLamports,
+  persistTemplateConfigs,
 } from './state.js';
 
 // ── Execution imports ────────────────────────────────────────────────────
@@ -142,6 +143,9 @@ sniperRouter.post('/sniper/templates', (req, res) => {
 
   const template = createTemplate(name.trim(), configFields);
 
+  // Persist config so new template settings survive gateway restarts
+  persistTemplateConfigs();
+
   res.status(201).json({
     data: template,
     message: `Template "${template.name}" created`,
@@ -208,6 +212,9 @@ sniperRouter.put('/sniper/templates/:id', (req, res) => {
       createdAt: new Date().toISOString(),
     };
   }
+
+  // Persist config so AI settings survive gateway restarts
+  persistTemplateConfigs();
 
   res.json({
     data: template,
@@ -354,6 +361,9 @@ sniperRouter.put('/sniper/config', (req, res) => {
   if (typeof body.enabled === 'boolean') {
     defaultTemplate.enabled = body.enabled;
   }
+
+  // Persist config so AI settings survive gateway restarts
+  persistTemplateConfigs();
 
   res.json({
     data: templateToLegacyConfig(defaultTemplate),
