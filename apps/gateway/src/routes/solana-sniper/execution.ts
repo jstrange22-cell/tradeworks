@@ -863,6 +863,31 @@ export async function executeSellSnipe(
       );
     } else {
       // ── REAL MODE SELL ───────────────────────────────────────────────
+      // Always verify on-chain balance before sell — catches stale/ghost positions
+      // loaded from disk where tokens no longer exist in the wallet.
+      const actualOnChainBalance = await fetchTokenBalance(mint);
+      if (actualOnChainBalance <= 0) {
+        console.warn(
+          `[Sniper][${template.name}] Ghost position detected — ${position.symbol} has 0 tokens on-chain. Removing stale position.`,
+        );
+        positions.delete(mint);
+        syncActivePositionsMap();
+        unsubscribeTokenTrades([mint]);
+        persistPositions();
+        return null;
+      }
+      // Correct tracked amount if it drifted from real wallet (partial fills, dust, etc.)
+      if (Math.abs(actualOnChainBalance - sellAmount) > 1) {
+        console.log(
+          `[Sniper][${template.name}] Balance drift for ${position.symbol}: tracked=${sellAmount.toFixed(2)}, on-chain=${actualOnChainBalance.toFixed(2)}. Using on-chain balance.`,
+        );
+        // Recalculate sellAmount based on corrected balance
+        sellAmount = sellPct < 1.0
+          ? Math.max(1, Math.floor(actualOnChainBalance * sellPct))
+          : actualOnChainBalance;
+        position.amountTokens = actualOnChainBalance;
+      }
+
       // Capture pre-sell SOL balance for on-chain verification
       const connection = getSolanaConnection();
       const walletPubkey = getSolanaKeypair().publicKey;

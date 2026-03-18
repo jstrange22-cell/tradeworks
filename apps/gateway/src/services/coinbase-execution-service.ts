@@ -23,17 +23,27 @@ export const COINBASE_PRODUCT_MAP: Record<string, string> = {
 export async function placeCoinbaseOrder(
   productId: string,
   side: 'BUY' | 'SELL',
-  quoteSize: string,
+  quoteSize: string,   // USD amount — used for BUY orders (quote_size)
   apiKey: string,
   apiSecret: string,
+  baseSize?: string,   // Asset units — required for SELL orders (base_size)
 ): Promise<{ success: boolean; orderId?: string; error?: string }> {
   const clientOrderId = `tw-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  // Coinbase Advanced Trade API requires:
+  //   BUY  → market_market_ioc.quote_size  (USD amount to spend)
+  //   SELL → market_market_ioc.base_size   (asset units to sell)
+  // Using quote_size on a SELL returns: "Market sells must be parameterized in base currency"
+  const orderConfig = side === 'SELL'
+    ? { base_size: baseSize ?? quoteSize }
+    : { quote_size: quoteSize };
+
   const orderBody = JSON.stringify({
     client_order_id: clientOrderId,
     product_id: productId,
     side,
     order_configuration: {
-      market_market_ioc: { quote_size: quoteSize },
+      market_market_ioc: orderConfig,
     },
   });
 
@@ -53,7 +63,10 @@ export async function placeCoinbaseOrder(
     };
 
     if (res.ok && data.success !== false) {
-      console.log(`[Engine] Coinbase order placed: ${side} ${productId} $${quoteSize} — orderId: ${data.order_id ?? clientOrderId}`);
+      const sizeLabel = side === 'SELL'
+        ? `${baseSize ?? quoteSize} units`
+        : `$${quoteSize}`;
+      console.log(`[Engine] Coinbase order placed: ${side} ${productId} ${sizeLabel} — orderId: ${data.order_id ?? clientOrderId}`);
       return { success: true, orderId: data.order_id ?? clientOrderId };
     } else {
       const errMsg = data.error_response?.message ?? data.error_response?.error ?? `HTTP ${res.status}`;

@@ -560,12 +560,20 @@ export async function runAnalysisCycle(): Promise<CycleResult> {
 
         // -- All checks passed — execute live trade --
         if (productId) {
+          // SELL orders must use base_size (asset units), not quote_size (USD).
+          // Use the actual engine-owned quantity so we sell the full position,
+          // not a budget-derived estimate which may be wrong.
+          const engineOwned = getEngineOwnedQuantity(baseSymbol);
+          const baseSizeForSell = side === 'sell'
+            ? String(Math.round(Math.min(engineOwned, quantity) * 1000) / 1000)
+            : undefined;
           const result = await placeCoinbaseOrder(
             productId,
             side.toUpperCase() as 'BUY' | 'SELL',
             quoteSize,
             coinbaseKeys.apiKey,
             coinbaseKeys.apiSecret,
+            baseSizeForSell,
           );
 
           if (result.success) {
