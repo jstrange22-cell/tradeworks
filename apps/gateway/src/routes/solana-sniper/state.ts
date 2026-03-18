@@ -85,6 +85,9 @@ export const DEFAULT_CONFIG_FIELDS: SniperConfigFields = {
   // Phase 6: Jito
   enableJito: false,
   jitoTipLamports: 100_000,
+  // Phase 7: AI Signal Generator
+  useAiSignals: false,
+  minSignalConfidence: 0,
 };
 
 // ── State Maps ─────────────────────────────────────────────────────────
@@ -601,6 +604,8 @@ export function templateToLegacyConfig(template: SniperTemplate): SniperConfig {
     exitTier4SellPct: template.exitTier4SellPct,
     enableJito: template.enableJito,
     jitoTipLamports: template.jitoTipLamports,
+    useAiSignals: template.useAiSignals,
+    minSignalConfidence: template.minSignalConfidence,
   };
 }
 
@@ -685,6 +690,8 @@ export const SNIPER_CONFIG_KEYS: ReadonlyArray<keyof SniperConfigFields> = [
   'exitTier4PctGain', 'exitTier4SellPct',
   // Phase 6: Jito
   'enableJito', 'jitoTipLamports',
+  // Phase 7: AI Signal Generator
+  'useAiSignals', 'minSignalConfidence',
 ] as const;
 
 export function validateConfigUpdates(
@@ -709,6 +716,10 @@ export function validateConfigUpdates(
   if (updates.minMoonshotScore !== undefined
     && (updates.minMoonshotScore < 0 || updates.minMoonshotScore > 100)) {
     return 'minMoonshotScore must be between 0 and 100';
+  }
+  if (updates.minSignalConfidence !== undefined
+    && (updates.minSignalConfidence < 0 || updates.minSignalConfidence > 100)) {
+    return 'minSignalConfidence must be between 0 and 100';
   }
   return null;
 }
@@ -786,6 +797,9 @@ export function applyConfigToTemplate(
   // Phase 6: Jito
   if (fields.enableJito !== undefined) template.enableJito = fields.enableJito;
   if (fields.jitoTipLamports !== undefined) template.jitoTipLamports = fields.jitoTipLamports;
+  // Phase 7: AI Signal Generator
+  if (fields.useAiSignals !== undefined) template.useAiSignals = fields.useAiSignals;
+  if (fields.minSignalConfidence !== undefined) template.minSignalConfidence = fields.minSignalConfidence;
 }
 
 // ── Template CRUD ──────────────────────────────────────────────────────

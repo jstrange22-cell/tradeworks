@@ -106,6 +106,11 @@ export interface SniperConfigFields {
   enableJito: boolean;
   /** Jito tip in lamports (default: 100000 = 0.0001 SOL) */
   jitoTipLamports: number;
+  // ── Phase 7: AI Signal Generator ──
+  /** Enable AI signal-based buy gating (default: false — signals are logged but don't block buys) */
+  useAiSignals: boolean;
+  /** Minimum signal confidence 0-100 to proceed with buy when useAiSignals is true (default: 0) */
+  minSignalConfidence: number;
 }
 
 /** Backwards-compatible config shape (config fields + enabled flag) */

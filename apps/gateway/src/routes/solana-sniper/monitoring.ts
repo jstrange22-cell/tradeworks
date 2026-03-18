@@ -84,6 +84,47 @@ import {
   LAMPORTS_PER_SOL,
 } from './execution.js';
 
+import { generateSignal, type TradeSignal } from '../../services/ai/signal-generator.js';
+import * as fs from 'fs';
+import * as path from 'path';
+
+// ── Signal Storage ────────────────────────────────────────────────────
+// In-memory ring buffer of recent signals, persisted to signals.json
+
+const MAX_STORED_SIGNALS = 200;
+const SIGNALS_FILE = path.join(process.cwd(), '.sniper-data', 'signals.json');
+export const recentSignals: TradeSignal[] = [];
+
+/** Load persisted signals on module init */
+function loadSignals(): void {
+  try {
+    if (fs.existsSync(SIGNALS_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(SIGNALS_FILE, 'utf-8')) as TradeSignal[];
+      if (Array.isArray(raw)) {
+        recentSignals.push(...raw.slice(0, MAX_STORED_SIGNALS));
+      }
+    }
+  } catch { /* ignore */ }
+}
+loadSignals();
+
+function storeSignal(signal: TradeSignal): void {
+  recentSignals.unshift(signal);
+  if (recentSignals.length > MAX_STORED_SIGNALS) {
+    recentSignals.length = MAX_STORED_SIGNALS;
+  }
+  persistSignals();
+}
+
+function persistSignals(): void {
+  try {
+    fs.writeFileSync(
+      SIGNALS_FILE,
+      JSON.stringify(recentSignals.slice(0, MAX_STORED_SIGNALS), null, 2),
+    );
+  } catch { /* fire-and-forget */ }
+}
+
 // ── Momentum Confirmation Gate (Phase 1) ──────────────────────────────
 
 /** Fetch RugCheck report for a token (Phase 4) */
@@ -216,12 +257,63 @@ export function evaluatePendingToken(pending: PendingToken): void {
 
   void (async () => {
     try {
+      // ── AI Signal Generation (Phase 7) ──
+      const estimatedPrice = pending.usdMarketCap > 0 ? pending.usdMarketCap / 1e9 : 0;
+      let signal: TradeSignal | null = null;
+
+      try {
+        signal = await generateSignal({
+          mint: pending.mint,
+          symbol: pending.symbol,
+          name: pending.name,
+          currentPrice: estimatedPrice,
+          moonshotScore: undefined, // moonshot score already gate-checked earlier
+          uniqueBuyers,
+          buySellRatio: Number.isFinite(buySellRatio) ? buySellRatio : 0,
+          buyVolumeSol: pending.totalBuySol,
+          bondingCurveProgress: undefined,
+        });
+
+        // Store and broadcast the signal
+        storeSignal(signal);
+        broadcast('solana:sniper', {
+          type: 'signal',
+          signal,
+        });
+
+        console.log(
+          `[Signal][${template.name}] ${pending.symbol} — confidence ${signal.confidence} (${signal.quality}) [TA:${signal.taScore} SEC:${signal.securityScore} MOM:${signal.momentumScore}]`,
+        );
+      } catch (signalErr: unknown) {
+        const signalMsg = signalErr instanceof Error ? signalErr.message : 'Unknown signal error';
+        console.warn(`[Signal][${template.name}] Signal generation failed for ${pending.symbol}: ${signalMsg}`);
+        // Signal failure should NOT block the buy — continue
+      }
+
+      // If AI signals are enabled, enforce confidence gate
+      if (signal && template.useAiSignals) {
+        if (signal.quality === 'REJECTED') {
+          console.log(
+            `[Signal][${template.name}] BUY BLOCKED ${pending.symbol} — signal REJECTED: ${signal.reasoning.join(' | ')}`,
+          );
+          pendingBuys.delete(pendingKey);
+          return;
+        }
+        if (signal.confidence < template.minSignalConfidence) {
+          console.log(
+            `[Signal][${template.name}] BUY BLOCKED ${pending.symbol} — confidence ${signal.confidence} < ${template.minSignalConfidence} threshold`,
+          );
+          pendingBuys.delete(pendingKey);
+          return;
+        }
+      }
+
       await executeBuySnipe({
         mint: pending.mint,
         symbol: pending.symbol,
         name: pending.name,
         trigger: pending.source === 'pumpfun' ? 'pumpfun' : 'trending',
-        priceUsd: pending.usdMarketCap > 0 ? pending.usdMarketCap / 1e9 : undefined,
+        priceUsd: estimatedPrice > 0 ? estimatedPrice : undefined,
         templateId: pending.templateId,
       });
     } catch (err: unknown) {

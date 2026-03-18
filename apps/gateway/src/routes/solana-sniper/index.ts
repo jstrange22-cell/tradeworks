@@ -68,9 +68,12 @@ import {
   reconcileWalletPositions,
 } from './execution.js';
 
+// ── Signal imports ────────────────────────────────────────────────────────
+import { recentSignals } from './monitoring.js';
+
 // ── Re-exports for external consumers ────────────────────────────────────
 export * from './types.js';
-export { autoStartSniper, onNewTokenDetected } from './monitoring.js';
+export { autoStartSniper, onNewTokenDetected, recentSignals } from './monitoring.js';
 export { executeBuySnipe, executeSellSnipe, submitViaJito } from './execution.js';
 export {
   isProtectedMint,
@@ -899,6 +902,85 @@ sniperRouter.delete('/sniper/protect/:mint', (req, res) => {
   }
   console.log(`[Sniper] 🛡️ Protected mint removed: ${mint.slice(0, 12)}...`);
   res.json({ message: `Mint ${mint.slice(0, 12)}... removed from protected list`, data: getAllProtectedMints() });
+});
+
+// ── AI Signal Routes ────────────────────────────────────────────────────
+
+import { generateSignal } from '../../services/ai/signal-generator.js';
+
+// GET /sniper/signals/latest — last 50 signals generated
+sniperRouter.get('/sniper/signals/latest', (req, res) => {
+  const limit = Math.min(parseInt((req.query.limit as string) ?? '50', 10), 200);
+  const qualityFilter = req.query.quality as string | undefined;
+
+  let signals = recentSignals;
+  if (qualityFilter) {
+    const upper = qualityFilter.toUpperCase();
+    signals = signals.filter((s) => s.quality === upper);
+  }
+
+  res.json({
+    data: signals.slice(0, limit),
+    total: signals.length,
+    limit,
+  });
+});
+
+// GET /sniper/signals/:mint — generate a fresh signal on-demand for a specific token
+sniperRouter.get('/sniper/signals/:mint', async (req, res) => {
+  const { mint } = req.params;
+
+  if (!mint || mint.length < 32) {
+    res.status(400).json({ error: 'Invalid mint address' });
+    return;
+  }
+
+  // Check if we have a recent signal for this mint (< 2 min old)
+  const existing = recentSignals.find((s) => s.mint === mint);
+  if (existing) {
+    const ageMs = Date.now() - new Date(existing.timestamp).getTime();
+    if (ageMs < 120_000) {
+      res.json({ data: existing, cached: true, ageMs });
+      return;
+    }
+  }
+
+  try {
+    // Fetch current price from DexScreener for the on-demand signal
+    let currentPrice = 0;
+    try {
+      const dexRes = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, {
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (dexRes.ok) {
+        const dexData = (await dexRes.json()) as { pairs?: Array<{ chainId: string; priceUsd?: string }> };
+        const solanaPair = dexData.pairs?.find((p) => p.chainId === 'solana');
+        if (solanaPair?.priceUsd) {
+          currentPrice = parseFloat(solanaPair.priceUsd);
+        }
+      }
+    } catch { /* price fetch failed, use 0 */ }
+
+    const signal = await generateSignal({
+      mint,
+      symbol: 'LOOKUP',
+      name: 'On-demand lookup',
+      currentPrice: Number.isFinite(currentPrice) ? currentPrice : 0,
+    });
+
+    // Store the on-demand signal too
+    recentSignals.unshift(signal);
+    if (recentSignals.length > 200) {
+      recentSignals.length = 200;
+    }
+
+    res.json({ data: signal, cached: false });
+  } catch (err) {
+    res.status(500).json({
+      error: 'Signal generation failed',
+      message: err instanceof Error ? err.message : 'Unknown error',
+    });
+  }
 });
 
 // ── Cleanup ─────────────────────────────────────────────────────────────
