@@ -59,6 +59,7 @@ import {
   getTemplatePositions,
   syncActivePositionsMap,
   ensurePositionCheckRunning,
+  setCheckPositionsFn,
   isProtectedMint,
   refreshCachedSolBalance,
   cachedSolPriceUsd,
@@ -1691,7 +1692,8 @@ export function autoStartSniper(): void {
     }
   }, 30_000);
 
-  // Start position-check interval if not already running
+  // Wire up checkPositions callback and start interval
+  setCheckPositionsFn(checkPositions);
   ensurePositionCheckRunning();
 
   console.log('[Sniper] Default template auto-started — ready to snipe (real-time trade pricing enabled)');
