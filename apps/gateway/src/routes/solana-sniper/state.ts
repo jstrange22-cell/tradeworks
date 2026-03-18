@@ -30,8 +30,8 @@ import type {
 export const DEFAULT_TEMPLATE_ID = 'default';
 
 export const DEFAULT_CONFIG_FIELDS: SniperConfigFields = {
-  buyAmountSol: 0.005,      // Conservative — wallet has limited SOL
-  dailyBudgetSol: 0.5,
+  buyAmountSol: 0.0053,     // ~$0.50 per trade at ~$95/SOL — runs 24/7 without budget limit
+  dailyBudgetSol: 999,      // No effective daily limit — bot runs 24/7 uninhibited
   slippageBps: 1500,         // 15% — needed for bonding curve tokens (pump.fun price moves fast)
   priorityFee: 200000,       // 200k micro-lamports — competitive on congested mainnet
   takeProfitPercent: 50,     // 1.5x — more realistic for meme coins (was 100/2x)
@@ -44,8 +44,8 @@ export const DEFAULT_CONFIG_FIELDS: SniperConfigFields = {
   autoBuyPumpFun: true,      // Enable auto-buy from pump.fun monitor
   autoBuyTrending: true,     // Enable auto-buy from trending scanner
   minMoonshotScore: 40,      // AI scoring enabled — skip tokens scoring below 40
-  stalePriceTimeoutMs: 300_000,    // 5 min — sell if no price movement
-  maxPositionAgeMs: 1_800_000,     // 30 min — force sell regardless
+  stalePriceTimeoutMs: 120_000,    // 2 min — sell quickly if no price movement
+  maxPositionAgeMs: 900_000,       // 15 min — force sell regardless (was 30 min)
   trailingStopActivatePercent: 30, // Activate trailing stop at +30%
   trailingStopPercent: -15,        // Trail 15% below high water mark
   buyCooldownMs: 30_000,           // 30s between buys
@@ -153,7 +153,7 @@ export function isPendingSell(mint: string): boolean {
 /** Queue of failed sells to retry after a delay */
 export const failedSellQueue: FailedSellEntry[] = [];
 export const MAX_SELL_RETRIES = 3;
-export const SELL_RETRY_DELAY_MS = 30_000; // 30 seconds between retries
+export const SELL_RETRY_DELAY_MS = 15_000; // 15 seconds between retries (was 30s)
 
 /**
  * Permanently failed mints — exhausted all retries, don't re-attempt from checkPositions.
@@ -165,7 +165,7 @@ export const permanentlyFailedSells: Set<string> = new Set();
  * Max total sell attempts on a position before auto-closing it as a write-off.
  * Prevents infinite sell loops for dead/rugged tokens.
  */
-export const MAX_POSITION_SELL_ATTEMPTS = 50;
+export const MAX_POSITION_SELL_ATTEMPTS = 10; // Auto-close after 10 failed attempts (~2.5 min)
 
 // ── Cooldown State ─────────────────────────────────────────────────────
 
@@ -736,8 +736,8 @@ export function validateConfigUpdates(
     return 'buyAmountSol must be between 0 and 10 SOL';
   }
   if (updates.dailyBudgetSol !== undefined
-    && (updates.dailyBudgetSol <= 0 || updates.dailyBudgetSol > 100)) {
-    return 'dailyBudgetSol must be between 0 and 100 SOL';
+    && (updates.dailyBudgetSol <= 0 || updates.dailyBudgetSol > 9999)) {
+    return 'dailyBudgetSol must be between 0 and 9999 SOL';
   }
   if (updates.slippageBps !== undefined
     && (updates.slippageBps < 0 || updates.slippageBps > 5000)) {

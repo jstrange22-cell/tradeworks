@@ -1073,6 +1073,10 @@ export async function executeSellSnipe(
       // Queue for retry if this was an automated exit (not manual)
       position.sellFailCount = (position.sellFailCount ?? 0) + 1;
 
+      // Persist sellFailCount immediately — without this, a gateway restart resets
+      // the counter to 0 and positions can never reach MAX_POSITION_SELL_ATTEMPTS.
+      persistPositions();
+
       if (position.sellFailCount >= MAX_POSITION_SELL_ATTEMPTS) {
         console.warn(
           `[Sniper] 🗑️ AUTO-CLOSING ${position.symbol} (${mint.slice(0, 8)}...) — ${position.sellFailCount} sell attempts failed, writing off as loss`,
