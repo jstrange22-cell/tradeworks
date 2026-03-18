@@ -1,22 +1,24 @@
 /**
- * AI Signal Generator — Phase 3
+ * AI Signal Generator — Phase 4
  *
- * Combines Technical Analysis + Security Check + Momentum data into
- * a single confidence-scored TradeSignal. Used by the sniper pipeline
- * to make informed buy decisions.
+ * Combines Technical Analysis + Security Check + Momentum data +
+ * Sentiment Analysis into a single confidence-scored TradeSignal.
+ * Used by the sniper pipeline to make informed buy decisions.
  *
  * Weighted composite scoring:
- *   - TA score:       35%
- *   - Security score:  25%
- *   - Momentum score:  25%
- *   - Volume/liquidity: 15%
+ *   - TA score:        35%
+ *   - Security score:  20%
+ *   - Momentum score:  20%
+ *   - Sentiment score: 15%
+ *   - Volume/liquidity: 10%
  *
- * Graceful degradation: if TA or security fails, remaining components
+ * Graceful degradation: if any component fails, remaining components
  * are re-weighted proportionally.
  */
 
 import { analyzeToken } from './technical-analysis.js';
 import { enhancedSecurityCheck } from '../security/enhanced-rug-check.js';
+import { getSentiment, type SentimentScore } from '../sentiment/sentiment-aggregator.js';
 import type { AnalysisResult } from './types.js';
 import type { SecurityVerdict } from '../security/enhanced-rug-check.js';
 
@@ -41,6 +43,7 @@ export interface TradeSignal {
   taScore: number;
   securityScore: number;
   momentumScore: number;
+  sentimentScore: number;
   regime: string;
 
   timestamp: string;
@@ -56,6 +59,11 @@ export interface SignalParams {
   buySellRatio?: number;
   buyVolumeSol?: number;
   bondingCurveProgress?: number;
+  // Sentiment inputs
+  description?: string;
+  buys24h?: number;
+  sells24h?: number;
+  volume24h?: number;
 }
 
 // ── TA Result Cache ──────────────────────────────────────────────────
@@ -209,6 +217,7 @@ function buildReasoning(
   securityResult: SecurityVerdict | null,
   momentumData: { score: number; components: Record<string, number> },
   volumeScore: number,
+  sentimentResult: SentimentScore | null,
   params: SignalParams,
 ): string[] {
   const reasons: string[] = [];
@@ -251,6 +260,17 @@ function buildReasoning(
     `Volume/liquidity score ${volumeScore}/100 — ${vol.toFixed(2)} SOL buy volume`,
   );
 
+  // Sentiment reasoning
+  if (sentimentResult) {
+    reasons.push(
+      `Sentiment score ${sentimentResult.score} (${sentimentResult.label}) — ` +
+      `NLP:${sentimentResult.components.nlpScore} Reddit:${sentimentResult.components.redditScore} ` +
+      `DexSocial:${sentimentResult.components.dexScreenerScore}`,
+    );
+  } else {
+    reasons.push('Sentiment analysis unavailable');
+  }
+
   // Regime
   if (taResult) {
     reasons.push(`Regime: ${taResult.regime}`);
@@ -269,9 +289,8 @@ function buildReasoning(
 export async function generateSignal(params: SignalParams): Promise<TradeSignal> {
   const { mint, symbol, name, currentPrice } = params;
 
-  // Run TA and security in parallel for speed
+  // Run TA, security, and sentiment in parallel for speed
   let taResult: AnalysisResult | null = getCachedTA(mint);
-  let securityResult: SecurityVerdict | null = null;
 
   const taPromise = taResult
     ? Promise.resolve(taResult)
@@ -284,56 +303,66 @@ export async function generateSignal(params: SignalParams): Promise<TradeSignal>
 
   const securityPromise = enhancedSecurityCheck(mint).catch((): null => null);
 
-  const [taSettled, securitySettled] = await Promise.all([taPromise, securityPromise]);
+  const sentimentPromise = getSentiment({
+    mint,
+    symbol,
+    name,
+    description: params.description,
+    buys24h: params.buys24h,
+    sells24h: params.sells24h,
+    volume24h: params.volume24h,
+  }).catch((): null => null);
+
+  const [taSettled, securityResult, sentimentResult] = await Promise.all([
+    taPromise,
+    securityPromise,
+    sentimentPromise,
+  ]);
   taResult = taSettled;
-  securityResult = securitySettled;
 
   // Component scores (with fallbacks)
-  const taScore = taResult?.score ?? 50; // neutral if unavailable
-  const securityScore = securityResult?.score ?? 50; // neutral if unavailable
+  const taScore = taResult?.score ?? 50;
+  const securityScore = securityResult?.score ?? 50;
   const momentumData = calculateMomentumScore(params);
   const volumeScore = calculateVolumeScore(params);
+  // Sentiment maps -100..+100 → 0..100 for composite weighting
+  const sentimentRaw = sentimentResult?.score ?? 0;
+  const sentimentNormalized = Math.round((sentimentRaw + 100) / 2); // 0..100
 
   // Weighted composite with graceful degradation
+  // New Phase 4 weights: TA 35%, Security 20%, Momentum 20%, Sentiment 15%, Volume 10%
   const taAvailable = taResult !== null;
   const secAvailable = securityResult !== null;
+  const sentAvailable = sentimentResult !== null;
 
-  let rawWeights = {
-    ta: 0.35,
-    security: 0.25,
-    momentum: 0.25,
-    volume: 0.15,
+  const baseWeights = {
+    ta: taAvailable ? 0.35 : 0,
+    security: secAvailable ? 0.20 : 0,
+    momentum: 0.20,
+    sentiment: sentAvailable ? 0.15 : 0,
+    volume: 0.10,
   };
 
-  // Redistribute weights if a component is missing
-  if (!taAvailable && !secAvailable) {
-    rawWeights = { ta: 0, security: 0, momentum: 0.625, volume: 0.375 };
-  } else if (!taAvailable) {
-    // Redistribute TA's 35% proportionally
-    const redistFactor = 0.35 / (0.25 + 0.25 + 0.15);
-    rawWeights = {
-      ta: 0,
-      security: 0.25 * (1 + redistFactor),
-      momentum: 0.25 * (1 + redistFactor),
-      volume: 0.15 * (1 + redistFactor),
-    };
-  } else if (!secAvailable) {
-    // Redistribute security's 25% proportionally
-    const redistFactor = 0.25 / (0.35 + 0.25 + 0.15);
-    rawWeights = {
-      ta: 0.35 * (1 + redistFactor),
-      security: 0,
-      momentum: 0.25 * (1 + redistFactor),
-      volume: 0.15 * (1 + redistFactor),
-    };
-  }
+  // Redistribute missing weights proportionally across available components
+  const totalBase = baseWeights.ta + baseWeights.security + baseWeights.momentum
+    + baseWeights.sentiment + baseWeights.volume;
+
+  const scale = totalBase > 0 ? 1 / totalBase : 0;
+  const weights = {
+    ta: baseWeights.ta * scale,
+    security: baseWeights.security * scale,
+    momentum: baseWeights.momentum * scale,
+    sentiment: baseWeights.sentiment * scale,
+    volume: baseWeights.volume * scale,
+  };
 
   const confidence = clamp(
     Math.round(
-      taScore * rawWeights.ta +
-      securityScore * rawWeights.security +
-      momentumData.score * rawWeights.momentum +
-      volumeScore * rawWeights.volume,
+      taScore * weights.ta +
+      securityScore * weights.security +
+      momentumData.score * weights.momentum +
+      sentimentNormalized * weights.sentiment +
+      volumeScore * weights.volume,
     ),
     0,
     100,
@@ -342,7 +371,9 @@ export async function generateSignal(params: SignalParams): Promise<TradeSignal>
   const quality = classifyQuality(confidence, securityScore, taScore);
   const direction = inferDirection(taScore, momentumData.score, securityScore);
   const exitLevels = calculateExitLevels(currentPrice);
-  const reasoning = buildReasoning(taResult, securityResult, momentumData, volumeScore, params);
+  const reasoning = buildReasoning(
+    taResult, securityResult, momentumData, volumeScore, sentimentResult, params,
+  );
   const regime = taResult?.regime ?? 'ranging';
 
   return {
@@ -360,6 +391,7 @@ export async function generateSignal(params: SignalParams): Promise<TradeSignal>
     taScore,
     securityScore,
     momentumScore: momentumData.score,
+    sentimentScore: sentimentRaw,
     regime,
     timestamp: new Date().toISOString(),
   };
