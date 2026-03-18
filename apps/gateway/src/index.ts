@@ -38,7 +38,7 @@ import { solanaBalancesRouter } from './routes/solana-balances.js';
 import { solanaSwapRouter } from './routes/solana-swap.js';
 import { solanaScannerRouter } from './routes/solana-scanner.js';
 import { pumpFunRouter, initPumpFunMonitor } from './routes/solana-pumpfun.js';
-import { sniperRouter, autoStartSniper } from './routes/solana-sniper.js';
+import { sniperRouter, autoStartSniper } from './routes/solana-sniper/index.js';
 import { whaleRouter } from './routes/solana-whales.js';
 import { moonshotRouter, initMoonshotScanner } from './routes/solana-moonshot.js';
 import { robinhoodRouter } from './routes/robinhood.js';

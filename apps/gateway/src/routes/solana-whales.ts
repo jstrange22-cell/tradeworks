@@ -5,7 +5,7 @@ import {
   executeBuySnipe,
   executeSellSnipe,
   activePositions,
-} from './solana-sniper.js';
+} from './solana-sniper/index.js';
 
 /**
  * Whale Tracker / Copy Trading — Sprint 8.4

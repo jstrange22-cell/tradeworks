@@ -1,7 +1,7 @@
 import { Router, type Router as RouterType } from 'express';
 import WebSocket from 'ws';
 import { broadcast } from '../websocket/server.js';
-import { onNewTokenDetected } from './solana-sniper.js';
+import { onNewTokenDetected } from './solana-sniper/index.js';
 
 /**
  * pump.fun Real-Time Monitor — Sprint 12.4
