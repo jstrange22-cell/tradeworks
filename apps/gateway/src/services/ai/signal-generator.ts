@@ -64,6 +64,9 @@ export interface SignalParams {
   buys24h?: number;
   sells24h?: number;
   volume24h?: number;
+  // Phase 5: On-chain analytics inputs
+  smartMoneyBuyers?: number;
+  liquidityUsd?: number;
 }
 
 // ── TA Result Cache ──────────────────────────────────────────────────
@@ -284,6 +287,30 @@ function buildReasoning(
   return reasons;
 }
 
+// ── Phase 5: On-Chain Analytics Reasoning ──────────────────────────────
+
+function buildPhase5Reasoning(
+  smartMoneyBuyers: number,
+  liquidityUsd: number | undefined,
+): string[] {
+  const reasons: string[] = [];
+
+  if (smartMoneyBuyers > 0) {
+    const boost = Math.min(smartMoneyBuyers * 5, 15);
+    reasons.push(`Smart money: ${smartMoneyBuyers} tracked wallet(s) active (+${boost} confidence)`);
+  }
+
+  if (liquidityUsd !== undefined) {
+    if (liquidityUsd < 5000) {
+      reasons.push(`Low liquidity: $${liquidityUsd.toFixed(0)} (-10 confidence penalty)`);
+    } else {
+      reasons.push(`Liquidity: $${liquidityUsd.toFixed(0)}`);
+    }
+  }
+
+  return reasons;
+}
+
 // ── Main Signal Generator ────────────────────────────────────────────
 
 export async function generateSignal(params: SignalParams): Promise<TradeSignal> {
@@ -356,7 +383,7 @@ export async function generateSignal(params: SignalParams): Promise<TradeSignal>
     volume: baseWeights.volume * scale,
   };
 
-  const confidence = clamp(
+  let confidence = clamp(
     Math.round(
       taScore * weights.ta +
       securityScore * weights.security +
@@ -368,12 +395,26 @@ export async function generateSignal(params: SignalParams): Promise<TradeSignal>
     100,
   );
 
+  // Phase 5: On-chain analytics adjustments
+  // Smart money boost: each buyer adds +5, max +15
+  const smartMoneyBoost = Math.min((params.smartMoneyBuyers ?? 0) * 5, 15);
+  confidence = clamp(confidence + smartMoneyBoost, 0, 100);
+
+  // Low liquidity penalty: if < $5000, subtract 10
+  const liquidityPenalty = (params.liquidityUsd !== undefined && params.liquidityUsd < 5000) ? 10 : 0;
+  confidence = clamp(confidence - liquidityPenalty, 0, 100);
+
   const quality = classifyQuality(confidence, securityScore, taScore);
   const direction = inferDirection(taScore, momentumData.score, securityScore);
   const exitLevels = calculateExitLevels(currentPrice);
   const reasoning = buildReasoning(
     taResult, securityResult, momentumData, volumeScore, sentimentResult, params,
   );
+
+  // Append Phase 5 on-chain analytics reasoning
+  const phase5Reasons = buildPhase5Reasoning(params.smartMoneyBuyers ?? 0, params.liquidityUsd);
+  reasoning.push(...phase5Reasons);
+
   const regime = taResult?.regime ?? 'ranging';
 
   return {

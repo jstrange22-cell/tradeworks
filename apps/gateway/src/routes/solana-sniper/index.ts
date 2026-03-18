@@ -60,6 +60,7 @@ import {
   applyConfigToTemplate,
   createTemplate,
   deleteTemplate,
+  cachedSolBalanceLamports,
 } from './state.js';
 
 // ── Execution imports ────────────────────────────────────────────────────
@@ -902,6 +903,78 @@ sniperRouter.delete('/sniper/protect/:mint', (req, res) => {
   }
   console.log(`[Sniper] 🛡️ Protected mint removed: ${mint.slice(0, 12)}...`);
   res.json({ message: `Mint ${mint.slice(0, 12)}... removed from protected list`, data: getAllProtectedMints() });
+});
+
+// ── Risk & Position Sizing Routes ─────────────────────────────────────
+
+import { calculatePortfolioHeat } from '../../services/risk/portfolio-heat.js';
+import { calculatePositionSize } from '../../services/risk/kelly-criterion.js';
+
+// GET /sniper/risk/portfolio — current portfolio heat + sizing info
+sniperRouter.get('/sniper/risk/portfolio', (_req, res) => {
+  const walletSol = cachedSolBalanceLamports / 1e9;
+  const allPositions = getAllActivePositions();
+
+  const positionSnapshots = allPositions.map((pos) => {
+    const buyCost = pos.buyCostSol ?? 0.005;
+    return {
+      buyCostSol: buyCost,
+      pnlPercent: pos.pnlPercent,
+      currentValueSol: buyCost * (1 + pos.pnlPercent / 100),
+    };
+  });
+
+  const heat = calculatePortfolioHeat({
+    walletBalanceSol: walletSol,
+    positions: positionSnapshots,
+  });
+
+  // Calculate example sizing for each quality tier
+  const templateId = _req.query.templateId as string | undefined;
+  const template = sniperTemplates.get(templateId ?? DEFAULT_TEMPLATE_ID);
+
+  let exampleSizing: Record<string, unknown> | undefined;
+  if (template) {
+    const winRate = template.stats.totalTrades > 0
+      ? template.stats.wins / template.stats.totalTrades
+      : 0;
+    const avgWinLoss = template.stats.totalTrades > 2 ? 1.5 : 1.5;
+
+    const tiers = ['PRIME', 'STANDARD', 'SPECULATIVE'] as const;
+    const sizing: Record<string, unknown> = {};
+    for (const quality of tiers) {
+      const confidenceMap = { PRIME: 80, STANDARD: 60, SPECULATIVE: 40 } as const;
+      const result = calculatePositionSize({
+        walletBalanceSol: walletSol,
+        signalConfidence: confidenceMap[quality],
+        signalQuality: quality,
+        historicalWinRate: winRate,
+        avgWinLossRatio: avgWinLoss,
+        portfolioHeat: heat.score,
+        maxPositionPct: template.maxPositionPct,
+        baseBuyAmountSol: template.buyAmountSol,
+      });
+      sizing[quality] = {
+        recommendedSol: result.recommendedSol,
+        kellyPct: Math.round(result.kellyFraction * 10000) / 100,
+        adjustedPct: Math.round(result.adjustedFraction * 10000) / 100,
+        reasoning: result.reasoning,
+      };
+    }
+    exampleSizing = sizing;
+  }
+
+  res.json({
+    data: {
+      walletBalanceSol: walletSol,
+      heat,
+      openPositionCount: allPositions.length,
+      dynamicSizingEnabled: template?.enableDynamicSizing ?? false,
+      maxPositionPct: template?.maxPositionPct ?? 0.10,
+      baseBuyAmountSol: template?.buyAmountSol ?? 0.005,
+      exampleSizing,
+    },
+  });
 });
 
 // ── AI Signal Routes ────────────────────────────────────────────────────

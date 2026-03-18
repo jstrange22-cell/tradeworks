@@ -111,6 +111,11 @@ export interface SniperConfigFields {
   useAiSignals: boolean;
   /** Minimum signal confidence 0-100 to proceed with buy when useAiSignals is true (default: 0) */
   minSignalConfidence: number;
+  // ── Phase 8: Dynamic Risk & Position Sizing ──
+  /** Enable dynamic position sizing via Kelly Criterion (default: false — uses fixed buyAmountSol) */
+  enableDynamicSizing: boolean;
+  /** Max % of wallet per trade when dynamic sizing is active (default: 0.10 = 10%) */
+  maxPositionPct: number;
 }
 
 /** Backwards-compatible config shape (config fields + enabled flag) */
@@ -164,7 +169,7 @@ export interface SnipeExecution {
   signature: string | null;
   status: 'pending' | 'success' | 'failed';
   error: string | null;
-  trigger: 'manual' | 'pumpfun' | 'trending' | 'take_profit' | 'stop_loss' | 'stale_price' | 'max_age' | 'trailing_stop';
+  trigger: 'manual' | 'pumpfun' | 'trending' | 'take_profit' | 'stop_loss' | 'stale_price' | 'max_age' | 'trailing_stop' | 'liquidity_crash';
   templateId: string;
   templateName: string;
   timestamp: string;

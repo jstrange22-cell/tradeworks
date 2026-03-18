@@ -85,6 +85,9 @@ import {
 } from './execution.js';
 
 import { generateSignal, type TradeSignal } from '../../services/ai/signal-generator.js';
+import { checkLiquidity, clearLiquidityData } from '../../services/ai/liquidity-monitor.js';
+import { calculatePositionSize } from '../../services/risk/kelly-criterion.js';
+import { calculatePortfolioHeat } from '../../services/risk/portfolio-heat.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -308,6 +311,57 @@ export function evaluatePendingToken(pending: PendingToken): void {
         }
       }
 
+      // ── Phase 8: Dynamic Risk & Position Sizing ──
+      let buyAmountOverride: number | undefined;
+
+      if (template.enableDynamicSizing) {
+        // 1. Calculate portfolio heat
+        const positions = getTemplatePositions(pending.templateId);
+        const positionSnapshots = [...positions.values()].map((pos) => ({
+          buyCostSol: pos.buyCostSol ?? template.buyAmountSol,
+          pnlPercent: pos.pnlPercent,
+          currentValueSol: (pos.buyCostSol ?? template.buyAmountSol) * (1 + pos.pnlPercent / 100),
+        }));
+
+        const walletSol = cachedSolBalanceLamports / 1e9;
+        const heat = calculatePortfolioHeat({ walletBalanceSol: walletSol, positions: positionSnapshots });
+
+        // 2. If heat is 'stop', skip the buy entirely
+        if (heat.recommendation === 'stop') {
+          console.log(
+            `[Risk][${template.name}] BUY BLOCKED ${pending.symbol} — portfolio heat ${heat.score}/100 (recommendation: stop)`,
+          );
+          pendingBuys.delete(pendingKey);
+          return;
+        }
+
+        // 3. Calculate Kelly position size
+        const winRate = template.stats.totalTrades > 0
+          ? template.stats.wins / template.stats.totalTrades
+          : 0;
+        const avgWinLoss = template.stats.totalTrades > 2
+          ? Math.max(0.5, Math.abs(template.stats.totalPnlSol / Math.max(1, template.stats.losses)) /
+              Math.max(0.001, Math.abs(template.stats.totalPnlSol / Math.max(1, template.stats.wins))))
+          : 1.5; // default assumption: 1.5x win/loss ratio
+
+        const sizing = calculatePositionSize({
+          walletBalanceSol: walletSol,
+          signalConfidence: signal?.confidence ?? 50,
+          signalQuality: signal?.quality ?? 'SPECULATIVE',
+          historicalWinRate: winRate,
+          avgWinLossRatio: avgWinLoss,
+          portfolioHeat: heat.score,
+          maxPositionPct: template.maxPositionPct,
+          baseBuyAmountSol: template.buyAmountSol,
+        });
+
+        buyAmountOverride = sizing.recommendedSol;
+        console.log(
+          `[Risk][${template.name}] ${pending.symbol} sizing: ${sizing.recommendedSol.toFixed(4)} SOL ` +
+          `(kelly=${(sizing.kellyFraction * 100).toFixed(1)}%, adj=${(sizing.adjustedFraction * 100).toFixed(1)}%, heat=${heat.score}) — ${sizing.reasoning}`,
+        );
+      }
+
       await executeBuySnipe({
         mint: pending.mint,
         symbol: pending.symbol,
@@ -315,6 +369,7 @@ export function evaluatePendingToken(pending: PendingToken): void {
         trigger: pending.source === 'pumpfun' ? 'pumpfun' : 'trending',
         priceUsd: estimatedPrice > 0 ? estimatedPrice : undefined,
         templateId: pending.templateId,
+        buyAmountOverride,
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -927,6 +982,26 @@ export async function checkPositions(): Promise<void> {
           unrealizedPnlUsd: position.amountTokens * (currentPrice - position.buyPrice),
           boughtAt: position.boughtAt,
         });
+
+        // ── LIQUIDITY CRASH EXIT: emergency sell if liquidity is dropping fast ──
+        try {
+          const liqCheck = await checkLiquidity(mint);
+          if (liqCheck.isDropping) {
+            console.warn(
+              `[Sniper][${template.name}] LIQUIDITY CRASH ${position.symbol} — ${liqCheck.change5m.toFixed(1)}% in 5 min, emergency sell`,
+            );
+            pendingSells.set(mint, Date.now());
+            try {
+              await executeSellSnipe(mint, 'liquidity_crash', templateId);
+            } finally {
+              pendingSells.delete(mint);
+            }
+            clearLiquidityData(mint);
+            continue;
+          }
+        } catch {
+          // Non-fatal: liquidity check failure should not block monitoring
+        }
 
         // ── STALE PRICE EXIT: sell if no meaningful movement for stalePriceTimeoutMs ──
         if (template.stalePriceTimeoutMs > 0 && positionAgeMs > 180_000) {

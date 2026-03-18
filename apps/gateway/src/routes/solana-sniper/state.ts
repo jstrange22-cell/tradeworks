@@ -88,6 +88,9 @@ export const DEFAULT_CONFIG_FIELDS: SniperConfigFields = {
   // Phase 7: AI Signal Generator
   useAiSignals: false,
   minSignalConfidence: 0,
+  // Phase 8: Dynamic Risk & Position Sizing
+  enableDynamicSizing: false,
+  maxPositionPct: 0.10,
 };
 
 // ── State Maps ─────────────────────────────────────────────────────────
@@ -606,6 +609,8 @@ export function templateToLegacyConfig(template: SniperTemplate): SniperConfig {
     jitoTipLamports: template.jitoTipLamports,
     useAiSignals: template.useAiSignals,
     minSignalConfidence: template.minSignalConfidence,
+    enableDynamicSizing: template.enableDynamicSizing,
+    maxPositionPct: template.maxPositionPct,
   };
 }
 
@@ -692,6 +697,8 @@ export const SNIPER_CONFIG_KEYS: ReadonlyArray<keyof SniperConfigFields> = [
   'enableJito', 'jitoTipLamports',
   // Phase 7: AI Signal Generator
   'useAiSignals', 'minSignalConfidence',
+  // Phase 8: Dynamic Risk & Position Sizing
+  'enableDynamicSizing', 'maxPositionPct',
 ] as const;
 
 export function validateConfigUpdates(
@@ -720,6 +727,10 @@ export function validateConfigUpdates(
   if (updates.minSignalConfidence !== undefined
     && (updates.minSignalConfidence < 0 || updates.minSignalConfidence > 100)) {
     return 'minSignalConfidence must be between 0 and 100';
+  }
+  if (updates.maxPositionPct !== undefined
+    && (updates.maxPositionPct <= 0 || updates.maxPositionPct > 1)) {
+    return 'maxPositionPct must be between 0 and 1 (e.g. 0.10 = 10%)';
   }
   return null;
 }
@@ -800,6 +811,9 @@ export function applyConfigToTemplate(
   // Phase 7: AI Signal Generator
   if (fields.useAiSignals !== undefined) template.useAiSignals = fields.useAiSignals;
   if (fields.minSignalConfidence !== undefined) template.minSignalConfidence = fields.minSignalConfidence;
+  // Phase 8: Dynamic Risk & Position Sizing
+  if (fields.enableDynamicSizing !== undefined) template.enableDynamicSizing = fields.enableDynamicSizing;
+  if (fields.maxPositionPct !== undefined) template.maxPositionPct = fields.maxPositionPct;
 }
 
 // ── Template CRUD ──────────────────────────────────────────────────────

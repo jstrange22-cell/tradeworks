@@ -406,6 +406,8 @@ export async function executeBuySnipe(params: {
   priceUsd?: number;
   templateId?: string;
   description?: string;
+  /** Override buy amount from dynamic position sizing (Kelly Criterion) */
+  buyAmountOverride?: number;
 }): Promise<SnipeExecution> {
   const templateId = params.templateId ?? DEFAULT_TEMPLATE_ID;
   const template = sniperTemplates.get(templateId);
@@ -421,11 +423,14 @@ export async function executeBuySnipe(params: {
     return execution;
   }
 
+  // Effective buy amount: use override from dynamic sizing if provided
+  const effectiveBuyAmountSol = params.buyAmountOverride ?? template.buyAmountSol;
+
   // ── EARLY SOL BALANCE CHECK (silent skip — no log spam, no execution record) ──
   // Uses cached balance to avoid an RPC call per buy attempt
   // Paper mode skips real balance check — uses virtual paperBalanceSol instead
   if (params.trigger !== 'manual' && !template.paperMode) {
-    const minRequiredLamports = Math.floor((template.buyAmountSol + 0.005) * LAMPORTS_PER_SOL);
+    const minRequiredLamports = Math.floor((effectiveBuyAmountSol + 0.005) * LAMPORTS_PER_SOL);
     const currentBalance = await getCachedSolBalance();
     if (currentBalance < minRequiredLamports) {
       // Silently skip — don't log, don't create execution record, don't spam
@@ -443,7 +448,7 @@ export async function executeBuySnipe(params: {
     symbol: params.symbol,
     name: params.name,
     action: 'buy',
-    amountSol: template.buyAmountSol,
+    amountSol: effectiveBuyAmountSol,
     amountTokens: null,
     priceUsd: params.priceUsd ?? null,
     signature: null,
@@ -458,7 +463,7 @@ export async function executeBuySnipe(params: {
   try {
     // Budget checks
     resetDailyBudgetIfNeeded(runtime);
-    if (runtime.dailySpentSol + template.buyAmountSol > template.dailyBudgetSol) {
+    if (runtime.dailySpentSol + effectiveBuyAmountSol > template.dailyBudgetSol) {
       if (params.trigger !== 'manual') {
         return execution; // Silent skip — don't spam execution history
       }
@@ -485,9 +490,9 @@ export async function executeBuySnipe(params: {
     // ── PAPER MODE BUY ──────────────────────────────────────────────────
     if (template.paperMode) {
       // Check virtual SOL balance — silently skip (don't record as failed)
-      if (runtime.paperBalanceSol < template.buyAmountSol) {
+      if (runtime.paperBalanceSol < effectiveBuyAmountSol) {
         console.log(
-          `[Sniper][${template.name}] ⏸️ Paper balance low (${runtime.paperBalanceSol.toFixed(4)} SOL < ${template.buyAmountSol} SOL) — waiting for sells to recover`,
+          `[Sniper][${template.name}] ⏸️ Paper balance low (${runtime.paperBalanceSol.toFixed(4)} SOL < ${effectiveBuyAmountSol} SOL) — waiting for sells to recover`,
         );
         return execution;
       }
@@ -495,7 +500,7 @@ export async function executeBuySnipe(params: {
       // Get realistic token amount via Jupiter quote (no execution)
       let estimatedTokens = 0;
       try {
-        const amountLamports = Math.floor(template.buyAmountSol * LAMPORTS_PER_SOL);
+        const amountLamports = Math.floor(effectiveBuyAmountSol * LAMPORTS_PER_SOL);
         const quoteUrl = `https://transaction-v1.raydium.io/compute/swap-base-in?inputMint=${SOL_MINT}&outputMint=${params.mint}&amount=${amountLamports}&slippageBps=${template.slippageBps}&txVersion=V0`;
         const quoteResp = await fetch(quoteUrl);
         if (quoteResp.ok) {
@@ -512,15 +517,15 @@ export async function executeBuySnipe(params: {
       if (estimatedTokens <= 0 && params.priceUsd && params.priceUsd > 0) {
         // Rough estimate: (buyAmountSol * ~150 USD/SOL) / priceUsd
         const solPriceUsd = 150; // approximate, good enough for paper mode
-        estimatedTokens = (template.buyAmountSol * solPriceUsd) / params.priceUsd;
+        estimatedTokens = (effectiveBuyAmountSol * solPriceUsd) / params.priceUsd;
       }
       if (estimatedTokens <= 0) {
         estimatedTokens = 1000000; // fallback placeholder
       }
 
       // Deduct from virtual balance
-      runtime.paperBalanceSol -= template.buyAmountSol;
-      runtime.dailySpentSol += template.buyAmountSol;
+      runtime.paperBalanceSol -= effectiveBuyAmountSol;
+      runtime.dailySpentSol += effectiveBuyAmountSol;
 
       execution.signature = `paper_${Date.now()}`;
       execution.status = 'success';
@@ -544,7 +549,7 @@ export async function executeBuySnipe(params: {
         priceFetchFailCount: 0,
         lastPriceChangeAt: now,
         highWaterMarkPrice: params.priceUsd ?? 0,
-        buyCostSol: template.buyAmountSol,
+        buyCostSol: effectiveBuyAmountSol,
         paperMode: true,
         description: params.description,
       };
@@ -563,7 +568,7 @@ export async function executeBuySnipe(params: {
       persistTemplateStats();
 
       console.log(
-        `[Sniper][${template.name}] PAPER BUY ${params.symbol}: ~${estimatedTokens.toFixed(0)} tokens for ${template.buyAmountSol} SOL (virtual balance: ${runtime.paperBalanceSol.toFixed(4)} SOL)`,
+        `[Sniper][${template.name}] PAPER BUY ${params.symbol}: ~${estimatedTokens.toFixed(0)} tokens for ${effectiveBuyAmountSol} SOL (virtual balance: ${runtime.paperBalanceSol.toFixed(4)} SOL)`,
       );
     } else {
       // ── REAL MODE BUY ──────────────────────────────────────────────────
@@ -575,7 +580,7 @@ export async function executeBuySnipe(params: {
         result = await executePumpPortalSwap({
           action: 'buy',
           mint: params.mint,
-          amount: template.buyAmountSol,
+          amount: effectiveBuyAmountSol,
           denominatedInSol: true,
           slippageBps: template.slippageBps,
           priorityFeeLamports: template.priorityFee,
@@ -585,7 +590,7 @@ export async function executeBuySnipe(params: {
           `[Sniper][${template.name}] PumpPortal failed, falling back to Jupiter:`,
           ppErr instanceof Error ? ppErr.message : ppErr,
         );
-        const amountLamports = String(Math.floor(template.buyAmountSol * LAMPORTS_PER_SOL));
+        const amountLamports = String(Math.floor(effectiveBuyAmountSol * LAMPORTS_PER_SOL));
         result = await executeSwap({
           inputMint: SOL_MINT,
           outputMint: params.mint,
@@ -599,7 +604,7 @@ export async function executeBuySnipe(params: {
       execution.status = result.success ? 'success' : 'failed';
 
       if (result.success) {
-        runtime.dailySpentSol += template.buyAmountSol;
+        runtime.dailySpentSol += effectiveBuyAmountSol;
         execution.amountTokens = result.outAmount ? parseFloat(result.outAmount) : null;
 
         // PumpPortal doesn't return output amount — fetch actual balance from wallet
@@ -630,7 +635,7 @@ export async function executeBuySnipe(params: {
           priceFetchFailCount: 0,
           lastPriceChangeAt: now,
           highWaterMarkPrice: params.priceUsd ?? 0,
-          buyCostSol: template.buyAmountSol,
+          buyCostSol: effectiveBuyAmountSol,
           description: params.description,
         };
 
