@@ -151,6 +151,16 @@ const server = createServer(app);
 // Set up WebSocket server
 setupWebSocket(server);
 
+// Handle port-in-use gracefully so tsx watch restarts cleanly without EADDRINUSE noise
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    logger.error(`Port ${PORT} is already in use — another instance may be running. Exiting so tsx watch can retry.`);
+    process.exit(1);
+  } else {
+    throw err;
+  }
+});
+
 server.listen(PORT, HOST, () => {
   logger.info({ host: HOST, port: PORT }, `TradeWorks Gateway running on http://${HOST}:${PORT}`);
   logger.info({ env: process.env.NODE_ENV ?? 'development' }, `Environment: ${process.env.NODE_ENV ?? 'development'}`);
