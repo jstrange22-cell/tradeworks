@@ -49,6 +49,16 @@ export function SniperTemplateCard({
           >
             {template.running ? 'ACTIVE' : 'STOPPED'}
           </span>
+          {template.paperMode && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-amber-500/20 text-amber-400">
+              PAPER
+            </span>
+          )}
+          {template.circuitBreakerPausedUntil != null && template.circuitBreakerPausedUntil > Date.now() && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-red-500/20 text-red-400">
+              PAUSED
+            </span>
+          )}
         </div>
         <button
           onClick={() => onToggle(template.id, template.running)}
@@ -67,12 +77,15 @@ export function SniperTemplateCard({
       </div>
 
       {/* Mini Stats */}
-      <div className="mb-3 grid grid-cols-4 gap-2">
+      <div className={`mb-3 grid gap-2 ${template.paperMode ? 'grid-cols-5' : 'grid-cols-4'}`}>
         {[
           { label: 'Trades', value: String(stats.totalTrades) },
           { label: 'Win Rate', value: `${winRate}%` },
           { label: 'P&L', value: `${stats.totalPnlSol >= 0 ? '+' : ''}${stats.totalPnlSol.toFixed(4)}` },
           { label: 'Daily', value: `${template.dailySpentSol.toFixed(2)}/${template.dailyBudgetSol}` },
+          ...(template.paperMode && template.paperBalanceSol != null
+            ? [{ label: 'Paper SOL', value: template.paperBalanceSol.toFixed(4) }]
+            : []),
         ].map((stat) => (
           <div key={stat.label} className="text-center">
             <div className="text-[10px] text-slate-500">{stat.label}</div>
@@ -104,6 +117,16 @@ export function SniperTemplateCard({
           {template.autoBuyTrending && (
             <span className="rounded-full bg-blue-500/20 px-2 py-0.5 text-[10px] font-medium text-blue-400">
               trending
+            </span>
+          )}
+          {template.pendingTokens != null && template.pendingTokens > 0 && (
+            <span className="rounded-full bg-cyan-500/20 px-2 py-0.5 text-[10px] font-medium text-cyan-400">
+              {template.pendingTokens} observing
+            </span>
+          )}
+          {template.consecutiveLosses != null && template.consecutiveLosses > 0 && (
+            <span className="rounded-full bg-red-500/20 px-2 py-0.5 text-[10px] font-medium text-red-400">
+              {template.consecutiveLosses} losses
             </span>
           )}
         </div>

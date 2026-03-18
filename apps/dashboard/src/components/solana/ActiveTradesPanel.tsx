@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  Activity, Crosshair, Settings, Target, TrendingUp, Wallet, ChevronDown, ChevronRight,
+  Activity, Crosshair, DollarSign, Settings, Target, TrendingUp, Wallet, ChevronDown, ChevronRight,
 } from 'lucide-react';
 import { ConfigInput } from '@/components/solana/shared';
 import { ExecutionsList } from '@/components/solana/ExecutionsList';
@@ -62,9 +62,19 @@ export function ActiveTradesPanel() {
                     isProfit ? 'border-green-500/20 bg-green-500/5' : 'border-red-500/20 bg-red-500/5'
                   }`}
                 >
-                  <div className="flex flex-col gap-0.5">
-                    <span className="font-semibold text-gray-900 dark:text-slate-100">{pos.symbol}</span>
-                    <span className="text-[10px] text-gray-400 dark:text-slate-500">{pos.name}</span>
+                  <div className="flex min-w-0 flex-col gap-0.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-gray-900 dark:text-slate-100">{pos.name}</span>
+                      <span className="shrink-0 rounded bg-gray-200 px-1.5 py-0.5 text-[9px] font-medium text-gray-600 dark:bg-slate-600 dark:text-slate-300">{pos.symbol}</span>
+                      {pos.paperMode && (
+                        <span className="shrink-0 rounded bg-amber-500/20 px-1 py-0.5 text-[9px] font-bold text-amber-400">SIM</span>
+                      )}
+                    </div>
+                    {pos.description && (
+                      <span className="max-w-[15rem] truncate text-[10px] text-gray-400 dark:text-slate-500" title={pos.description}>
+                        {pos.description.length > 60 ? `${pos.description.slice(0, 60)}…` : pos.description}
+                      </span>
+                    )}
                   </div>
                   <div className="flex flex-col items-end gap-0.5">
                     <span className="font-mono text-gray-600 dark:text-slate-300">
@@ -73,6 +83,17 @@ export function ActiveTradesPanel() {
                     <span className="text-[10px] text-gray-400 dark:text-slate-500">
                       {pos.amountTokens.toLocaleString()} tokens · {timeAgo(pos.boughtAt)}
                     </span>
+                    {pos.valueUsd != null && pos.valueUsd > 0 && (
+                      <span className={`text-[10px] font-medium ${isProfit ? 'text-green-500' : 'text-red-500'}`}>
+                        ${pos.valueUsd.toFixed(4)} value
+                        {pos.unrealizedPnlUsd != null && (
+                          <> · {pos.unrealizedPnlUsd >= 0 ? '+' : ''}{pos.unrealizedPnlUsd.toFixed(4)} USD</>
+                        )}
+                      </span>
+                    )}
+                    {pos.trigger && (
+                      <span className="text-[10px] text-gray-400">trigger: {pos.trigger}</span>
+                    )}
                   </div>
                   <div className="flex items-center gap-3">
                     <span className={`text-sm font-bold ${isProfit ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
@@ -98,7 +119,7 @@ export function ActiveTradesPanel() {
       </div>
 
       {/* Section B: Quick Stats */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-5 gap-3">
         <div className="rounded-xl border border-gray-200 bg-white p-3 dark:border-slate-700/50 dark:bg-slate-800/50">
           <div className="mb-1 flex items-center justify-between">
             <span className="text-[10px] text-gray-500 dark:text-slate-400">Daily Spent</span>
@@ -143,6 +164,18 @@ export function ActiveTradesPanel() {
           <div className="text-sm font-bold text-gray-900 dark:text-slate-100">{calcWinRate(executions)}</div>
           <div className="text-[10px] text-gray-400 dark:text-slate-500">
             {executions.filter((e) => e.status === 'success').length} / {executions.length} recent
+          </div>
+        </div>
+        <div className="rounded-xl border border-gray-200 bg-white p-3 dark:border-slate-700/50 dark:bg-slate-800/50">
+          <div className="mb-1 flex items-center justify-between">
+            <span className="text-[10px] text-gray-500 dark:text-slate-400">Total Invested</span>
+            <DollarSign className="h-3.5 w-3.5 text-yellow-400" />
+          </div>
+          <div className="text-sm font-bold text-gray-900 dark:text-slate-100">
+            {positions.reduce((sum, pos) => sum + (pos.buyCostSol ?? (pos.costUsd ? pos.costUsd / 130 : 0)), 0).toFixed(4)} SOL
+          </div>
+          <div className="text-[10px] text-gray-400 dark:text-slate-500">
+            ${positions.reduce((sum, pos) => sum + (pos.costUsd ?? 0), 0).toFixed(2)} USD
           </div>
         </div>
       </div>

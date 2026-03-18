@@ -44,6 +44,16 @@ interface SolanaBalanceResponse {
   totalValueUsd: number;
 }
 
+// ── Balance Cache (prevents Helius 429 rate limits) ─────────────────
+
+interface CachedBalance {
+  response: { data: SolanaBalanceResponse };
+  cachedAt: number;
+}
+
+let balanceCache: CachedBalance | null = null;
+const BALANCE_CACHE_TTL_MS = 15_000; // 15 seconds
+
 // ── Retry Helper ──────────────────────────────────────────────────────
 
 async function withRetry<T>(
@@ -271,6 +281,12 @@ solanaBalancesRouter.get('/balances', async (_req, res) => {
     return;
   }
 
+  // Return cached balance if fresh (prevents Helius 429 rate limits)
+  if (balanceCache && Date.now() - balanceCache.cachedAt < BALANCE_CACHE_TTL_MS) {
+    res.json(balanceCache.response);
+    return;
+  }
+
   try {
     const keypair = getSolanaKeypair();
     const connection = getSolanaConnection();
@@ -343,7 +359,9 @@ solanaBalancesRouter.get('/balances', async (_req, res) => {
       totalValueUsd,
     };
 
-    res.json({ data: response });
+    const payload = { data: response };
+    balanceCache = { response: payload, cachedAt: Date.now() };
+    res.json(payload);
   } catch (err) {
     console.error('[Solana] Balance fetch failed:', err);
     res.status(500).json({

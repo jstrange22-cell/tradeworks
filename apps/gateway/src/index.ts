@@ -38,7 +38,7 @@ import { solanaBalancesRouter } from './routes/solana-balances.js';
 import { solanaSwapRouter } from './routes/solana-swap.js';
 import { solanaScannerRouter } from './routes/solana-scanner.js';
 import { pumpFunRouter, initPumpFunMonitor } from './routes/solana-pumpfun.js';
-import { sniperRouter } from './routes/solana-sniper.js';
+import { sniperRouter, autoStartSniper } from './routes/solana-sniper.js';
 import { whaleRouter } from './routes/solana-whales.js';
 import { moonshotRouter, initMoonshotScanner } from './routes/solana-moonshot.js';
 import { robinhoodRouter } from './routes/robinhood.js';
@@ -162,6 +162,9 @@ server.listen(PORT, HOST, () => {
   // Auto-start Solana monitors — pump.fun and moonshot run on public APIs (no wallet needed)
   initPumpFunMonitor();
   initMoonshotScanner();
+
+  // Auto-start the sniper engine so incoming tokens get evaluated immediately
+  autoStartSniper();
 });
 
 // Graceful shutdown

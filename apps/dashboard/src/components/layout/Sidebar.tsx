@@ -10,6 +10,7 @@ import {
   BarChart3,
   BookOpen,
   Zap,
+  Wallet,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -28,6 +29,7 @@ const navItems = [
   { to: '/markets', icon: Globe, label: 'Markets' },
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
   { to: '/journal', icon: BookOpen, label: 'Journal' },
+  { to: '/wallets', icon: Wallet, label: 'Wallets' },
   { to: '/solana', icon: Zap, label: 'Solana' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ] as const;

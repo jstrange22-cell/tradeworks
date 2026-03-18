@@ -1,10 +1,14 @@
 import { Router, type Router as RouterType } from 'express';
-import { VersionedTransaction } from '@solana/web3.js';
+import { LAMPORTS_PER_SOL, VersionedTransaction } from '@solana/web3.js';
 import {
   isSolanaConnected,
   getSolanaKeypair,
   getSolanaConnection,
+  withRpcRetry,
+  hasEnoughSolForSwap,
 } from './solana-utils.js';
+
+const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 /**
  * Solana swap endpoints (via Jupiter V6 aggregator).
@@ -89,7 +93,7 @@ solanaSwapRouter.post('/swap', async (req, res) => {
       outputMint,
       amount,
       slippageBps = 300,
-      priorityFee = 50000, // micro-lamports per CU, default ~moderate
+      priorityFee = 200000, // micro-lamports per CU — competitive on congested mainnet
     } = req.body as {
       inputMint: string;
       outputMint: string;
@@ -108,6 +112,19 @@ solanaSwapRouter.post('/swap', async (req, res) => {
     const keypair = getSolanaKeypair();
     const connection = getSolanaConnection();
 
+    // Pre-flight balance check (SOL input swaps only)
+    if (inputMint === SOL_MINT) {
+      const check = await hasEnoughSolForSwap(parseInt(amount, 10));
+      if (!check.sufficient) {
+        res.status(400).json({
+          error: 'Insufficient SOL balance',
+          message: `Have ${(check.balanceLamports / LAMPORTS_PER_SOL).toFixed(4)} SOL, ` +
+            `need ${(check.requiredLamports / LAMPORTS_PER_SOL).toFixed(4)} SOL (including fees)`,
+        });
+        return;
+      }
+    }
+
     // Step 1: Get quote
     const quoteParams = new URLSearchParams({
       inputMint,
@@ -119,6 +136,7 @@ solanaSwapRouter.post('/swap', async (req, res) => {
     const quoteRes = await fetch(`${JUPITER_QUOTE_URL}?${quoteParams}`);
     if (!quoteRes.ok) {
       const errText = await quoteRes.text();
+      console.error(`[Swap] Jupiter quote error (${quoteRes.status}):`, errText);
       res.status(400).json({ error: 'Quote failed', message: errText });
       return;
     }
@@ -140,6 +158,7 @@ solanaSwapRouter.post('/swap', async (req, res) => {
 
     if (!swapRes.ok) {
       const errText = await swapRes.text();
+      console.error(`[Swap] Jupiter swap build error (${swapRes.status}):`, errText);
       res.status(400).json({ error: 'Swap transaction build failed', message: errText });
       return;
     }
@@ -148,20 +167,27 @@ solanaSwapRouter.post('/swap', async (req, res) => {
     const swapTransactionBuf = Buffer.from(swapData.swapTransaction, 'base64');
     const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
 
+    // CRITICAL FIX: Fetch blockhash BEFORE sending (was fetched AFTER — always failed)
+    const { blockhash, lastValidBlockHeight } = await withRpcRetry(
+      () => connection.getLatestBlockhash('confirmed'),
+    );
+
     // Step 3: Sign and send
     transaction.sign([keypair]);
 
-    const signature = await connection.sendRawTransaction(transaction.serialize(), {
-      skipPreflight: true,
-      maxRetries: 3,
-    });
+    const signature = await withRpcRetry(
+      () => connection.sendRawTransaction(transaction.serialize(), {
+        skipPreflight: false,
+        maxRetries: 5,
+      }),
+      2,
+    );
 
-    // Step 4: Confirm (wait up to 30s)
-    const latestBlockhash = await connection.getLatestBlockhash();
+    // Step 4: Confirm using pre-fetched blockhash (same epoch as transaction)
     const confirmation = await connection.confirmTransaction({
       signature,
-      blockhash: latestBlockhash.blockhash,
-      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
+      blockhash,
+      lastValidBlockHeight,
     }, 'confirmed');
 
     const success = !confirmation.value.err;

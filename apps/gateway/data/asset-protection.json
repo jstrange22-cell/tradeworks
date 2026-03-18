@@ -1,6 +1,6 @@
 {
   "engineTradingEnabled": true,
-  "tradingBudgetUsd": 50,
+  "tradingBudgetUsd": 200,
   "budgetUsedUsd": 0,
   "protectedAssets": {
     "STX": {
@@ -88,6 +88,56 @@
       "snapshotValueUsd": 124.77049995319999
     }
   },
-  "enginePositions": [],
+  "enginePositions": [
+    {
+      "symbol": "SOL",
+      "side": "buy",
+      "quantity": 0.113,
+      "priceUsd": 88.41,
+      "timestamp": "2026-03-15T02:48:25.817Z"
+    },
+    {
+      "symbol": "SOL",
+      "side": "buy",
+      "quantity": 0.091,
+      "priceUsd": 88.3,
+      "timestamp": "2026-03-15T02:53:25.694Z"
+    },
+    {
+      "symbol": "SOL",
+      "side": "buy",
+      "quantity": 0.068,
+      "priceUsd": 88.32,
+      "timestamp": "2026-03-15T03:03:25.805Z"
+    },
+    {
+      "symbol": "SOL",
+      "side": "buy",
+      "quantity": 0.057,
+      "priceUsd": 88.28,
+      "timestamp": "2026-03-15T03:13:25.768Z"
+    },
+    {
+      "symbol": "BTC",
+      "side": "buy",
+      "quantity": 0,
+      "priceUsd": 71833.15,
+      "timestamp": "2026-03-15T18:53:21.469Z"
+    },
+    {
+      "symbol": "ETH",
+      "side": "buy",
+      "quantity": 0.002,
+      "priceUsd": 2117.26,
+      "timestamp": "2026-03-15T18:53:21.764Z"
+    },
+    {
+      "symbol": "BTC",
+      "side": "buy",
+      "quantity": 0,
+      "priceUsd": 71392.01,
+      "timestamp": "2026-03-15T18:53:21.802Z"
+    }
+  ],
   "snapshotTakenAt": "2026-03-02T05:02:49.709Z"
 }

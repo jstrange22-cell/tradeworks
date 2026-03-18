@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { Zap, Wallet, TrendingUp, Sparkles, Rocket, Crosshair, Eye, Brain, PieChart, AlertTriangle, Info } from 'lucide-react';
+import { Zap, Wallet, TrendingUp, Sparkles, Rocket, Crosshair, Eye, Brain, PieChart, AlertTriangle, Info, BarChart3 } from 'lucide-react';
 import { StatCard } from '@/components/solana/shared';
 import { ScannerTab, PumpFunTab, SniperTab, WhaleTab, MoonshotTab, ActiveTradesPanel } from '@/components/solana';
 import { HoldingsTab } from '@/components/solana/HoldingsTab';
+import { SniperPnL } from '@/components/solana/SniperPnL';
 import { useWalletStatus, useBalances } from '@/hooks/useSolana';
 import { usePhantomBalance } from '@/hooks/usePhantomBalance';
 import type { PageTab } from '@/types/solana';
@@ -15,6 +16,7 @@ const TABS: ReadonlyArray<{ key: PageTab; label: string; icon: React.ReactNode }
   { key: 'whales', label: 'Whales', icon: <Eye className="h-3.5 w-3.5" /> },
   { key: 'moonshot', label: 'Moonshot AI', icon: <Brain className="h-3.5 w-3.5" /> },
   { key: 'holdings', label: 'Holdings', icon: <PieChart className="h-3.5 w-3.5" /> },
+  { key: 'pnl', label: 'P&L', icon: <BarChart3 className="h-3.5 w-3.5" /> },
 ] as const;
 
 export function SolanaPage() {
@@ -133,6 +135,7 @@ export function SolanaPage() {
       {activeTab === 'whales' && <WhaleTab />}
       {activeTab === 'moonshot' && <MoonshotTab />}
       {activeTab === 'holdings' && <HoldingsTab />}
+      {activeTab === 'pnl' && <SniperPnL />}
     </div>
   );
 }

@@ -43,6 +43,63 @@ export interface PumpFunToken {
   kingOfTheHill: boolean;
 }
 
+// ── Trade Event Callback System ───────────────────────────────────────
+
+export interface PumpPortalTradeEvent {
+  mint: string;
+  txType: 'buy' | 'sell';
+  tokenAmount: number;
+  solAmount: number;
+  marketCapSol: number;
+  vSolInBondingCurve: number;
+  vTokensInBondingCurve: number;
+  traderPublicKey: string;
+  signature: string;
+}
+
+type TradeEventCallback = (event: PumpPortalTradeEvent) => void;
+
+const tradeCallbacks: Set<TradeEventCallback> = new Set();
+const subscribedTradeMints: Set<string> = new Set();
+
+/** Register a callback for real-time trade events on subscribed tokens */
+export function onTradeEvent(callback: TradeEventCallback): () => void {
+  tradeCallbacks.add(callback);
+  return () => { tradeCallbacks.delete(callback); };
+}
+
+/** Subscribe to real-time trade events for given mints */
+export function subscribeTokenTrades(mints: string[]): void {
+  const newMints = mints.filter(m => !subscribedTradeMints.has(m));
+  if (newMints.length === 0) return;
+
+  for (const m of newMints) subscribedTradeMints.add(m);
+
+  if (wsConnection?.readyState === WebSocket.OPEN) {
+    wsConnection.send(JSON.stringify({
+      method: 'subscribeTokenTrade',
+      keys: newMints,
+    }));
+    console.log(`[PumpFun] Subscribed to trades for ${newMints.length} token(s) (${subscribedTradeMints.size} total)`);
+  }
+}
+
+/** Unsubscribe from trade events for given mints */
+export function unsubscribeTokenTrades(mints: string[]): void {
+  const toRemove = mints.filter(m => subscribedTradeMints.has(m));
+  if (toRemove.length === 0) return;
+
+  for (const m of toRemove) subscribedTradeMints.delete(m);
+
+  if (wsConnection?.readyState === WebSocket.OPEN) {
+    wsConnection.send(JSON.stringify({
+      method: 'unsubscribeTokenTrade',
+      keys: toRemove,
+    }));
+    console.log(`[PumpFun] Unsubscribed from trades for ${toRemove.length} token(s) (${subscribedTradeMints.size} remaining)`);
+  }
+}
+
 // ── Monitor State ──────────────────────────────────────────────────────
 
 let wsConnection: WebSocket | null = null;
@@ -151,11 +208,30 @@ function connectWebSocket(): void {
   ws.on('open', () => {
     console.log('[PumpFun] Connected to PumpPortal WebSocket — subscribing to new tokens');
     ws.send(JSON.stringify({ method: 'subscribeNewToken' }));
+
+    // Re-subscribe to token trades for positions we're tracking
+    if (subscribedTradeMints.size > 0) {
+      const mints = [...subscribedTradeMints];
+      ws.send(JSON.stringify({ method: 'subscribeTokenTrade', keys: mints }));
+      console.log(`[PumpFun] Re-subscribed to trades for ${mints.length} token(s)`);
+    }
   });
 
   ws.on('message', (raw: Buffer) => {
     try {
       const data = JSON.parse(raw.toString()) as Record<string, unknown>;
+      const txType = data.txType as string | undefined;
+
+      // Route: trade events (buy/sell on tokens we're watching)
+      if (txType === 'buy' || txType === 'sell') {
+        const mint = data.mint as string | undefined;
+        if (mint && subscribedTradeMints.has(mint)) {
+          handleTradeEvent(data);
+        }
+        return;
+      }
+
+      // Route: new token events (create or unrecognized — treat as new token)
       handleNewToken(data);
     } catch (err) {
       console.error('[PumpFun] WS message parse error:', err);
@@ -174,6 +250,29 @@ function connectWebSocket(): void {
     console.error('[PumpFun] WebSocket error:', err.message);
     // 'close' event fires after 'error', so reconnect logic is handled there
   });
+}
+
+function handleTradeEvent(data: Record<string, unknown>): void {
+  const event: PumpPortalTradeEvent = {
+    mint: data.mint as string,
+    txType: data.txType as 'buy' | 'sell',
+    tokenAmount: Number(data.tokenAmount ?? 0),
+    solAmount: Number(data.newTokenBalance ?? data.solAmount ?? 0),
+    marketCapSol: Number(data.marketCapSol ?? 0),
+    vSolInBondingCurve: Number(data.vSolInBondingCurve ?? 0),
+    vTokensInBondingCurve: Number(data.vTokensInBondingCurve ?? 0),
+    traderPublicKey: (data.traderPublicKey as string) ?? '',
+    signature: (data.signature as string) ?? '',
+  };
+
+  // Dispatch to all registered callbacks
+  for (const cb of tradeCallbacks) {
+    try {
+      cb(event);
+    } catch (err) {
+      console.error('[PumpFun] Trade callback error:', err instanceof Error ? err.message : err);
+    }
+  }
 }
 
 function handleNewToken(data: Record<string, unknown>): void {
@@ -195,13 +294,17 @@ function handleNewToken(data: Record<string, unknown>): void {
     token,
   });
 
-  // Feed into sniper engine for auto-buy evaluation
+  // Feed into sniper engine for auto-buy evaluation (include bonding curve data for Phase 2 filters)
   onNewTokenDetected({
     mint: token.mint,
     symbol: token.symbol,
     name: token.name,
     usdMarketCap: token.usdMarketCap,
     source: 'pumpfun',
+    creator: token.creator,
+    vSolInBondingCurve: Number(data.vSolInBondingCurve ?? 0),
+    vTokensInBondingCurve: Number(data.vTokensInBondingCurve ?? 0),
+    marketCapSol: Number(data.marketCapSol ?? 0),
   });
 
   console.log(

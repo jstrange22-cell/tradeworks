@@ -1,0 +1,23 @@
+[
+  {
+    "id": "user-0a0a92ac05f103d9",
+    "email": "jstrange22@gmail.com",
+    "name": "Jason Strange",
+    "passwordHash": "",
+    "salt": "",
+    "role": "admin",
+    "authProvider": "google",
+    "avatarUrl": "https://lh3.googleusercontent.com/a/ACg8ocKNF3WkNJ1LLbrz8LcMZ07EzOz4Npr7E1y15Z0uhy6IXtfUzcwy=s96-c",
+    "createdAt": "2026-03-11T01:20:02.214Z"
+  },
+  {
+    "id": "user-5a190b00867d4c2a",
+    "email": "test@test.com",
+    "name": "Test User",
+    "passwordHash": "28d2697b8a63e89a603737d3f207810b2735c90172a0b76e7cceddb25419ca325656b01e2063dabf5e1b190becaff1a50378a48b8d12902fa84e24676e32b16e",
+    "salt": "7391748a048f75aee632ccce8166cf89",
+    "role": "admin",
+    "authProvider": "local",
+    "createdAt": "2026-03-11T01:54:41.782Z"
+  }
+]

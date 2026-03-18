@@ -11,6 +11,13 @@ export const COINBASE_PRODUCT_MAP: Record<string, string> = {
   'SOL-USD': 'SOL-USD',
   'AVAX-USD': 'AVAX-USD',
   'LINK-USD': 'LINK-USD',
+  'DOGE-USD': 'DOGE-USD',
+  'SHIB-USD': 'SHIB-USD',
+  'MATIC-USD': 'MATIC-USD',
+  'ADA-USD': 'ADA-USD',
+  'DOT-USD': 'DOT-USD',
+  'NEAR-USD': 'NEAR-USD',
+  'SUI-USD': 'SUI-USD',
 };
 
 export async function placeCoinbaseOrder(

@@ -93,6 +93,16 @@ let scoringConfig: ScoringConfig = {
 };
 
 const scoreCache: Map<string, MoonshotScore> = new Map();
+
+/**
+ * Look up a token's moonshot score from the cache.
+ * Returns the 0-100 score if the token has been scored, null otherwise.
+ * Used by the sniper engine to make AI-informed buy decisions.
+ */
+export function getMoonshotScore(mint: string): number | null {
+  const scored = scoreCache.get(mint);
+  return scored?.score ?? null;
+}
 const scoreHistory: MoonshotScore[] = [];
 const alerts: MoonshotScore[] = [];
 const MAX_HISTORY = 500;

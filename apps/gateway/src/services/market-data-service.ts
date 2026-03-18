@@ -10,9 +10,22 @@ export const INSTRUMENT_MAP: Record<string, string> = {
   'SOL-USD': 'SOL_USDT',
   'AVAX-USD': 'AVAX_USDT',
   'LINK-USD': 'LINK_USDT',
+  'DOGE-USD': 'DOGE_USDT',
+  'SHIB-USD': 'SHIB_USDT',
+  'MATIC-USD': 'MATIC_USDT',
+  'ADA-USD': 'ADA_USDT',
+  'DOT-USD': 'DOT_USDT',
+  'NEAR-USD': 'NEAR_USDT',
+  'SUI-USD': 'SUI_USDT',
 };
 
-export const TRACKED_INSTRUMENTS = ['BTC-USD', 'ETH-USD', 'SOL-USD'];
+/** All actively tracked instruments — analyzed every cycle */
+export const TRACKED_INSTRUMENTS = [
+  'BTC-USD', 'ETH-USD', 'SOL-USD',
+  'AVAX-USD', 'LINK-USD', 'DOGE-USD',
+  'SHIB-USD', 'ADA-USD', 'DOT-USD',
+  'NEAR-USD', 'SUI-USD',
+];
 
 export interface TickerData {
   instrument: string;

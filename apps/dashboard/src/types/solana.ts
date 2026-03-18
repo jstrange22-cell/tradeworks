@@ -75,6 +75,38 @@ export interface SniperConfig {
   maxOpenPositions: number;
   autoBuyPumpFun: boolean;
   autoBuyTrending: boolean;
+  minMoonshotScore?: number;
+  stalePriceTimeoutMs?: number;
+  maxPositionAgeMs?: number;
+  trailingStopActivatePercent?: number;
+  trailingStopPercent?: number;
+  buyCooldownMs?: number;
+  minMarketCapUsd?: number;
+  maxCreatorDeploysPerHour?: number;
+  maxTrendingMarketCapUsd?: number;
+  minTrendingMomentumPercent?: number;
+  /** Mints that should NEVER be sold or cleaned up */
+  protectedMints?: string[];
+  /** Paper mode — simulated trades, no real transactions */
+  paperMode?: boolean;
+  // Phase 1: Momentum
+  momentumWindowMs?: number;
+  minUniqueBuyers?: number;
+  minBuySellRatio?: number;
+  minBuyVolumeSol?: number;
+  // Phase 2: Filters
+  minBondingCurveSol?: number;
+  maxBondingCurveProgress?: number;
+  enableSpamFilter?: boolean;
+  // Phase 3: Circuit Breakers
+  consecutiveLossPauseThreshold?: number;
+  consecutiveLossPauseMs?: number;
+  maxDailyLossSol?: number;
+  // Phase 4: RugCheck
+  enableRugCheck?: boolean;
+  minRugCheckScore?: number;
+  maxTopHolderPct?: number;
+  rugCheckTimeoutMs?: number;
 }
 
 // ─── Sniper Template Types ───────────────────────────────────────────────
@@ -104,6 +136,25 @@ export interface SniperTemplate {
   maxOpenPositions: number;
   autoBuyPumpFun: boolean;
   autoBuyTrending: boolean;
+  paperMode?: boolean;
+  // Phase 1: Momentum
+  momentumWindowMs?: number;
+  minUniqueBuyers?: number;
+  minBuySellRatio?: number;
+  minBuyVolumeSol?: number;
+  // Phase 2: Filters
+  minBondingCurveSol?: number;
+  maxBondingCurveProgress?: number;
+  enableSpamFilter?: boolean;
+  // Phase 3: Circuit Breakers
+  consecutiveLossPauseThreshold?: number;
+  consecutiveLossPauseMs?: number;
+  maxDailyLossSol?: number;
+  // Phase 4: RugCheck
+  enableRugCheck?: boolean;
+  minRugCheckScore?: number;
+  maxTopHolderPct?: number;
+  rugCheckTimeoutMs?: number;
   stats: TemplateStats;
 }
 
@@ -111,12 +162,18 @@ export interface TemplateStatusItem extends SniperTemplate {
   running: boolean;
   dailySpentSol: number;
   openPositionCount: number;
+  paperBalanceSol?: number;
+  pendingTokens?: number;
+  circuitBreakerPausedUntil?: number;
+  consecutiveLosses?: number;
+  dailyRealizedLossSol?: number;
 }
 
 export interface ActivePosition {
   mint: string;
   symbol: string;
   name: string;
+  description?: string;
   buyPrice: number;
   currentPrice: number;
   amountTokens: number;
@@ -125,6 +182,14 @@ export interface ActivePosition {
   boughtAt: string;
   templateId?: string;
   templateName?: string;
+  costUsd?: number;
+  valueUsd?: number;
+  unrealizedPnlUsd?: number;
+  lastPriceChangeAt?: string;
+  highWaterMarkPrice?: number;
+  buyCostSol?: number;
+  trigger?: string;
+  paperMode?: boolean;
 }
 
 export interface SnipeExecution {
@@ -141,6 +206,7 @@ export interface SnipeExecution {
   templateId?: string;
   templateName?: string;
   timestamp: string;
+  paperMode?: boolean;
 }
 
 // ─── Whale / Copy Trading Types ──────────────────────────────────────────
@@ -245,4 +311,4 @@ export interface HoldingsSummary {
   realizedPnlSol: number;
 }
 
-export type PageTab = 'scanner' | 'pumpfun' | 'sniper' | 'whales' | 'moonshot' | 'holdings';
+export type PageTab = 'scanner' | 'pumpfun' | 'sniper' | 'whales' | 'moonshot' | 'holdings' | 'pnl';

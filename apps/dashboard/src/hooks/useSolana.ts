@@ -115,6 +115,8 @@ export function useSniperStatus(enabled: boolean) {
       recentExecutions: SnipeExecution[];
       templates?: TemplateStatusItem[];
       anyRunning?: boolean;
+      totalInvestedSol?: number;
+      totalInvestedUsd?: number;
     }>('/solana/sniper/status'),
     enabled,
     refetchInterval: 5_000,

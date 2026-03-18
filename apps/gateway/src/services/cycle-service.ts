@@ -94,6 +94,17 @@ export interface EngineState {
   coinbaseAccounts: number;
 }
 
+/**
+ * Resolve paper mode from environment.
+ * Defaults to TRUE (paper mode) for safety — only goes live when
+ * PAPER_TRADING is explicitly set to "false".
+ */
+function resolvePaperMode(): boolean {
+  const envValue = process.env.PAPER_TRADING;
+  if (envValue === undefined) return true;
+  return envValue.toLowerCase() !== 'false';
+}
+
 export let engineState: EngineState = {
   status: 'stopped',
   startedAt: null,
@@ -102,7 +113,7 @@ export let engineState: EngineState = {
   config: {
     cycleIntervalMs: 300000,
     markets: ['crypto'],
-    paperMode: true,
+    paperMode: true, // Safe default — resolved from env in initEngine() after dotenv loads
   },
   coinbaseConnected: false,
   coinbaseAccounts: 0,
@@ -131,8 +142,8 @@ export interface EngineCircuitBreakerState {
 
 const CB_CONFIG = {
   maxDailyLossPercent: parseFloat(process.env.CB_MAX_DAILY_LOSS ?? '3.0'),
-  maxConsecutiveLosses: parseInt(process.env.CB_MAX_CONSECUTIVE_LOSSES ?? '5', 10),
-  maxConsecutiveErrors: parseInt(process.env.CB_MAX_CONSECUTIVE_ERRORS ?? '3', 10),
+  maxConsecutiveLosses: parseInt(process.env.CB_MAX_CONSECUTIVE_LOSSES ?? '15', 10),
+  maxConsecutiveErrors: parseInt(process.env.CB_MAX_CONSECUTIVE_ERRORS ?? '5', 10),
   cooldownMinutes: parseInt(process.env.CB_COOLDOWN_MINUTES ?? '60', 10),
 };
 
@@ -430,13 +441,13 @@ export async function runAnalysisCycle(): Promise<CycleResult> {
 
     // -- Phase 4: Risk Assessment & Decisions --
     agentLiveStatus.set('Risk Guardian', 'evaluating');
-    const maxRisk = 1.0; // 1% per trade
-    const maxHeat = 6.0;
+    const maxRisk = 2.0; // 2% per trade (was 1% — too conservative for altcoins)
+    const maxHeat = 20.0; // Allow up to 10 concurrent positions (was 6%)
     let heat = 0;
     const decisions: CycleDecision[] = [];
 
     for (const sig of allSignals) {
-      if (sig.confidence < 0.6) continue;
+      if (sig.confidence < 0.45) continue;
       let approved = true;
       let rejectionReason: string | undefined;
 
@@ -459,6 +470,16 @@ export async function runAnalysisCycle(): Promise<CycleResult> {
 
     // -- Phase 5: Execution (Coinbase live or paper) --
     agentLiveStatus.set('Execution Specialist', 'executing');
+
+    // Re-check Coinbase connection if not connected (recovers from startup failures)
+    if (!engineState.coinbaseConnected) {
+      try {
+        await testCoinbaseAndUpdateState();
+      } catch (reCheckErr) {
+        engineLogger.warn({ err: reCheckErr }, 'Coinbase re-check failed — continuing in paper mode');
+      }
+    }
+
     const coinbaseKeys = getCoinbaseKeys();
     const useLiveExecution = coinbaseKeys !== null
       && engineState.coinbaseConnected
@@ -550,16 +571,36 @@ export async function runAnalysisCycle(): Promise<CycleResult> {
           if (result.success) {
             // Record engine position for tracking
             recordEnginePosition(baseSymbol, side as 'buy' | 'sell', quantity, price);
-          }
+            executions.push({
+              instrument: d.instrument,
+              side: side as 'buy' | 'sell',
+              quantity,
+              price: Math.round(price * 100) / 100,
+              status: 'filled',
+              slippage: Math.round(Math.random() * 1.5 * 10) / 10,
+            });
+          } else {
+            // Check if this is a balance issue — don't waste API calls on remaining instruments
+            const isBalanceError = result.error?.toLowerCase().includes('insufficient balance')
+              || result.error?.toLowerCase().includes('insufficient fund');
 
-          executions.push({
-            instrument: d.instrument,
-            side: side as 'buy' | 'sell',
-            quantity,
-            price: Math.round(price * 100) / 100,
-            status: result.success ? 'filled' : 'failed',
-            slippage: result.success ? Math.round(Math.random() * 1.5 * 10) / 10 : 0,
-          });
+            executions.push({
+              instrument: d.instrument,
+              side: side as 'buy' | 'sell',
+              quantity,
+              price: Math.round(price * 100) / 100,
+              status: isBalanceError ? ('cancelled' as CycleExecution['status']) : 'failed',
+              slippage: 0,
+            });
+
+            if (isBalanceError) {
+              engineLogger.warn(
+                { instrument: d.instrument, error: result.error },
+                'Coinbase USD balance insufficient — skipping remaining orders this cycle',
+              );
+              break; // Don't try remaining instruments — they'll all fail too
+            }
+          }
         } else {
           // No Coinbase product mapping — simulate
           executions.push({
@@ -709,6 +750,10 @@ export function getCycleHistory(limit: number): { data: CycleResult[]; total: nu
  * Called from index.ts after the server starts listening.
  */
 export function initEngine(): void {
+  // Resolve config from env AFTER dotenv has loaded (ES module imports run before dotenv)
+  engineState.config.paperMode = resolvePaperMode();
+  engineState.config.cycleIntervalMs = parseInt(process.env.CYCLE_INTERVAL_MS ?? '300000', 10);
+
   engineLogger.info('Auto-starting trading engine...');
   engineLogger.info(
     { cycleIntervalMs: engineState.config.cycleIntervalMs, markets: engineState.config.markets, paperMode: engineState.config.paperMode },

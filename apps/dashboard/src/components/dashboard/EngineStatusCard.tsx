@@ -11,7 +11,7 @@ interface EngineStatusCardProps {
 export function EngineStatusCard({ hasSolana }: EngineStatusCardProps) {
   const { data: solBalanceData } = useQuery<{ data: { sol: number; usd: number; tokens: unknown[] } }>({
     queryKey: ['sol-balance-dash'],
-    queryFn: () => apiClient.get('/solana/balances/wallet'),
+    queryFn: () => apiClient.get('/solana/wallet'),
     enabled: hasSolana,
     refetchInterval: 30_000,
   });

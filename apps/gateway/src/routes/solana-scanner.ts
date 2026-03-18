@@ -1,7 +1,7 @@
 import { Router, type Router as RouterType } from 'express';
 import { PublicKey } from '@solana/web3.js';
 import { getMint } from '@solana/spl-token';
-import { getSolanaConnection } from './solana-utils.js';
+import { getSecondaryConnection } from './solana-utils.js';
 
 /**
  * Solana token scanner endpoints.
@@ -16,7 +16,7 @@ export const solanaScannerRouter: RouterType = Router();
 
 // ── Types ──────────────────────────────────────────────────────────────
 
-interface TokenInfo {
+export interface TokenInfo {
   mint: string;
   symbol: string;
   name: string;
@@ -42,7 +42,7 @@ interface TokenSafety {
 
 // ── Dexscreener API helpers ────────────────────────────────────────────
 
-function parseDexscreenerPair(pair: Record<string, unknown>): TokenInfo | null {
+export function parseDexscreenerPair(pair: Record<string, unknown>): TokenInfo | null {
   try {
     const baseToken = pair.baseToken as Record<string, string> | undefined;
     if (!baseToken?.address) return null;
@@ -67,74 +67,79 @@ function parseDexscreenerPair(pair: Record<string, unknown>): TokenInfo | null {
   }
 }
 
+// ── Trending token fetcher (exported for sniper engine) ──────────────
+
+/** Exported for use by sniper engine's trending auto-snipe loop */
+export async function fetchTrendingTokens(): Promise<TokenInfo[]> {
+  // DexScreener token boosts (trending / promoted tokens)
+  const boostsRes = await fetch('https://api.dexscreener.com/token-boosts/latest/v1');
+  let tokens: TokenInfo[] = [];
+
+  if (boostsRes.ok) {
+    const boosts = (await boostsRes.json()) as Array<{
+      tokenAddress: string;
+      chainId: string;
+      icon?: string;
+      description?: string;
+      url?: string;
+    }>;
+
+    const solanaMints = [...new Set(
+      boosts
+        .filter(b => b.chainId === 'solana')
+        .map(b => b.tokenAddress),
+    )].slice(0, 20);
+
+    if (solanaMints.length > 0) {
+      const pairPromises = solanaMints.map(async (mint) => {
+        try {
+          const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
+          if (!r.ok) return null;
+          const data = (await r.json()) as { pairs?: Array<Record<string, unknown>> };
+          const solanaPairs = (data.pairs ?? []).filter(
+            (p) => (p.chainId as string) === 'solana',
+          );
+          if (solanaPairs.length === 0) return null;
+          solanaPairs.sort((a, b) =>
+            ((b.liquidity as Record<string, number>)?.usd ?? 0) -
+            ((a.liquidity as Record<string, number>)?.usd ?? 0),
+          );
+          return parseDexscreenerPair(solanaPairs[0]);
+        } catch {
+          return null;
+        }
+      });
+
+      const results = await Promise.allSettled(pairPromises);
+      tokens = results
+        .filter((r): r is PromiseFulfilledResult<TokenInfo | null> => r.status === 'fulfilled')
+        .map(r => r.value)
+        .filter((t): t is TokenInfo => t !== null);
+    }
+  }
+
+  // Fallback: use Dexscreener search for trending Solana pairs
+  if (tokens.length === 0) {
+    try {
+      const searchRes = await fetch('https://api.dexscreener.com/latest/dex/pairs/solana?sort=trending&limit=20');
+      if (searchRes.ok) {
+        const data = (await searchRes.json()) as { pairs?: Array<Record<string, unknown>> };
+        tokens = (data.pairs ?? [])
+          .map(parseDexscreenerPair)
+          .filter((t): t is TokenInfo => t !== null)
+          .slice(0, 20);
+      }
+    } catch { /* no fallback data */ }
+  }
+
+  return tokens;
+}
+
 // ── GET /trending — Trending tokens ────────────────────────────────────
 
 solanaScannerRouter.get('/trending', async (_req, res) => {
   try {
-    // Dexscreener token boosts (trending / promoted tokens)
-    const boostsRes = await fetch('https://api.dexscreener.com/token-boosts/latest/v1');
-    let tokens: TokenInfo[] = [];
-
-    if (boostsRes.ok) {
-      const boosts = (await boostsRes.json()) as Array<{
-        tokenAddress: string;
-        chainId: string;
-        icon?: string;
-        description?: string;
-        url?: string;
-      }>;
-
-      // Filter to Solana only, deduplicate by mint
-      const solanaMints = [...new Set(
-        boosts
-          .filter(b => b.chainId === 'solana')
-          .map(b => b.tokenAddress),
-      )].slice(0, 20);
-
-      if (solanaMints.length > 0) {
-        // Fetch pair data for each mint
-        const pairPromises = solanaMints.map(async (mint) => {
-          try {
-            const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
-            if (!r.ok) return null;
-            const data = (await r.json()) as { pairs?: Array<Record<string, unknown>> };
-            const solanaPairs = (data.pairs ?? []).filter(
-              (p) => (p.chainId as string) === 'solana',
-            );
-            if (solanaPairs.length === 0) return null;
-            // Pick highest liquidity pair
-            solanaPairs.sort((a, b) =>
-              ((b.liquidity as Record<string, number>)?.usd ?? 0) -
-              ((a.liquidity as Record<string, number>)?.usd ?? 0),
-            );
-            return parseDexscreenerPair(solanaPairs[0]);
-          } catch {
-            return null;
-          }
-        });
-
-        const results = await Promise.allSettled(pairPromises);
-        tokens = results
-          .filter((r): r is PromiseFulfilledResult<TokenInfo | null> => r.status === 'fulfilled')
-          .map(r => r.value)
-          .filter((t): t is TokenInfo => t !== null);
-      }
-    }
-
-    // Fallback: use Dexscreener search for trending Solana pairs
-    if (tokens.length === 0) {
-      try {
-        const searchRes = await fetch('https://api.dexscreener.com/latest/dex/pairs/solana?sort=trending&limit=20');
-        if (searchRes.ok) {
-          const data = (await searchRes.json()) as { pairs?: Array<Record<string, unknown>> };
-          tokens = (data.pairs ?? [])
-            .map(parseDexscreenerPair)
-            .filter((t): t is TokenInfo => t !== null)
-            .slice(0, 20);
-        }
-      } catch { /* no fallback data */ }
-    }
-
+    const tokens = await fetchTrendingTokens();
     res.json({
       data: tokens,
       total: tokens.length,
@@ -300,7 +305,7 @@ async function checkTokenSafety(mintAddress: string): Promise<TokenSafety> {
   let freezeAuthorityRevoked = false;
 
   try {
-    const connection = getSolanaConnection();
+    const connection = getSecondaryConnection();
     const mintPubkey = new PublicKey(mintAddress);
 
     // Fetch mint info from on-chain
@@ -325,7 +330,7 @@ async function checkTokenSafety(mintAddress: string): Promise<TokenSafety> {
   // which requires a paid RPC for reliability. Set to null for now.
   let top10HolderPercent: number | null = null;
   try {
-    const connection = getSolanaConnection();
+    const connection = getSecondaryConnection();
     const mintPubkey = new PublicKey(mintAddress);
     const largest = await connection.getTokenLargestAccounts(mintPubkey);
 
