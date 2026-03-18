@@ -85,6 +85,7 @@ import {
 } from './execution.js';
 
 import { generateSignal, type TradeSignal } from '../../services/ai/signal-generator.js';
+import { generateTradePlan } from '../../services/ai/trade-planner.js';
 import { checkLiquidity, clearLiquidityData } from '../../services/ai/liquidity-monitor.js';
 import { calculatePositionSize } from '../../services/risk/kelly-criterion.js';
 import { calculatePortfolioHeat } from '../../services/risk/portfolio-heat.js';
@@ -279,9 +280,13 @@ export function evaluatePendingToken(pending: PendingToken): void {
 
         // Store and broadcast the signal
         storeSignal(signal);
+
+        // Generate and broadcast the trade plan
+        const tradePlan = generateTradePlan(signal);
         broadcast('solana:sniper', {
           type: 'signal',
           signal,
+          tradePlan,
         });
 
         console.log(

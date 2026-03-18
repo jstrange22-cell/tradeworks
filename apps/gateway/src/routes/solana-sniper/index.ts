@@ -72,6 +72,9 @@ import {
 // ── Signal imports ────────────────────────────────────────────────────────
 import { recentSignals } from './monitoring.js';
 
+// ── AI Intelligence imports ──────────────────────────────────────────────
+import { generateBriefing } from '../../services/ai/market-briefing.js';
+
 // ── Re-exports for external consumers ────────────────────────────────────
 export * from './types.js';
 export { autoStartSniper, onNewTokenDetected, recentSignals } from './monitoring.js';
@@ -905,6 +908,60 @@ sniperRouter.delete('/sniper/protect/:mint', (req, res) => {
   res.json({ message: `Mint ${mint.slice(0, 12)}... removed from protected list`, data: getAllProtectedMints() });
 });
 
+// ── Performance Analytics Routes ──────────────────────────────────────
+
+import { computePerformanceMetrics } from '../../services/analytics/performance-tracker.js';
+
+// GET /sniper/analytics — full performance metrics
+sniperRouter.get('/sniper/analytics', (req, res) => {
+  const period = (req.query.period as string | undefined) ?? 'all';
+  const templateId = req.query.templateId as string | undefined;
+
+  if (!['all', '24h', '7d', '30d'].includes(period)) {
+    res.status(400).json({
+      error: { code: 'INVALID_PERIOD', message: 'period must be all, 24h, 7d, or 30d' },
+    });
+    return;
+  }
+
+  const metrics = computePerformanceMetrics({
+    executions: executionHistory,
+    period: period as 'all' | '24h' | '7d' | '30d',
+    templateId,
+  });
+
+  res.json({ data: metrics });
+});
+
+// GET /sniper/analytics/daily — daily P&L chart data
+sniperRouter.get('/sniper/analytics/daily', (req, res) => {
+  const period = (req.query.period as string | undefined) ?? 'all';
+  const templateId = req.query.templateId as string | undefined;
+
+  if (!['all', '24h', '7d', '30d'].includes(period)) {
+    res.status(400).json({
+      error: { code: 'INVALID_PERIOD', message: 'period must be all, 24h, 7d, or 30d' },
+    });
+    return;
+  }
+
+  const metrics = computePerformanceMetrics({
+    executions: executionHistory,
+    period: period as 'all' | '24h' | '7d' | '30d',
+    templateId,
+  });
+
+  res.json({
+    data: metrics.dailyPnl,
+    summary: {
+      totalTrades: metrics.totalTrades,
+      totalPnlSol: metrics.totalPnlSol,
+      winRate: metrics.winRate,
+      days: metrics.dailyPnl.length,
+    },
+  });
+});
+
 // ── Risk & Position Sizing Routes ─────────────────────────────────────
 
 import { calculatePortfolioHeat } from '../../services/risk/portfolio-heat.js';
@@ -974,6 +1031,68 @@ sniperRouter.get('/sniper/risk/portfolio', (_req, res) => {
       baseBuyAmountSol: template?.buyAmountSol ?? 0.005,
       exampleSizing,
     },
+  });
+});
+
+// ── Strategy Preset Routes ──────────────────────────────────────────────
+
+import { getAllPresets, getPreset } from '../../services/ai/strategy-templates.js';
+
+// GET /sniper/presets — list all strategy presets
+sniperRouter.get('/sniper/presets', (_req, res) => {
+  const presets = getAllPresets();
+  res.json({
+    data: presets,
+    total: presets.length,
+  });
+});
+
+// POST /sniper/presets/:name/apply — create a new template from a preset
+sniperRouter.post('/sniper/presets/:name/apply', (req, res) => {
+  const { name } = req.params;
+  const preset = getPreset(name);
+
+  if (!preset) {
+    const available = getAllPresets().map((p) => p.name);
+    res.status(404).json({
+      error: {
+        code: 'PRESET_NOT_FOUND',
+        message: `Preset "${name}" not found`,
+        availablePresets: available,
+      },
+    });
+    return;
+  }
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const customName = typeof body.name === 'string' && body.name.trim().length > 0
+    ? body.name.trim()
+    : preset.name;
+
+  // Merge preset config with any user overrides from the request body
+  const userOverrides = pickConfigFields(body);
+  const mergedConfig = { ...preset.config, ...userOverrides };
+
+  const validationError = validateConfigUpdates(mergedConfig);
+  if (validationError) {
+    res.status(400).json({
+      error: { code: 'INVALID_CONFIG', message: validationError },
+    });
+    return;
+  }
+
+  const template = createTemplate(customName, mergedConfig);
+
+  res.status(201).json({
+    data: template,
+    preset: {
+      name: preset.name,
+      category: preset.category,
+      riskLevel: preset.riskLevel,
+      expectedWinRate: preset.expectedWinRate,
+      bestFor: preset.bestFor,
+    },
+    message: `Template "${template.name}" created from preset "${preset.name}"`,
   });
 });
 
@@ -1051,6 +1170,21 @@ sniperRouter.get('/sniper/signals/:mint', async (req, res) => {
   } catch (err) {
     res.status(500).json({
       error: 'Signal generation failed',
+      message: err instanceof Error ? err.message : 'Unknown error',
+    });
+  }
+});
+
+// ── AI Intelligence: Market Briefing ─────────────────────────────────────
+
+// GET /sniper/briefing — latest market briefing
+sniperRouter.get('/sniper/briefing', (_req, res) => {
+  try {
+    const briefing = generateBriefing();
+    res.json({ data: briefing });
+  } catch (err) {
+    res.status(500).json({
+      error: 'Briefing generation failed',
       message: err instanceof Error ? err.message : 'Unknown error',
     });
   }
