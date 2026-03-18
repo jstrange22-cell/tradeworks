@@ -940,11 +940,24 @@ export async function executeSellSnipe(
           console.warn(`[Sniper] Failed to verify token balance after sell: ${err}`);
         }
 
-        if (tokensRemaining > 10) {
-          // Sell verification failed — tokens still in wallet
-          console.warn(`[Sniper][${template.name}] SELL VERIFICATION FAILED for ${position.symbol} — ${tokensRemaining.toFixed(0)} tokens still in wallet`);
+        // Determine if the sell verified correctly.
+        // Full sell   (sellPct >= 1.0): wallet should be empty (≤10 dust).
+        // Partial sell (sellPct < 1.0): wallet should have ~(preBalance - soldAmount) tokens.
+        //   Allow 5% tolerance for slippage/rounding — don't flag partial exits as failed.
+        const expectedRemaining = sellPct < 1.0 ? position.amountTokens - sellAmount : 0;
+        const tolerance = sellPct < 1.0
+          ? Math.max(50, sellAmount * 0.05) // 5% of what we sold
+          : 10;                               // dust threshold for full sell
+        const sellVerified = Math.abs(tokensRemaining - expectedRemaining) <= tolerance;
+
+        if (!sellVerified && tokensRemaining > tolerance) {
+          // Sell verification failed — tokens did not leave the wallet as expected
+          console.warn(
+            `[Sniper][${template.name}] SELL VERIFICATION FAILED for ${position.symbol} — ` +
+            `expected ~${expectedRemaining.toFixed(0)} remaining, got ${tokensRemaining.toFixed(0)}`,
+          );
           execution.status = 'failed';
-          execution.error = `Tokens still in wallet (${tokensRemaining.toFixed(0)} remaining)`;
+          execution.error = `Sell unconfirmed — expected ${expectedRemaining.toFixed(0)} remaining, got ${tokensRemaining.toFixed(0)}`;
           // Don't delete position, don't update stats — let retry handle it
         } else {
           // Sell confirmed on-chain
