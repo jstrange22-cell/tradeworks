@@ -26,6 +26,8 @@ import type { CryptoCandle } from '@/lib/crypto-api';
 import { sortCandles, parseCandlesForChart, toLineData } from '@/lib/chart-utils';
 import { type IndicatorId, IndicatorToolbar } from './IndicatorToolbar';
 import { RsiPanel, MacdPanel, StochasticPanel, CciPanel, ObvPanel } from './IndicatorPanels';
+import { renderAIOverlays, clearAIOverlays } from '@/lib/ai-overlay-renderer';
+import type { AISignalResult } from '@/lib/ai-signal-engine';
 
 interface ParsedChartData {
   candles: ReturnType<typeof parseCandlesForChart>['candles'];
@@ -47,6 +49,9 @@ interface CandlestickChartProps {
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
   chartWrapperRef: React.RefObject<HTMLDivElement | null>;
+  aiSignal?: AISignalResult | null;
+  showAISignals?: boolean;
+  onToggleAISignals?: () => void;
 }
 
 export function CandlestickChart({
@@ -59,10 +64,15 @@ export function CandlestickChart({
   isFullscreen,
   onToggleFullscreen,
   chartWrapperRef,
+  aiSignal,
+  showAISignals,
+  onToggleAISignals,
 }: CandlestickChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const indicatorSeriesRef = useRef<Map<string, ISeriesApi<'Line' | 'Histogram'>>>(new Map());
+  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const aiSeriesRef = useRef<Array<ISeriesApi<'Line'> | ISeriesApi<'Area'>>>([]);
 
   const sortedCandles = useMemo(() => {
     if (!candleData || candleData.length === 0) return null;
@@ -74,6 +84,7 @@ export function CandlestickChart({
     return parseCandlesForChart(sortedCandles);
   }, [sortedCandles]);
 
+  // ── Main chart effect ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -81,6 +92,8 @@ export function CandlestickChart({
       chartRef.current.remove();
       chartRef.current = null;
       indicatorSeriesRef.current.clear();
+      candleSeriesRef.current = null;
+      aiSeriesRef.current = [];
     }
 
     const chartHeight = isFullscreen ? window.innerHeight - 80 : 560;
@@ -104,6 +117,7 @@ export function CandlestickChart({
       borderUpColor: '#22c55e', borderDownColor: '#ef4444',
       wickUpColor: '#4ade80', wickDownColor: '#f87171',
     });
+    candleSeriesRef.current = candleSeries;
     const volumeSeries = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'volume' });
     chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
 
@@ -120,8 +134,41 @@ export function CandlestickChart({
       }
     };
     window.addEventListener('resize', handleResize);
-    return () => { window.removeEventListener('resize', handleResize); chart.remove(); chartRef.current = null; indicatorSeriesRef.current.clear(); };
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      chart.remove();
+      chartRef.current = null;
+      candleSeriesRef.current = null;
+      aiSeriesRef.current = [];
+      indicatorSeriesRef.current.clear();
+    };
   }, [instrument, timeframe, parsed, sortedCandles, activeIndicators, isFullscreen]);
+
+  // ── AI overlay effect ──────────────────────────────────────────────────────
+  useEffect(() => {
+    const chart = chartRef.current;
+    const candleSeries = candleSeriesRef.current;
+    if (!chart || !candleSeries) return;
+
+    // Remove previous AI series
+    for (const s of aiSeriesRef.current) {
+      try { chart.removeSeries(s); } catch { /* already removed with chart */ }
+    }
+    aiSeriesRef.current = [];
+    clearAIOverlays(candleSeries);
+
+    if (!showAISignals || !aiSignal || !sortedCandles) return;
+
+    aiSeriesRef.current = renderAIOverlays(chart, candleSeries, aiSignal, sortedCandles);
+
+    return () => {
+      for (const s of aiSeriesRef.current) {
+        try { chart.removeSeries(s); } catch { /* ignore */ }
+      }
+      aiSeriesRef.current = [];
+      if (candleSeriesRef.current) clearAIOverlays(candleSeriesRef.current);
+    };
+  }, [aiSignal, showAISignals, sortedCandles]);
 
   /* ── Panel value computations ── */
 
@@ -161,11 +208,10 @@ export function CandlestickChart({
     if (values.length < 2) return null;
     const current = values[values.length - 1];
     const previous = values[values.length - 2];
-    // Determine trend using a 5-period lookback
     const lookback = Math.min(5, values.length - 1);
     const older = values[values.length - 1 - lookback];
     const diff = current - older;
-    const threshold = Math.abs(older) * 0.005; // 0.5% threshold for "flat"
+    const threshold = Math.abs(older) * 0.005;
     const trend: 'rising' | 'falling' | 'flat' =
       diff > threshold ? 'rising' : diff < -threshold ? 'falling' : 'flat';
     return { current, previous, trend };
@@ -178,7 +224,16 @@ export function CandlestickChart({
   return (
     <>
       <div ref={chartWrapperRef} className={`rounded-lg border border-slate-800 bg-[#0b1120] overflow-hidden ${isFullscreen ? 'fixed inset-0 z-50' : ''}`}>
-        <IndicatorToolbar timeframe={timeframe} onTimeframeChange={onTimeframeChange} activeIndicators={activeIndicators} onToggleIndicator={onToggleIndicator} isFullscreen={isFullscreen} onToggleFullscreen={onToggleFullscreen} />
+        <IndicatorToolbar
+          timeframe={timeframe}
+          onTimeframeChange={onTimeframeChange}
+          activeIndicators={activeIndicators}
+          onToggleIndicator={onToggleIndicator}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={onToggleFullscreen}
+          showAISignals={showAISignals}
+          onToggleAISignals={onToggleAISignals}
+        />
         <div ref={chartContainerRef} className="w-full" />
       </div>
       {hasPanels && (
@@ -234,35 +289,26 @@ function renderOverlayIndicators(
 ) {
   const { times, closes } = parsed;
 
-  // SMA 20
   if (active.has('sma20')) {
-    const lineSeries = chart.addLineSeries({ color: '#f59e0b', lineWidth: 1, priceScaleId: 'right' });
-    lineSeries.setData(toLineData(sma(closes, 20), times));
-    seriesRef.current.set('sma20', lineSeries);
+    const s = chart.addLineSeries({ color: '#f59e0b', lineWidth: 1, priceScaleId: 'right' });
+    s.setData(toLineData(sma(closes, 20), times));
+    seriesRef.current.set('sma20', s);
   }
-
-  // SMA 50
   if (active.has('sma50')) {
-    const lineSeries = chart.addLineSeries({ color: '#8b5cf6', lineWidth: 1, priceScaleId: 'right' });
-    lineSeries.setData(toLineData(sma(closes, 50), times));
-    seriesRef.current.set('sma50', lineSeries);
+    const s = chart.addLineSeries({ color: '#8b5cf6', lineWidth: 1, priceScaleId: 'right' });
+    s.setData(toLineData(sma(closes, 50), times));
+    seriesRef.current.set('sma50', s);
   }
-
-  // EMA 12
   if (active.has('ema12')) {
-    const lineSeries = chart.addLineSeries({ color: '#06b6d4', lineWidth: 1, priceScaleId: 'right' });
-    lineSeries.setData(toLineData(ema(closes, 12), times));
-    seriesRef.current.set('ema12', lineSeries);
+    const s = chart.addLineSeries({ color: '#06b6d4', lineWidth: 1, priceScaleId: 'right' });
+    s.setData(toLineData(ema(closes, 12), times));
+    seriesRef.current.set('ema12', s);
   }
-
-  // EMA 26
   if (active.has('ema26')) {
-    const lineSeries = chart.addLineSeries({ color: '#ec4899', lineWidth: 1, priceScaleId: 'right' });
-    lineSeries.setData(toLineData(ema(closes, 26), times));
-    seriesRef.current.set('ema26', lineSeries);
+    const s = chart.addLineSeries({ color: '#ec4899', lineWidth: 1, priceScaleId: 'right' });
+    s.setData(toLineData(ema(closes, 26), times));
+    seriesRef.current.set('ema26', s);
   }
-
-  // Bollinger Bands
   if (active.has('boll')) {
     const result = bollinger(closes, 20, 2);
     const upper = chart.addLineSeries({ color: 'rgba(100, 116, 139, 0.6)', lineWidth: 1, lineStyle: LineStyle.Dashed, priceScaleId: 'right' });
@@ -275,31 +321,22 @@ function renderOverlayIndicators(
     seriesRef.current.set('boll-middle', middle);
     seriesRef.current.set('boll-lower', lower);
   }
-
-  // SuperTrend — color changes based on trend direction (cyan=up, red=down)
   if (active.has('supertrend')) {
     const result = supertrend(rawCandles, 10, 3);
-    const lineSeries = chart.addLineSeries({ color: '#22d3ee', lineWidth: 2, priceScaleId: 'right' });
-    lineSeries.setData(toColoredLineData(result.trend, result.direction, times, '#22d3ee', '#ef4444'));
-    seriesRef.current.set('supertrend', lineSeries);
+    const s = chart.addLineSeries({ color: '#22d3ee', lineWidth: 2, priceScaleId: 'right' });
+    s.setData(toColoredLineData(result.trend, result.direction, times, '#22d3ee', '#ef4444'));
+    seriesRef.current.set('supertrend', s);
   }
-
-  // VWAP — pink/magenta line
   if (active.has('vwap')) {
     const result = vwap(rawCandles);
-    const lineSeries = chart.addLineSeries({ color: '#f472b6', lineWidth: 2, priceScaleId: 'right' });
-    // Filter out zero values (VWAP returns 0 when cumulative volume is 0)
-    const vwapLineData: LineData<Time>[] = [];
+    const s = chart.addLineSeries({ color: '#f472b6', lineWidth: 2, priceScaleId: 'right' });
+    const vwapData: LineData<Time>[] = [];
     for (let idx = 0; idx < result.length; idx++) {
-      if (result[idx] > 0) {
-        vwapLineData.push({ time: times[idx], value: result[idx] });
-      }
+      if (result[idx] > 0) vwapData.push({ time: times[idx], value: result[idx] });
     }
-    lineSeries.setData(vwapLineData);
-    seriesRef.current.set('vwap', lineSeries);
+    s.setData(vwapData);
+    seriesRef.current.set('vwap', s);
   }
-
-  // Keltner Channels — 3 teal lines (upper/middle/lower)
   if (active.has('keltner')) {
     const result = keltner(rawCandles, 20, 10, 2);
     const upper = chart.addLineSeries({ color: 'rgba(45, 212, 191, 0.6)', lineWidth: 1, lineStyle: LineStyle.Dashed, priceScaleId: 'right' });

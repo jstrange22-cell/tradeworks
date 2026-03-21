@@ -34,7 +34,7 @@ export const DEFAULT_CONFIG_FIELDS: SniperConfigFields = {
   dailyBudgetSol: 999,      // No effective daily limit — bot runs 24/7 uninhibited
   slippageBps: 1500,         // 15% — needed for bonding curve tokens (pump.fun price moves fast)
   priorityFee: 200000,       // 200k micro-lamports — competitive on congested mainnet
-  takeProfitPercent: 50,     // 1.5x — more realistic for meme coins (was 100/2x)
+  takeProfitPercent: 1000,   // Effectively disabled — tiered exits handle all profit-taking
   stopLossPercent: -20,      // -20% — tighter stop loss protects capital
   minLiquidityUsd: 5000,
   maxMarketCapUsd: 100000,   // $100K cap — avoid overpriced entries
@@ -44,10 +44,10 @@ export const DEFAULT_CONFIG_FIELDS: SniperConfigFields = {
   autoBuyPumpFun: true,      // Enable auto-buy from pump.fun monitor
   autoBuyTrending: true,     // Enable auto-buy from trending scanner
   minMoonshotScore: 40,      // AI scoring enabled — skip tokens scoring below 40
-  stalePriceTimeoutMs: 120_000,    // 2 min — sell quickly if no price movement
-  maxPositionAgeMs: 900_000,       // 15 min — force sell regardless (was 30 min)
-  trailingStopActivatePercent: 30, // Activate trailing stop at +30%
-  trailingStopPercent: -15,        // Trail 15% below high water mark
+  stalePriceTimeoutMs: 120_000,    // 2 min — exit dead meme coins fast before they bleed
+  maxPositionAgeMs: 900_000,       // 15 min — meme coins moon or die quickly
+  trailingStopActivatePercent: 25, // Activate trailing stop at +25%
+  trailingStopPercent: -15,        // Trail 15% below high water mark — locks in profit
   buyCooldownMs: 30_000,           // 30s between buys
   minMarketCapUsd: 5_000,          // Skip tokens with near-zero liquidity
   maxCreatorDeploysPerHour: 3,     // Creator spam detection
@@ -64,7 +64,7 @@ export const DEFAULT_CONFIG_FIELDS: SniperConfigFields = {
   maxBondingCurveProgress: 0.8,
   enableSpamFilter: true,
   // Phase 3: Circuit Breakers
-  consecutiveLossPauseThreshold: 5,
+  consecutiveLossPauseThreshold: 3,
   consecutiveLossPauseMs: 300_000,
   maxDailyLossSol: 0.1,
   // Phase 4: RugCheck
@@ -320,25 +320,13 @@ setInterval(() => { void refreshSolPrice(); }, 60_000);
 
 // ── Seed Default Template ──────────────────────────────────────────────
 
-export function seedDefaultTemplate(): void {
-  if (sniperTemplates.has(DEFAULT_TEMPLATE_ID)) return;
+function makeEmptyStats(): { totalTrades: number; wins: number; losses: number; totalPnlSol: number; createdAt: string } {
+  return { totalTrades: 0, wins: 0, losses: 0, totalPnlSol: 0, createdAt: new Date().toISOString() };
+}
 
-  const defaultTemplate: SniperTemplate = {
-    id: DEFAULT_TEMPLATE_ID,
-    name: 'Default Sniper',
-    enabled: true,
-    ...DEFAULT_CONFIG_FIELDS,
-    stats: {
-      totalTrades: 0,
-      wins: 0,
-      losses: 0,
-      totalPnlSol: 0,
-      createdAt: new Date().toISOString(),
-    },
-  };
-
-  sniperTemplates.set(DEFAULT_TEMPLATE_ID, defaultTemplate);
-  templateRuntime.set(DEFAULT_TEMPLATE_ID, {
+function seedTemplateEntry(id: string, template: SniperTemplate): void {
+  sniperTemplates.set(id, template);
+  templateRuntime.set(id, {
     running: false,
     startedAt: null,
     dailySpentSol: 0,
@@ -348,7 +336,122 @@ export function seedDefaultTemplate(): void {
     dailyRealizedLossSol: 0,
     circuitBreakerPausedUntil: 0,
   });
-  positionsMap.set(DEFAULT_TEMPLATE_ID, new Map());
+  positionsMap.set(id, new Map());
+}
+
+export function seedDefaultTemplate(): void {
+  if (!sniperTemplates.has(DEFAULT_TEMPLATE_ID)) {
+    seedTemplateEntry(DEFAULT_TEMPLATE_ID, {
+      id: DEFAULT_TEMPLATE_ID,
+      name: 'Default Sniper',
+      enabled: true,
+      ...DEFAULT_CONFIG_FIELDS,
+      stats: makeEmptyStats(),
+    });
+  }
+
+  if (!sniperTemplates.has('moonshot-hunter')) {
+    seedTemplateEntry('moonshot-hunter', {
+      id: 'moonshot-hunter',
+      name: 'Moonshot Hunter',
+      enabled: false,
+      ...DEFAULT_CONFIG_FIELDS,
+      // Position sizing
+      buyAmountSol: 0.1,
+      maxOpenPositions: 5,
+      // Hold longer — let moonshots develop
+      maxPositionAgeMs: 3_600_000,
+      stalePriceTimeoutMs: 600_000,
+      // Wide stops — don't get shaken out on volatility
+      trailingStopActivatePercent: 50,
+      trailingStopPercent: -30,
+      stopLossPercent: -25,
+      // Early-stage tokens only
+      maxMarketCapUsd: 150_000,
+      maxBondingCurveProgress: 0.6,
+      // Strong momentum required
+      minBuySellRatio: 2.0,
+      minMoonshotScore: 45,
+      // Tiered exits — hold most until 10x
+      exitTier1PctGain: 100,  exitTier1SellPct: 20,
+      exitTier2PctGain: 300,  exitTier2SellPct: 20,
+      exitTier3PctGain: 600,  exitTier3SellPct: 30,
+      exitTier4PctGain: 1000, exitTier4SellPct: 100,
+      // Risk controls
+      consecutiveLossPauseThreshold: 3,
+      maxDailyLossSol: 0.3,
+      stats: makeEmptyStats(),
+    });
+  }
+
+  if (!sniperTemplates.has('bag-builder')) {
+    seedTemplateEntry('bag-builder', {
+      id: 'bag-builder',
+      name: 'Bag Builder',
+      enabled: false,
+      ...DEFAULT_CONFIG_FIELDS,
+      // Moderate sizing — balanced risk/reward
+      buyAmountSol: 0.075,
+      maxOpenPositions: 6,
+      // Hold long enough for 2-3x to develop
+      maxPositionAgeMs: 7_200_000,    // 2 hours
+      stalePriceTimeoutMs: 300_000,   // 5 min
+      // Moderate stops — survive volatility but cut real losers fast
+      trailingStopActivatePercent: 60,
+      trailingStopPercent: -20,
+      stopLossPercent: -15,           // Hard stop at -15%
+      // Entry filters — balanced
+      maxMarketCapUsd: 120_000,
+      maxBondingCurveProgress: 0.5,
+      minBuySellRatio: 1.8,
+      minMoonshotScore: 40,
+      // Tiered exits — 30% at 2x, 50% at 3x, keep 20% as moonshot bag forever
+      // Tier 1: +100% (2x) → sell 30%  (70% remaining)
+      // Tier 2: +200% (3x) → sell 71% of remaining → ~20% of original left as bag
+      // Tier 3/4: disabled (bag rides to infinity or stop loss)
+      exitTier1PctGain: 100, exitTier1SellPct: 30,
+      exitTier2PctGain: 200, exitTier2SellPct: 71,
+      exitTier3PctGain: 99999, exitTier3SellPct: 0,
+      exitTier4PctGain: 99999, exitTier4SellPct: 0,
+      // Conservative risk controls
+      consecutiveLossPauseThreshold: 4,
+      maxDailyLossSol: 0.25,
+      stats: makeEmptyStats(),
+    });
+  }
+
+  if (!sniperTemplates.has('quick-flip')) {
+    seedTemplateEntry('quick-flip', {
+      id: 'quick-flip',
+      name: 'Quick Flip',
+      enabled: false,
+      ...DEFAULT_CONFIG_FIELDS,
+      // Small size — many small trades
+      buyAmountSol: 0.05,
+      maxOpenPositions: 8,
+      // Very short hold — in and out in minutes
+      maxPositionAgeMs: 180_000,
+      stalePriceTimeoutMs: 60_000,
+      // Tight stops — exit fast on stale price
+      trailingStopActivatePercent: 20,
+      trailingStopPercent: -12,
+      stopLossPercent: -15,
+      // Buy very early on the bonding curve
+      maxMarketCapUsd: 80_000,
+      maxBondingCurveProgress: 0.4,
+      minBuySellRatio: 1.5,
+      minMoonshotScore: 35,
+      // Tiered exits — take profits early and often
+      exitTier1PctGain: 30,  exitTier1SellPct: 50,
+      exitTier2PctGain: 60,  exitTier2SellPct: 30,
+      exitTier3PctGain: 100, exitTier3SellPct: 20,
+      exitTier4PctGain: 500, exitTier4SellPct: 100,
+      // Aggressive circuit breaker
+      consecutiveLossPauseThreshold: 3,
+      maxDailyLossSol: 0.15,
+      stats: makeEmptyStats(),
+    });
+  }
 }
 
 seedDefaultTemplate();

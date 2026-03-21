@@ -594,17 +594,19 @@ export function handlePositionTradeEvent(event: PumpPortalTradeEvent): void {
         if (position.pnlPercent >= tier.pctGain) {
           const remaining = position.remainingPct ?? 1.0;
           const sellFraction = tier.sellPct / 100;
-          const actualSellPct = Math.min(sellFraction, remaining);
+          // Final exit tier (100%): always sell ALL remaining tokens — never leave dust
+          const isFinalExit = tier.sellPct === 100;
+          const actualSellPct = isFinalExit ? 1.0 : Math.min(sellFraction, remaining);
 
           if (actualSellPct <= 0) continue;
 
           console.log(
-            `[Sniper][${template.name}] TIER ${tier.num} EXIT ${position.symbol}: +${position.pnlPercent.toFixed(1)}% — selling ${(actualSellPct * 100).toFixed(0)}% of position`,
+            `[Sniper][${template.name}] TIER ${tier.num} EXIT ${position.symbol}: +${position.pnlPercent.toFixed(1)}% — selling ${isFinalExit ? '100 (full close)' : (actualSellPct * 100).toFixed(0)}% of position`,
           );
 
           // Mark tier as sold BEFORE executing (prevent duplicate triggers)
           position.tiersSold = [...tiersSold, tier.num];
-          position.remainingPct = remaining - actualSellPct;
+          position.remainingPct = isFinalExit ? 0 : remaining - actualSellPct;
 
           pendingSells.set(event.mint, Date.now());
           void executeSellSnipe(event.mint, 'take_profit', templateId, false, actualSellPct)
@@ -1043,16 +1045,18 @@ export async function checkPositions(): Promise<void> {
             if (position.pnlPercent >= tier.pctGain) {
               const remaining = position.remainingPct ?? 1.0;
               const sellFraction = tier.sellPct / 100;
-              const actualSellPct = Math.min(sellFraction, remaining);
+              // Final exit tier (100%): always sell ALL remaining tokens — never leave dust
+              const isFinalExit = tier.sellPct === 100;
+              const actualSellPct = isFinalExit ? 1.0 : Math.min(sellFraction, remaining);
 
               if (actualSellPct <= 0) continue;
 
               console.log(
-                `[Sniper][${template.name}] TIER ${tier.num} EXIT ${position.symbol}: +${position.pnlPercent.toFixed(1)}% — selling ${(actualSellPct * 100).toFixed(0)}% of position`,
+                `[Sniper][${template.name}] TIER ${tier.num} EXIT ${position.symbol}: +${position.pnlPercent.toFixed(1)}% — selling ${isFinalExit ? '100 (full close)' : (actualSellPct * 100).toFixed(0)}% of position`,
               );
 
               position.tiersSold = [...tiersSold, tier.num];
-              position.remainingPct = remaining - actualSellPct;
+              position.remainingPct = isFinalExit ? 0 : remaining - actualSellPct;
 
               pendingSells.set(mint, Date.now());
               try {
