@@ -93,6 +93,24 @@ import { calculatePortfolioHeat } from '../../services/risk/portfolio-heat.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
+// ── Anti-Rug Tracking (Phase 9) ──────────────────────────────────────
+// In-memory sliding window of recent trades per held position for rug detection
+
+interface AntiRugWindow {
+  /** vSolInBondingCurve at the time the position was opened */
+  snapshotBondingCurveSol: number;
+  /** Recent trades within the sliding window */
+  trades: Array<{ type: 'buy' | 'sell'; solAmount: number; ts: number }>;
+}
+
+/** Per-mint anti-rug trade windows — cleaned up when position closes */
+const antiRugWindows: Map<string, AntiRugWindow> = new Map();
+
+/** Clean up anti-rug window when a position is closed */
+export function clearAntiRugWindow(mint: string): void {
+  antiRugWindows.delete(mint);
+}
+
 // ── Signal Storage ────────────────────────────────────────────────────
 // In-memory ring buffer of recent signals, persisted to signals.json
 
@@ -578,6 +596,79 @@ export function handlePositionTradeEvent(event: PumpPortalTradeEvent): void {
 
     // Skip TP/SL if a sell is already in-flight for this mint
     if (isPendingSell(event.mint)) return;
+
+    // ── Phase 9: Anti-Rug Protection ─────────────────────────────────
+    if (template.enableAntiRug) {
+      const positionAgeMs = Date.now() - new Date(position.boughtAt).getTime();
+
+      // Initialize anti-rug window on first trade event for this position
+      if (!antiRugWindows.has(event.mint)) {
+        antiRugWindows.set(event.mint, {
+          snapshotBondingCurveSol: event.vSolInBondingCurve,
+          trades: [],
+        });
+      }
+      const arw = antiRugWindows.get(event.mint)!;
+
+      // Push this trade into the sliding window
+      arw.trades.push({
+        type: event.txType,
+        solAmount: event.solAmount,
+        ts: Date.now(),
+      });
+
+      // Prune trades older than the window
+      const windowStart = Date.now() - template.antiRugVelocityWindowMs;
+      arw.trades = arw.trades.filter(t => t.ts >= windowStart);
+
+      // Only check after the initial grace period (first 5s is noisy)
+      if (positionAgeMs > template.antiRugMinPositionAgeMs) {
+        // ── Detector 1: Sell Velocity Spike ──
+        // If sells outpace buys by antiRugSellVelocityRatio in the window → emergency exit
+        const windowBuyVol = arw.trades.filter(t => t.type === 'buy').reduce((s, t) => s + t.solAmount, 0);
+        const windowSellVol = arw.trades.filter(t => t.type === 'sell').reduce((s, t) => s + t.solAmount, 0);
+
+        if (windowSellVol > 0 && windowBuyVol > 0) {
+          const sellBuyRatio = windowSellVol / windowBuyVol;
+          if (sellBuyRatio >= template.antiRugSellVelocityRatio) {
+            console.log(
+              `[AntiRug][${template.name}] 🚨 SELL VELOCITY SPIKE ${position.symbol}: sell/buy ratio ${sellBuyRatio.toFixed(1)}x in ${(template.antiRugVelocityWindowMs / 1000)}s window — EMERGENCY EXIT`,
+            );
+            antiRugWindows.delete(event.mint);
+            pendingSells.set(event.mint, Date.now());
+            void executeSellSnipe(event.mint, 'rug_detected', templateId)
+              .finally(() => { pendingSells.delete(event.mint); });
+            return;
+          }
+        } else if (windowSellVol > 0 && windowBuyVol === 0) {
+          // All sells, zero buys in the window — dump in progress
+          console.log(
+            `[AntiRug][${template.name}] 🚨 ALL-SELL WINDOW ${position.symbol}: ${windowSellVol.toFixed(4)} SOL sold, 0 bought in ${(template.antiRugVelocityWindowMs / 1000)}s — EMERGENCY EXIT`,
+          );
+          antiRugWindows.delete(event.mint);
+          pendingSells.set(event.mint, Date.now());
+          void executeSellSnipe(event.mint, 'rug_detected', templateId)
+            .finally(() => { pendingSells.delete(event.mint); });
+          return;
+        }
+
+        // ── Detector 2: Bonding Curve Liquidity Drain ──
+        // If vSolInBondingCurve drops antiRugLiquidityDropPct% from snapshot → emergency exit
+        if (arw.snapshotBondingCurveSol > 0 && event.vSolInBondingCurve > 0) {
+          const lpDropPct = ((arw.snapshotBondingCurveSol - event.vSolInBondingCurve) / arw.snapshotBondingCurveSol) * 100;
+          if (lpDropPct >= template.antiRugLiquidityDropPct) {
+            console.log(
+              `[AntiRug][${template.name}] 🚨 LIQUIDITY DRAIN ${position.symbol}: bonding curve SOL dropped ${lpDropPct.toFixed(1)}% (${arw.snapshotBondingCurveSol.toFixed(2)} → ${event.vSolInBondingCurve.toFixed(2)}) — EMERGENCY EXIT`,
+            );
+            antiRugWindows.delete(event.mint);
+            pendingSells.set(event.mint, Date.now());
+            void executeSellSnipe(event.mint, 'rug_detected', templateId)
+              .finally(() => { pendingSells.delete(event.mint); });
+            return;
+          }
+        }
+      }
+    }
 
     // ── Tiered Exits (Phase 5) ──
     if (template.enableTieredExits && position.pnlPercent > 0) {

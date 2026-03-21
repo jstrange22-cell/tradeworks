@@ -456,12 +456,17 @@ sniperRouter.get('/sniper/status', (_req, res) => {
   const allPositions = getAllActivePositions();
   const openPositionsWithUsd = allPositions.map((pos) => {
     const costSol = pos.buyCostSol ?? (defaultTemplate?.buyAmountSol ?? 0.005);
+    const hasBuyPrice = pos.buyPrice > 0;
     return {
       ...pos,
       buyCostSol: costSol,
       costUsd: costSol * cachedSolPriceUsd,
       valueUsd: pos.currentPrice * pos.amountTokens,
-      unrealizedPnlUsd: pos.amountTokens * (pos.currentPrice - pos.buyPrice),
+      // Guard against buyPrice=0 (position created before price confirmed)
+      pnlPercent: hasBuyPrice ? pos.pnlPercent : 0,
+      unrealizedPnlUsd: hasBuyPrice
+        ? pos.amountTokens * (pos.currentPrice - pos.buyPrice)
+        : 0,
     };
   });
 
@@ -496,6 +501,7 @@ sniperRouter.get('/sniper/status', (_req, res) => {
       ? new Date(defaultRuntime.circuitBreakerPausedUntil).toISOString()
       : null,
     walletSolBalance: cachedSolBalanceLamports / 1e9,
+    solPriceUsd: cachedSolPriceUsd,
     // Positions
     openPositions: openPositionsWithUsd,
     totalInvestedSol,

@@ -116,6 +116,17 @@ export interface SniperConfigFields {
   enableDynamicSizing: boolean;
   /** Max % of wallet per trade when dynamic sizing is active (default: 0.10 = 10%) */
   maxPositionPct: number;
+  // ── Phase 9: Anti-Rug Protection ──
+  /** Enable anti-rug sell velocity + liquidity drain detectors (default: true) */
+  enableAntiRug: boolean;
+  /** Emergency sell if sell/buy SOL ratio exceeds this in the sliding window (default: 5.0) */
+  antiRugSellVelocityRatio: number;
+  /** Sliding window size in ms for sell velocity tracking (default: 10000 = 10s) */
+  antiRugVelocityWindowMs: number;
+  /** Emergency sell if bonding curve SOL drops this % from snapshot in a single trade (default: 15) */
+  antiRugLiquidityDropPct: number;
+  /** Don't trigger anti-rug in first N ms after buy — initial trades are noisy (default: 5000) */
+  antiRugMinPositionAgeMs: number;
 }
 
 /** Backwards-compatible config shape (config fields + enabled flag) */
@@ -169,7 +180,7 @@ export interface SnipeExecution {
   signature: string | null;
   status: 'pending' | 'success' | 'failed';
   error: string | null;
-  trigger: 'manual' | 'pumpfun' | 'trending' | 'take_profit' | 'stop_loss' | 'stale_price' | 'max_age' | 'trailing_stop' | 'liquidity_crash';
+  trigger: 'manual' | 'pumpfun' | 'trending' | 'take_profit' | 'stop_loss' | 'stale_price' | 'max_age' | 'trailing_stop' | 'liquidity_crash' | 'rug_detected';
   templateId: string;
   templateName: string;
   timestamp: string;
@@ -213,6 +224,8 @@ export interface ActivePosition {
   tiersSold?: number[];
   /** Token description from pump.fun or metadata */
   description?: string;
+  /** Accumulated SOL received across all partial sells (tiered exits) — used for per-position win/loss tracking */
+  accumulatedSellSol?: number;
 }
 
 // ── Sell Retry Queue ────────────────────────────────────────────────────

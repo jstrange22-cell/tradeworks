@@ -20,6 +20,7 @@ import {
   subscribeTokenTrades,
   unsubscribeTokenTrades,
 } from '../solana-pumpfun.js';
+import { clearAntiRugWindow } from './monitoring.js';
 import type {
   SnipeExecution,
   ActivePosition,
@@ -731,6 +732,7 @@ export async function executeSellSnipe(
     } else {
       console.warn(`[Sniper][${template.name}] No tokens found in wallet for ${position.symbol} — removing ghost position`);
       positions.delete(mint);
+      clearAntiRugWindow(mint);
       syncActivePositionsMap();
       unsubscribeTokenTrades([mint]);
       return null;
@@ -743,6 +745,7 @@ export async function executeSellSnipe(
     if (sellAmount <= 0) {
       // Rounding killed the amount — clean up
       positions.delete(mint);
+      clearAntiRugWindow(mint);
       syncActivePositionsMap();
       return null;
     }
@@ -806,42 +809,38 @@ export async function executeSellSnipe(
       const buyCostSol = position.buyCostSol ?? template.buyAmountSol;
       const pnlSol = estimatedSolReturn - buyCostSol;
 
-      if (trigger === 'take_profit') {
-        template.stats.wins++;
+      // Accumulate sell proceeds across partial tier sells for accurate per-position win/loss
+      position.accumulatedSellSol = (position.accumulatedSellSol ?? 0) + estimatedSolReturn;
+
+      // Always update total PnL (reflects every partial sell)
+      template.stats.totalPnlSol += pnlSol;
+
+      const isPaperFullyClosing = sellPct >= 1.0 || (position.remainingPct ?? 1.0) <= 0.01;
+      const paperCountsForCircuitBreaker = trigger !== 'max_age' && trigger !== 'stale_price';
+
+      if (isPaperFullyClosing) {
+        const totalCost = position.buyCostSol ?? template.buyAmountSol;
+        const netPnl = position.accumulatedSellSol - totalCost;
         const runtimeCb = getRuntime(resolvedTemplateId);
-        runtimeCb.consecutiveLosses = 0; // Reset on win
-      } else if (trigger === 'stop_loss') {
-        template.stats.losses++;
-        const runtimeCb = getRuntime(resolvedTemplateId);
-        runtimeCb.consecutiveLosses++;
-        if (pnlSol < 0) runtimeCb.dailyRealizedLossSol += Math.abs(pnlSol);
-        if (runtimeCb.consecutiveLosses >= template.consecutiveLossPauseThreshold) {
-          const pauseMs = runtimeCb.consecutiveLosses >= template.consecutiveLossPauseThreshold * 2
-            ? template.consecutiveLossPauseMs * 3
-            : template.consecutiveLossPauseMs;
-          runtimeCb.circuitBreakerPausedUntil = Date.now() + pauseMs;
-          console.log(`[Sniper][${template.name}] CIRCUIT BREAKER: ${runtimeCb.consecutiveLosses} consecutive losses — pausing buys for ${pauseMs / 1000}s`);
-        }
-      } else {
-        if (pnlSol >= 0) {
+
+        if (netPnl >= 0) {
           template.stats.wins++;
-          const runtimeCb = getRuntime(resolvedTemplateId);
-          runtimeCb.consecutiveLosses = 0; // Reset on win
+          if (paperCountsForCircuitBreaker) runtimeCb.consecutiveLosses = 0;
         } else {
           template.stats.losses++;
-          const runtimeCb = getRuntime(resolvedTemplateId);
-          runtimeCb.consecutiveLosses++;
-          runtimeCb.dailyRealizedLossSol += Math.abs(pnlSol);
-          if (runtimeCb.consecutiveLosses >= template.consecutiveLossPauseThreshold) {
-            const pauseMs = runtimeCb.consecutiveLosses >= template.consecutiveLossPauseThreshold * 2
-              ? template.consecutiveLossPauseMs * 3
-              : template.consecutiveLossPauseMs;
-            runtimeCb.circuitBreakerPausedUntil = Date.now() + pauseMs;
-            console.log(`[Sniper][${template.name}] CIRCUIT BREAKER: ${runtimeCb.consecutiveLosses} consecutive losses — pausing buys for ${pauseMs / 1000}s`);
+          if (paperCountsForCircuitBreaker) {
+            runtimeCb.consecutiveLosses++;
+            if (netPnl < 0) runtimeCb.dailyRealizedLossSol += Math.abs(netPnl);
+            if (runtimeCb.consecutiveLosses >= template.consecutiveLossPauseThreshold) {
+              const pauseMs = runtimeCb.consecutiveLosses >= template.consecutiveLossPauseThreshold * 2
+                ? template.consecutiveLossPauseMs * 3
+                : template.consecutiveLossPauseMs;
+              runtimeCb.circuitBreakerPausedUntil = Date.now() + pauseMs;
+              console.log(`[Sniper][${template.name}] CIRCUIT BREAKER: ${runtimeCb.consecutiveLosses} consecutive losses — pausing buys for ${pauseMs / 1000}s`);
+            }
           }
         }
       }
-      template.stats.totalPnlSol += pnlSol;
 
       // Only fully remove position if this was a full sell
       if (sellPct >= 1.0 || (position.remainingPct ?? 1.0) <= 0.01) {
@@ -983,44 +982,41 @@ export async function executeSellSnipe(
           const sellAmountSol = execution.amountSol;
           const pnlSol = sellAmountSol - buyAmountSol;
 
-          if (trigger === 'take_profit') {
-            template.stats.wins++;
-            template.stats.totalPnlSol += pnlSol;
+          // Accumulate sell proceeds across partial tier sells for accurate per-position win/loss
+          position.accumulatedSellSol = (position.accumulatedSellSol ?? 0) + sellAmountSol;
+
+          // Always update total PnL (reflects every partial sell)
+          template.stats.totalPnlSol += pnlSol;
+
+          const isPositionFullyClosing = sellPct >= 1.0 || (position.remainingPct ?? 1.0) <= 0.01;
+
+          // Forced time-based exits (max_age, stale_price) don't count toward circuit breaker —
+          // the bot made no bad decision, the market just didn't move in time.
+          const countsForCircuitBreaker = trigger !== 'max_age' && trigger !== 'stale_price';
+
+          if (isPositionFullyClosing) {
+            // Determine win/loss using total accumulated proceeds vs original buy cost
+            const totalCost = position.buyCostSol ?? template.buyAmountSol;
+            const netPnl = position.accumulatedSellSol - totalCost;
             const runtimeCb = getRuntime(resolvedTemplateId);
-            runtimeCb.consecutiveLosses = 0; // Reset on win
-          } else if (trigger === 'stop_loss') {
-            template.stats.losses++;
-            template.stats.totalPnlSol += pnlSol;
-            const runtimeCb = getRuntime(resolvedTemplateId);
-            runtimeCb.consecutiveLosses++;
-            if (pnlSol < 0) runtimeCb.dailyRealizedLossSol += Math.abs(pnlSol);
-            if (runtimeCb.consecutiveLosses >= template.consecutiveLossPauseThreshold) {
-              const pauseMs = runtimeCb.consecutiveLosses >= template.consecutiveLossPauseThreshold * 2
-                ? template.consecutiveLossPauseMs * 3
-                : template.consecutiveLossPauseMs;
-              runtimeCb.circuitBreakerPausedUntil = Date.now() + pauseMs;
-              console.log(`[Sniper][${template.name}] CIRCUIT BREAKER: ${runtimeCb.consecutiveLosses} consecutive losses — pausing buys for ${pauseMs / 1000}s`);
-            }
-          } else {
-            // Manual or other sells still track PnL
-            if (pnlSol >= 0) {
+
+            if (netPnl >= 0) {
               template.stats.wins++;
-              const runtimeCb = getRuntime(resolvedTemplateId);
-              runtimeCb.consecutiveLosses = 0; // Reset on win
+              if (countsForCircuitBreaker) runtimeCb.consecutiveLosses = 0;
             } else {
               template.stats.losses++;
-              const runtimeCb = getRuntime(resolvedTemplateId);
-              runtimeCb.consecutiveLosses++;
-              runtimeCb.dailyRealizedLossSol += Math.abs(pnlSol);
-              if (runtimeCb.consecutiveLosses >= template.consecutiveLossPauseThreshold) {
-                const pauseMs = runtimeCb.consecutiveLosses >= template.consecutiveLossPauseThreshold * 2
-                  ? template.consecutiveLossPauseMs * 3
-                  : template.consecutiveLossPauseMs;
-                runtimeCb.circuitBreakerPausedUntil = Date.now() + pauseMs;
-                console.log(`[Sniper][${template.name}] CIRCUIT BREAKER: ${runtimeCb.consecutiveLosses} consecutive losses — pausing buys for ${pauseMs / 1000}s`);
+              if (countsForCircuitBreaker) {
+                runtimeCb.consecutiveLosses++;
+                runtimeCb.dailyRealizedLossSol += Math.abs(netPnl);
+                if (runtimeCb.consecutiveLosses >= template.consecutiveLossPauseThreshold) {
+                  const pauseMs = runtimeCb.consecutiveLosses >= template.consecutiveLossPauseThreshold * 2
+                    ? template.consecutiveLossPauseMs * 3
+                    : template.consecutiveLossPauseMs;
+                  runtimeCb.circuitBreakerPausedUntil = Date.now() + pauseMs;
+                  console.log(`[Sniper][${template.name}] CIRCUIT BREAKER: ${runtimeCb.consecutiveLosses} consecutive losses — pausing buys for ${pauseMs / 1000}s`);
+                }
               }
             }
-            template.stats.totalPnlSol += pnlSol;
           }
 
           // Only fully remove position if this was a full sell
@@ -1186,11 +1182,10 @@ export async function autoClosePosition(mint: string, templateId: string, reason
     `[Sniper] 🗑️ Writing off ${position.symbol} (${mint.slice(0, 8)}...) — ${reason}. Loss: ${buyCostSol.toFixed(4)} SOL`,
   );
 
-  // Record as a loss
+  // Record as a loss (totalTrades was already counted at buy time — don't double-count)
   if (template) {
     template.stats.losses++;
     template.stats.totalPnlSol -= buyCostSol;
-    template.stats.totalTrades++;
     const runtimeCb = getRuntime(templateId);
     runtimeCb.consecutiveLosses++;
     runtimeCb.dailyRealizedLossSol += buyCostSol;

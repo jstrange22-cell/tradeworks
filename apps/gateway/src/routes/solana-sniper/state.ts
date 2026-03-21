@@ -91,6 +91,12 @@ export const DEFAULT_CONFIG_FIELDS: SniperConfigFields = {
   // Phase 8: Dynamic Risk & Position Sizing
   enableDynamicSizing: false,
   maxPositionPct: 0.10,
+  // Phase 9: Anti-Rug Protection
+  enableAntiRug: true,
+  antiRugSellVelocityRatio: 5.0,       // Emergency sell if sells > 5x buys in window
+  antiRugVelocityWindowMs: 10_000,     // 10s sliding window
+  antiRugLiquidityDropPct: 15,         // Emergency sell if bonding curve SOL drops 15%+ in one trade
+  antiRugMinPositionAgeMs: 5_000,      // Grace period — first 5s after buy is noisy
 };
 
 // ── State Maps ─────────────────────────────────────────────────────────
@@ -741,6 +747,11 @@ export function templateToLegacyConfig(template: SniperTemplate): SniperConfig {
     minSignalConfidence: template.minSignalConfidence,
     enableDynamicSizing: template.enableDynamicSizing,
     maxPositionPct: template.maxPositionPct,
+    enableAntiRug: template.enableAntiRug,
+    antiRugSellVelocityRatio: template.antiRugSellVelocityRatio,
+    antiRugVelocityWindowMs: template.antiRugVelocityWindowMs,
+    antiRugLiquidityDropPct: template.antiRugLiquidityDropPct,
+    antiRugMinPositionAgeMs: template.antiRugMinPositionAgeMs,
   };
 }
 
@@ -829,6 +840,9 @@ export const SNIPER_CONFIG_KEYS: ReadonlyArray<keyof SniperConfigFields> = [
   'useAiSignals', 'minSignalConfidence',
   // Phase 8: Dynamic Risk & Position Sizing
   'enableDynamicSizing', 'maxPositionPct',
+  // Phase 9: Anti-Rug Protection
+  'enableAntiRug', 'antiRugSellVelocityRatio', 'antiRugVelocityWindowMs',
+  'antiRugLiquidityDropPct', 'antiRugMinPositionAgeMs',
 ] as const;
 
 export function validateConfigUpdates(
@@ -944,6 +958,12 @@ export function applyConfigToTemplate(
   // Phase 8: Dynamic Risk & Position Sizing
   if (fields.enableDynamicSizing !== undefined) template.enableDynamicSizing = fields.enableDynamicSizing;
   if (fields.maxPositionPct !== undefined) template.maxPositionPct = fields.maxPositionPct;
+  // Phase 9: Anti-Rug Protection
+  if (fields.enableAntiRug !== undefined) template.enableAntiRug = fields.enableAntiRug;
+  if (fields.antiRugSellVelocityRatio !== undefined) template.antiRugSellVelocityRatio = fields.antiRugSellVelocityRatio;
+  if (fields.antiRugVelocityWindowMs !== undefined) template.antiRugVelocityWindowMs = fields.antiRugVelocityWindowMs;
+  if (fields.antiRugLiquidityDropPct !== undefined) template.antiRugLiquidityDropPct = fields.antiRugLiquidityDropPct;
+  if (fields.antiRugMinPositionAgeMs !== undefined) template.antiRugMinPositionAgeMs = fields.antiRugMinPositionAgeMs;
 }
 
 // ── Template CRUD ──────────────────────────────────────────────────────
