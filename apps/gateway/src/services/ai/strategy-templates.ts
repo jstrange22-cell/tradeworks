@@ -1,9 +1,15 @@
 /**
- * Pre-built Strategy Templates — Phase 9
+ * Pre-built Strategy Templates — v2 (Redesigned for Profitability)
  *
- * Ready-to-deploy strategy configurations for the sniper engine.
- * Users can instantly apply a preset to create a new template
- * without manually configuring dozens of parameters.
+ * Four focused strategies, each optimized for a different trading style.
+ * All templates use the improved fee settings (lower slippage, proper
+ * priority fees) and accurate P&L tracking with wallet delta measurement.
+ *
+ * Key changes from v1:
+ * - Position size: 0.01 SOL (was 0.005) — better fee-to-position ratio
+ * - Slippage: 5-10% (was 15%) — stop overpaying on entries/exits
+ * - Stricter entry filters across all templates
+ * - Tighter stop losses — meme coins that drop 12%+ don't recover
  */
 
 import type { SniperConfigFields } from '../../routes/solana-sniper/types.js';
@@ -13,7 +19,7 @@ import type { SniperConfigFields } from '../../routes/solana-sniper/types.js';
 export interface StrategyPreset {
   name: string;
   description: string;
-  category: 'aggressive' | 'moderate' | 'conservative' | 'copy';
+  category: 'aggressive' | 'moderate' | 'conservative' | 'ai';
   config: Partial<SniperConfigFields>;
   expectedWinRate: string;
   riskLevel: 'high' | 'medium' | 'low';
@@ -24,172 +30,179 @@ export interface StrategyPreset {
 
 export const STRATEGY_PRESETS: readonly StrategyPreset[] = [
   {
-    name: 'Meme Sniper',
-    description: 'High risk, fast entries on newly launched pump.fun tokens. Aggressive tiered exits for quick flips.',
+    name: 'Quick Flip',
+    description: 'Fast entries on pump.fun tokens, sell within seconds. Tight stops, no tiered exits — sell 100% at target.',
     category: 'aggressive',
     riskLevel: 'high',
-    expectedWinRate: '30-40%',
-    bestFor: 'Quick flips on newly launched meme coins',
-    config: {
-      buyAmountSol: 0.005,
-      takeProfitPercent: 100,
-      stopLossPercent: -25,
-      maxPositionAgeMs: 1_800_000, // 30 min max hold
-      minMoonshotScore: 30,
-      minUniqueBuyers: 3,
-      minBuySellRatio: 1.2,
-      autoBuyPumpFun: true,
-      autoBuyTrending: false,
-      useAiSignals: true,
-      minSignalConfidence: 30,
-      enableTieredExits: true,
-      exitTier1PctGain: 30,
-      exitTier1SellPct: 25,
-      exitTier2PctGain: 75,
-      exitTier2SellPct: 30,
-      exitTier3PctGain: 150,
-      exitTier3SellPct: 30,
-      exitTier4PctGain: 300,
-      exitTier4SellPct: 100,
-      momentumWindowMs: 8_000,
-      minBuyVolumeSol: 0.3,
-      buyCooldownMs: 20_000,
-      maxOpenPositions: 10,
-      stalePriceTimeoutMs: 180_000,
-      trailingStopActivatePercent: 40,
-      trailingStopPercent: -20,
-      consecutiveLossPauseThreshold: 6,
-      maxDailyLossSol: 0.15,
-    },
-  },
-  {
-    name: 'Momentum Rider',
-    description: 'Medium risk, waits for confirmed momentum before entering. Dynamic sizing adjusts to wallet health.',
-    category: 'moderate',
-    riskLevel: 'medium',
-    expectedWinRate: '40-55%',
-    bestFor: 'Riding confirmed trends with moderate risk',
+    expectedWinRate: '35-45%',
+    bestFor: 'Quick flips on newly launched meme coins during US market hours',
     config: {
       buyAmountSol: 0.01,
-      takeProfitPercent: 50,
-      stopLossPercent: -15,
-      maxPositionAgeMs: 3_600_000, // 1 hour
-      minMoonshotScore: 50,
-      minUniqueBuyers: 8,
-      minBuySellRatio: 2.0,
-      momentumWindowMs: 15_000,
-      minBuyVolumeSol: 1.0,
-      autoBuyPumpFun: true,
-      autoBuyTrending: true,
-      useAiSignals: true,
-      minSignalConfidence: 55,
-      enableDynamicSizing: true,
-      maxPositionPct: 0.08,
-      enableTieredExits: true,
-      exitTier1PctGain: 25,
-      exitTier1SellPct: 20,
-      exitTier2PctGain: 50,
-      exitTier2SellPct: 30,
-      exitTier3PctGain: 100,
-      exitTier3SellPct: 30,
-      exitTier4PctGain: 200,
-      exitTier4SellPct: 100,
-      maxOpenPositions: 8,
-      buyCooldownMs: 45_000,
-      stalePriceTimeoutMs: 300_000,
-      trailingStopActivatePercent: 25,
-      trailingStopPercent: -12,
-      enableRugCheck: true,
-      minRugCheckScore: 550,
-      consecutiveLossPauseThreshold: 4,
-      maxDailyLossSol: 0.12,
-    },
-  },
-  {
-    name: 'Conservative Scout',
-    description: 'Low risk, strict filters, longer hold times. Only acts on high-confidence AI signals with strong rug check scores.',
-    category: 'conservative',
-    riskLevel: 'low',
-    expectedWinRate: '55-70%',
-    bestFor: 'Minimal losses, quality over quantity',
-    config: {
-      buyAmountSol: 0.003,
-      takeProfitPercent: 30,
-      stopLossPercent: -10,
-      maxPositionAgeMs: 7_200_000, // 2 hours
-      minMoonshotScore: 65,
-      minUniqueBuyers: 12,
-      minBuySellRatio: 3.0,
-      momentumWindowMs: 20_000,
-      minBuyVolumeSol: 2.0,
+      slippageBps: 800,                // 8% — lowered from 15%
+      priorityFee: 500_000,            // Faster execution
+      momentumWindowMs: 5_000,         // 5 sec — buy fast
+      minUniqueBuyers: 3,
+      minBuySellRatio: 2.5,            // Strong buy dominance
+      minBuyVolumeSol: 0.3,
+      stopLossPercent: -12,            // Tight stop
+      takeProfitPercent: 50,           // Take at +50%
+      enableTieredExits: false,        // Sell 100% at target
+      maxPositionAgeMs: 180_000,       // 3 min max hold
+      stalePriceTimeoutMs: 60_000,     // 1 min dead coin exit
+      trailingStopActivatePercent: 15, // Trail early
+      trailingStopPercent: -8,         // Tight trail
       autoBuyPumpFun: true,
       autoBuyTrending: false,
-      useAiSignals: true,
-      minSignalConfidence: 70,
-      enableDynamicSizing: true,
-      maxPositionPct: 0.05,
       enableRugCheck: true,
-      minRugCheckScore: 700,
-      maxTopHolderPct: 20,
-      enableTieredExits: true,
-      exitTier1PctGain: 15,
-      exitTier1SellPct: 20,
-      exitTier2PctGain: 30,
-      exitTier2SellPct: 30,
-      exitTier3PctGain: 60,
-      exitTier3SellPct: 30,
-      exitTier4PctGain: 100,
-      exitTier4SellPct: 100,
+      minRugCheckScore: 600,
+      maxTopHolderPct: 30,
+      buyCooldownMs: 15_000,           // 15 sec between buys
       maxOpenPositions: 5,
-      buyCooldownMs: 60_000,
-      stalePriceTimeoutMs: 600_000,
-      trailingStopActivatePercent: 15,
-      trailingStopPercent: -8,
-      consecutiveLossPauseThreshold: 3,
-      maxDailyLossSol: 0.05,
-      maxMarketCapUsd: 80_000,
-      minBondingCurveSol: 2.0,
+      consecutiveLossPauseThreshold: 5,
+      consecutiveLossPauseMs: 300_000,
+      maxDailyLossSol: 0.1,
+      enableAntiRug: true,
+      enableJito: false,
+      useAiSignals: false,
+      enableDynamicSizing: false,
     },
   },
+
   {
-    name: 'Whale Watcher',
-    description: 'Follows smart money and trending token activity. Focuses on tokens already gaining traction on DEX aggregators.',
-    category: 'copy',
+    name: 'Moonshot Hunter',
+    description: 'Highly selective entries, wide stops, let winners run to 10-50x. Accepts frequent small losses for rare massive gains.',
+    category: 'aggressive',
+    riskLevel: 'high',
+    expectedWinRate: '15-25%',
+    bestFor: 'Catching rare moonshots — one 10x covers twenty losses',
+    config: {
+      buyAmountSol: 0.01,
+      slippageBps: 1000,               // 10%
+      priorityFee: 300_000,
+      momentumWindowMs: 15_000,        // 15 sec — sustained buying
+      minUniqueBuyers: 8,              // High bar — real community
+      minBuySellRatio: 3.0,            // Strong conviction
+      minBuyVolumeSol: 1.5,            // Serious interest
+      stopLossPercent: -30,            // Wide stop — give moonshots room
+      takeProfitPercent: 1000,         // 10x target
+      enableTieredExits: true,
+      exitTier1PctGain: 100,           // First take at 2x
+      exitTier1SellPct: 20,            // Only sell 20%
+      exitTier2PctGain: 300,           // Second at 4x
+      exitTier2SellPct: 25,
+      exitTier3PctGain: 1000,          // Third at 10x
+      exitTier3SellPct: 25,
+      exitTier4PctGain: 5000,          // Final at 50x
+      exitTier4SellPct: 100,
+      maxPositionAgeMs: 1_800_000,     // 30 min
+      stalePriceTimeoutMs: 300_000,    // 5 min patience
+      trailingStopActivatePercent: 50, // Trail only after +50%
+      trailingStopPercent: -20,        // Wide trail
+      autoBuyPumpFun: true,
+      autoBuyTrending: false,
+      enableRugCheck: true,
+      minRugCheckScore: 700,           // Strict quality
+      maxTopHolderPct: 20,             // No whale risk
+      buyCooldownMs: 60_000,           // 60 sec — selective
+      maxOpenPositions: 5,
+      consecutiveLossPauseThreshold: 8, // Higher threshold — losses are expected
+      consecutiveLossPauseMs: 300_000,
+      maxDailyLossSol: 0.15,           // Higher daily limit
+      enableAntiRug: true,
+      enableJito: false,
+      useAiSignals: false,
+      enableDynamicSizing: false,
+    },
+  },
+
+  {
+    name: 'Steady Grinder',
+    description: 'Extreme selectivity, tight stops, quick profits. Only enters on the strongest setups. Capital preservation first.',
+    category: 'conservative',
+    riskLevel: 'low',
+    expectedWinRate: '50-60%',
+    bestFor: 'Consistent small gains with minimal drawdown',
+    config: {
+      buyAmountSol: 0.01,
+      slippageBps: 500,                // 5% — tight fills only
+      priorityFee: 300_000,
+      momentumWindowMs: 20_000,        // 20 sec — sustained momentum
+      minUniqueBuyers: 10,             // Very high bar
+      minBuySellRatio: 4.0,            // Almost no sellers
+      minBuyVolumeSol: 2.0,            // Heavy volume
+      stopLossPercent: -10,            // Tight stop
+      takeProfitPercent: 30,           // Take at +30%
+      enableTieredExits: false,        // Sell 100% at target
+      maxPositionAgeMs: 120_000,       // 2 min max
+      stalePriceTimeoutMs: 45_000,     // 45 sec no dead weight
+      trailingStopActivatePercent: 10, // Trail early at +10%
+      trailingStopPercent: -5,         // Very tight trail
+      autoBuyPumpFun: true,
+      autoBuyTrending: false,
+      enableRugCheck: true,
+      minRugCheckScore: 700,           // Strict
+      maxTopHolderPct: 20,
+      maxMarketCapUsd: 50_000,         // Lower cap = more upside
+      minBondingCurveSol: 3.0,         // Stronger liquidity
+      buyCooldownMs: 45_000,           // Patient
+      maxOpenPositions: 3,             // Only best setups
+      consecutiveLossPauseThreshold: 3,
+      consecutiveLossPauseMs: 300_000,
+      maxDailyLossSol: 0.05,           // Low daily limit — protect capital
+      enableAntiRug: true,
+      enableJito: false,
+      useAiSignals: false,
+      enableDynamicSizing: false,
+    },
+  },
+
+  {
+    name: 'AI Balanced',
+    description: 'AI signal gating with dynamic position sizing. Only buys on 60%+ confidence. Jito MEV protection on larger positions.',
+    category: 'ai',
     riskLevel: 'medium',
     expectedWinRate: '40-50%',
-    bestFor: 'Following tokens that smart money and trending lists pick up',
+    bestFor: 'Smart, adaptive trading that scales with signal quality',
     config: {
-      buyAmountSol: 0.008,
-      takeProfitPercent: 75,
-      stopLossPercent: -20,
-      autoBuyPumpFun: false,
-      autoBuyTrending: true,
-      maxTrendingMarketCapUsd: 1_000_000,
-      minTrendingMomentumPercent: 30,
-      minMoonshotScore: 40,
-      minUniqueBuyers: 5,
-      minBuySellRatio: 1.5,
-      useAiSignals: true,
-      minSignalConfidence: 50,
+      buyAmountSol: 0.01,
+      slippageBps: 700,                // 7%
+      priorityFee: 400_000,
+      momentumWindowMs: 12_000,        // 12 sec for AI scoring
+      minUniqueBuyers: 6,
+      minBuySellRatio: 2.0,
+      minBuyVolumeSol: 1.0,
+      stopLossPercent: -15,
+      takeProfitPercent: 200,          // +200% — AI picks should run
       enableTieredExits: true,
-      exitTier1PctGain: 40,
+      exitTier1PctGain: 50,
       exitTier1SellPct: 25,
-      exitTier2PctGain: 75,
+      exitTier2PctGain: 150,
       exitTier2SellPct: 30,
-      exitTier3PctGain: 150,
+      exitTier3PctGain: 500,
       exitTier3SellPct: 30,
-      exitTier4PctGain: 300,
+      exitTier4PctGain: 2000,
       exitTier4SellPct: 100,
-      maxPositionAgeMs: 3_600_000, // 1 hour
-      maxOpenPositions: 6,
-      buyCooldownMs: 30_000,
-      stalePriceTimeoutMs: 300_000,
-      trailingStopActivatePercent: 35,
-      trailingStopPercent: -15,
+      maxPositionAgeMs: 600_000,       // 10 min
+      stalePriceTimeoutMs: 90_000,     // 90 sec
+      trailingStopActivatePercent: 20,
+      trailingStopPercent: -10,
+      autoBuyPumpFun: true,
+      autoBuyTrending: false,
       enableRugCheck: true,
-      minRugCheckScore: 500,
+      minRugCheckScore: 650,
+      maxTopHolderPct: 25,
+      buyCooldownMs: 20_000,
+      maxOpenPositions: 5,
       consecutiveLossPauseThreshold: 5,
+      consecutiveLossPauseMs: 300_000,
       maxDailyLossSol: 0.10,
+      enableAntiRug: true,
+      useAiSignals: true,              // CORE: AI gating
+      minSignalConfidence: 60,         // Only 60%+ confidence
+      enableDynamicSizing: true,       // CORE: scales with confidence
+      maxPositionPct: 0.15,            // Up to 15% wallet
+      enableJito: true,                // Protect larger positions
+      jitoTipLamports: 500_000,        // 0.0005 SOL tip
     },
   },
 ] as const;
@@ -198,9 +211,9 @@ export const STRATEGY_PRESETS: readonly StrategyPreset[] = [
 
 /** Get a single preset by name (case-insensitive) */
 export function getPreset(name: string): StrategyPreset | undefined {
-  const lower = name.toLowerCase();
+  const lower = name.toLowerCase().replace(/[_-]/g, ' ');
   return STRATEGY_PRESETS.find(
-    (preset) => preset.name.toLowerCase() === lower,
+    (preset) => preset.name.toLowerCase().replace(/[_-]/g, ' ') === lower,
   );
 }
 

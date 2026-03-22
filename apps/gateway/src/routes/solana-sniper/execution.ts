@@ -626,18 +626,26 @@ export async function executeBuySnipe(params: {
         }
 
         // Measure ACTUAL SOL spent from wallet delta — includes swap cost + tx fees + ATA rent
-        // This is the REAL cost of acquisition, not the intended amount
+        // IMPORTANT: Exclude ATA rent (~0.00203 SOL) from buyCostSol because rent is
+        // recovered when the token account is closed after sell. If we count rent as
+        // buy cost AND the sell wallet delta includes rent recovery, P&L double-counts it.
+        const ATA_RENT_SOL = 0.00203;
         const postBuyLamports = await connection.getBalance(walletPubkey);
         const actualSolSpent = Math.max(0, (preBuyLamports - postBuyLamports) / LAMPORTS_PER_SOL);
-        const realBuyCost = actualSolSpent > 0 ? actualSolSpent : effectiveBuyAmountSol;
+        // Subtract ATA rent from cost — it's a recoverable deposit, not a trading cost
+        const swapCostExRent = actualSolSpent > ATA_RENT_SOL
+          ? actualSolSpent - ATA_RENT_SOL
+          : actualSolSpent;
+        const realBuyCost = swapCostExRent > 0 ? swapCostExRent : effectiveBuyAmountSol;
 
-        if (actualSolSpent > 0 && Math.abs(actualSolSpent - effectiveBuyAmountSol) > 0.0001) {
+        if (actualSolSpent > 0) {
+          const feesDelta = actualSolSpent - effectiveBuyAmountSol - ATA_RENT_SOL;
           console.log(
-            `[Sniper][${template.name}] Buy cost for ${params.symbol}: intended ${effectiveBuyAmountSol} SOL, actual ${actualSolSpent.toFixed(6)} SOL (delta: ${(actualSolSpent - effectiveBuyAmountSol).toFixed(6)} SOL in fees/rent)`,
+            `[Sniper][${template.name}] Buy cost for ${params.symbol}: swap ${effectiveBuyAmountSol} SOL + fees ${Math.max(0, feesDelta).toFixed(6)} SOL + rent ${ATA_RENT_SOL} SOL (recoverable) = ${actualSolSpent.toFixed(6)} SOL total, buyCostSol=${realBuyCost.toFixed(6)} SOL`,
           );
         }
 
-        // Use actual cost for the execution record (not the intended amount)
+        // Use swap+fees cost for P&L tracking (excludes recoverable rent)
         execution.amountSol = realBuyCost;
 
         // Track position under this template

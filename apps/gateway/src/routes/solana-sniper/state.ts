@@ -30,50 +30,50 @@ import type {
 export const DEFAULT_TEMPLATE_ID = 'default';
 
 export const DEFAULT_CONFIG_FIELDS: SniperConfigFields = {
-  buyAmountSol: 0.0053,     // ~$0.50 per trade at ~$95/SOL — runs 24/7 without budget limit
-  dailyBudgetSol: 999,      // No effective daily limit — bot runs 24/7 uninhibited
-  slippageBps: 1500,         // 15% — needed for bonding curve tokens (pump.fun price moves fast)
-  priorityFee: 200000,       // 200k micro-lamports — competitive on congested mainnet
-  takeProfitPercent: 1000,   // Effectively disabled — tiered exits handle all profit-taking
-  stopLossPercent: -20,      // -20% — tighter stop loss protects capital
-  minLiquidityUsd: 5000,
-  maxMarketCapUsd: 100000,   // $100K cap — avoid overpriced entries
-  requireMintRevoked: true,  // NON-NEGOTIABLE safety — prevents rug pulls
-  requireFreezeRevoked: true, // NON-NEGOTIABLE safety — prevents rug pulls
-  maxOpenPositions: 10,      // User wants 10 for testing (easily changeable)
-  autoBuyPumpFun: true,      // Enable auto-buy from pump.fun monitor
-  autoBuyTrending: true,     // Enable auto-buy from trending scanner
-  minMoonshotScore: 40,      // AI scoring enabled — skip tokens scoring below 40
-  stalePriceTimeoutMs: 120_000,    // 2 min — exit dead meme coins fast before they bleed
-  maxPositionAgeMs: 900_000,       // 15 min — meme coins moon or die quickly
-  trailingStopActivatePercent: 25, // Activate trailing stop at +25%
-  trailingStopPercent: -15,        // Trail 15% below high water mark — locks in profit
-  buyCooldownMs: 30_000,           // 30s between buys
-  minMarketCapUsd: 5_000,          // Skip tokens with near-zero liquidity
-  maxCreatorDeploysPerHour: 3,     // Creator spam detection
-  maxTrendingMarketCapUsd: 500_000,  // $500K cap for trending tokens (higher than PumpFun)
-  minTrendingMomentumPercent: 50,    // Min 24h gain % for trending auto-buy
-  paperMode: false,                  // Real mode by default
-  // Phase 1: Momentum Confirmation Gate
-  momentumWindowMs: 10_000,
-  minUniqueBuyers: 5,
-  minBuySellRatio: 1.5,
-  minBuyVolumeSol: 0.5,
-  // Phase 2: Instant Reject Filters
+  buyAmountSol: 0.01,        // $1.30 per trade — better fee ratio than 0.0053
+  dailyBudgetSol: 999,
+  slippageBps: 800,           // 8% — lowered from 15% to stop overpaying
+  priorityFee: 400_000,      // 400k μL — reliable fills without overpaying
+  takeProfitPercent: 50,     // +50% take profit
+  stopLossPercent: -12,      // -12% stop — tighter than old -20%
+  minLiquidityUsd: 5_000,
+  maxMarketCapUsd: 100_000,
+  requireMintRevoked: true,
+  requireFreezeRevoked: true,
+  maxOpenPositions: 5,
+  autoBuyPumpFun: true,
+  autoBuyTrending: false,    // Disabled by default — trending tokens are riskier
+  minMoonshotScore: 40,
+  stalePriceTimeoutMs: 60_000,        // 1 min — faster exit on dead coins
+  maxPositionAgeMs: 180_000,          // 3 min — quick flips don't hold
+  trailingStopActivatePercent: 15,    // Activate trail at +15%
+  trailingStopPercent: -8,            // Tight 8% trail
+  buyCooldownMs: 15_000,
+  minMarketCapUsd: 5_000,
+  maxCreatorDeploysPerHour: 3,
+  maxTrendingMarketCapUsd: 500_000,
+  minTrendingMomentumPercent: 50,
+  paperMode: false,
+  // Phase 1: Momentum Gate
+  momentumWindowMs: 5_000,            // 5 sec — get in fast
+  minUniqueBuyers: 3,
+  minBuySellRatio: 2.5,               // Strong buy dominance
+  minBuyVolumeSol: 0.3,
+  // Phase 2: Bonding Curve
   minBondingCurveSol: 1.0,
   maxBondingCurveProgress: 0.8,
   enableSpamFilter: true,
   // Phase 3: Circuit Breakers
-  consecutiveLossPauseThreshold: 3,
+  consecutiveLossPauseThreshold: 5,
   consecutiveLossPauseMs: 300_000,
   maxDailyLossSol: 0.1,
   // Phase 4: RugCheck
   enableRugCheck: true,
-  minRugCheckScore: 500,
+  minRugCheckScore: 600,              // Stricter than old 500
   maxTopHolderPct: 30,
   rugCheckTimeoutMs: 2_000,
-  // Phase 5: Tiered Exits
-  enableTieredExits: true,
+  // Phase 5: Tiered Exits — disabled for quick flip default
+  enableTieredExits: false,
   exitTier1PctGain: 50,
   exitTier1SellPct: 30,
   exitTier2PctGain: 100,
@@ -85,19 +85,22 @@ export const DEFAULT_CONFIG_FIELDS: SniperConfigFields = {
   // Phase 6: Jito
   enableJito: false,
   jitoTipLamports: 100_000,
-  // Phase 7: AI Signal Generator
+  // Phase 7: AI Signals
   useAiSignals: false,
   minSignalConfidence: 0,
-  // Phase 8: Dynamic Risk & Position Sizing
+  // Phase 8: Dynamic Sizing
   enableDynamicSizing: false,
   maxPositionPct: 0.10,
-  // Phase 9: Anti-Rug Protection
+  // Phase 9: Anti-Rug
   enableAntiRug: true,
-  antiRugSellVelocityRatio: 5.0,       // Emergency sell if sells > 5x buys in window
-  antiRugVelocityWindowMs: 10_000,     // 10s sliding window
-  antiRugLiquidityDropPct: 15,         // Emergency sell if bonding curve SOL drops 15%+ in one trade
-  antiRugMinPositionAgeMs: 5_000,      // Grace period — first 5s after buy is noisy
+  antiRugSellVelocityRatio: 5.0,
+  antiRugVelocityWindowMs: 10_000,
+  antiRugLiquidityDropPct: 15,
+  antiRugMinPositionAgeMs: 5_000,
 };
+
+// Template presets are defined in ../../services/ai/strategy-templates.ts
+// Use POST /sniper/presets/:name/apply to create a template from a preset.
 
 // ── State Maps ─────────────────────────────────────────────────────────
 
