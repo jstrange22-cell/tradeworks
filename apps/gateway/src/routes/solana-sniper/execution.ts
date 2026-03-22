@@ -574,6 +574,12 @@ export async function executeBuySnipe(params: {
     } else {
       // ── REAL MODE BUY ──────────────────────────────────────────────────
       // Strategy: PumpPortal first (bonding curve + graduated), Jupiter fallback
+
+      // Capture pre-buy SOL balance to measure ACTUAL cost (swap + fees + rent)
+      const connection = getSolanaConnection();
+      const walletPubkey = getSolanaKeypair().publicKey;
+      const preBuyLamports = await connection.getBalance(walletPubkey);
+
       let result: SwapResult;
 
       try {
@@ -619,6 +625,21 @@ export async function executeBuySnipe(params: {
           }
         }
 
+        // Measure ACTUAL SOL spent from wallet delta — includes swap cost + tx fees + ATA rent
+        // This is the REAL cost of acquisition, not the intended amount
+        const postBuyLamports = await connection.getBalance(walletPubkey);
+        const actualSolSpent = Math.max(0, (preBuyLamports - postBuyLamports) / LAMPORTS_PER_SOL);
+        const realBuyCost = actualSolSpent > 0 ? actualSolSpent : effectiveBuyAmountSol;
+
+        if (actualSolSpent > 0 && Math.abs(actualSolSpent - effectiveBuyAmountSol) > 0.0001) {
+          console.log(
+            `[Sniper][${template.name}] Buy cost for ${params.symbol}: intended ${effectiveBuyAmountSol} SOL, actual ${actualSolSpent.toFixed(6)} SOL (delta: ${(actualSolSpent - effectiveBuyAmountSol).toFixed(6)} SOL in fees/rent)`,
+          );
+        }
+
+        // Use actual cost for the execution record (not the intended amount)
+        execution.amountSol = realBuyCost;
+
         // Track position under this template
         const now = new Date().toISOString();
         const newPosition: ActivePosition = {
@@ -636,7 +657,7 @@ export async function executeBuySnipe(params: {
           priceFetchFailCount: 0,
           lastPriceChangeAt: now,
           highWaterMarkPrice: params.priceUsd ?? 0,
-          buyCostSol: effectiveBuyAmountSol,
+          buyCostSol: realBuyCost,
           description: params.description,
         };
 
@@ -962,19 +983,28 @@ export async function executeSellSnipe(
           // Sell confirmed on-chain
           execution.status = 'success';
 
-          // Use actual SOL received if available, otherwise fall back to estimates
+          // Use actual SOL received from on-chain wallet delta (most accurate)
+          // Only fall back to estimates if on-chain measurement fails
           if (actualSolReceived > 0) {
             execution.amountSol = actualSolReceived;
-          } else if (result.outAmount) {
-            execution.amountSol = parseFloat(result.outAmount) / LAMPORTS_PER_SOL;
-          } else if (position.currentPrice > 0 && position.buyPrice > 0) {
-            const priceRatio = position.currentPrice / position.buyPrice;
-            const buyCost = position.buyCostSol ?? template.buyAmountSol;
-            execution.amountSol = buyCost * priceRatio * sellPct;
           } else {
-            const buyCost = position.buyCostSol ?? template.buyAmountSol;
-            const pnlPct = position.pnlPercent ?? 0;
-            execution.amountSol = buyCost * (1 + pnlPct / 100) * sellPct;
+            // On-chain measurement failed — log warning and use best estimate
+            let estimatedSol = 0;
+            if (result.outAmount) {
+              estimatedSol = parseFloat(result.outAmount) / LAMPORTS_PER_SOL;
+            } else if (position.currentPrice > 0 && position.buyPrice > 0) {
+              const priceRatio = position.currentPrice / position.buyPrice;
+              const buyCost = position.buyCostSol ?? template.buyAmountSol;
+              estimatedSol = buyCost * priceRatio * sellPct;
+            } else {
+              const buyCost = position.buyCostSol ?? template.buyAmountSol;
+              const pnlPct = position.pnlPercent ?? 0;
+              estimatedSol = buyCost * (1 + pnlPct / 100) * sellPct;
+            }
+            execution.amountSol = estimatedSol;
+            console.warn(
+              `[Sniper][${template.name}] ⚠️ Sell P&L for ${position.symbol} using ESTIMATE (${estimatedSol.toFixed(6)} SOL) — on-chain balance delta was 0. P&L may be inaccurate.`,
+            );
           }
 
           // Stats tracking on sell
