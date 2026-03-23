@@ -37,6 +37,7 @@ import {
 import type {
   ActivePosition,
   PendingToken,
+  LaunchpadSource,
   DexscreenerPair,
   DexscreenerTokenResponse,
   JupiterPriceResponse,
@@ -1293,7 +1294,7 @@ export function onNewTokenDetected(token: {
   symbol: string;
   name: string;
   usdMarketCap: number;
-  source: 'pumpfun' | 'trending';
+  source: LaunchpadSource;
   creator?: string;
   vSolInBondingCurve?: number;
   vTokensInBondingCurve?: number;
@@ -1365,9 +1366,13 @@ export function onNewTokenDetected(token: {
     const runtime = getRuntime(templateId);
     if (!runtime.running || !template.enabled) continue;
 
-    // Source check
+    // Source check — each launchpad respects its own auto-buy toggle
     if (token.source === 'pumpfun' && !template.autoBuyPumpFun) continue;
     if (token.source === 'trending' && !template.autoBuyTrending) continue;
+    if (token.source === 'raydium_launchlab' && !template.autoBuyRaydiumLaunchlab) continue;
+    if (token.source === 'moonshot' && !template.autoBuyMoonshot) continue;
+    if (token.source === 'boop' && !template.autoBuyBoop) continue;
+    if (token.source === 'meteora_dbc' && !template.autoBuyMeteoraDbc) continue;
 
     // Market cap ceiling (use higher cap for trending tokens)
     const effectiveMaxCap = token.source === 'trending'
@@ -1429,8 +1434,10 @@ export function onNewTokenDetected(token: {
     const requireFreeze = template.requireFreezeRevoked;
 
     // ── MOMENTUM GATE: observe token before buying ──
-    // Skip momentum gate for trending (already have proven volume data)
-    if (token.source === 'trending') {
+    // Skip momentum gate for non-pumpfun sources (no PumpPortal trade feed available)
+    // Trending and other launchpad tokens go through safety checks only, then buy directly
+    const NON_PUMPFUN_SOURCES: LaunchpadSource[] = ['trending', 'raydium_launchlab', 'moonshot', 'boop', 'meteora_dbc'];
+    if (NON_PUMPFUN_SOURCES.includes(token.source)) {
       // Trending tokens already have proven momentum — buy directly
       pendingBuys.add(pendingKey);
       const tplNameLocal = tplName;
@@ -1457,7 +1464,7 @@ export function onNewTokenDetected(token: {
             mint: token.mint,
             symbol: token.symbol,
             name: token.name,
-            trigger: 'trending',
+            trigger: token.source,
             priceUsd: token.usdMarketCap > 0 ? token.usdMarketCap / 1e9 : undefined,
             templateId: tplId,
           });

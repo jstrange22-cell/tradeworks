@@ -6,6 +6,10 @@
  * runtime state, execution records, positions, price feeds, and P&L.
  */
 
+// ── Launchpad Sources ───────────────────────────────────────────────────
+
+export type LaunchpadSource = 'pumpfun' | 'trending' | 'raydium_launchlab' | 'moonshot' | 'boop' | 'meteora_dbc';
+
 // ── Configuration ───────────────────────────────────────────────────────
 
 export interface SniperConfigFields {
@@ -35,6 +39,14 @@ export interface SniperConfigFields {
   autoBuyPumpFun: boolean;
   /** Auto-buy on trending detection (Dexscreener) */
   autoBuyTrending: boolean;
+  /** Auto-buy on Raydium LaunchLab detection */
+  autoBuyRaydiumLaunchlab: boolean;
+  /** Auto-buy on Moonshot (DEXScreener) detection */
+  autoBuyMoonshot: boolean;
+  /** Auto-buy on Boop.fun detection */
+  autoBuyBoop: boolean;
+  /** Auto-buy on Meteora DBC detection */
+  autoBuyMeteoraDbc: boolean;
   /** Min moonshot AI score to buy (0 = disabled, 1-100 = threshold) */
   minMoonshotScore: number;
   /** Sell if price hasn't moved >1% in this many ms (default: 300000 = 5 min) */
@@ -180,7 +192,7 @@ export interface SnipeExecution {
   signature: string | null;
   status: 'pending' | 'success' | 'failed';
   error: string | null;
-  trigger: 'manual' | 'pumpfun' | 'trending' | 'take_profit' | 'stop_loss' | 'stale_price' | 'max_age' | 'trailing_stop' | 'liquidity_crash' | 'rug_detected';
+  trigger: 'manual' | LaunchpadSource | 'take_profit' | 'stop_loss' | 'stale_price' | 'max_age' | 'trailing_stop' | 'liquidity_crash' | 'rug_detected';
   templateId: string;
   templateName: string;
   timestamp: string;
@@ -253,7 +265,7 @@ export interface PendingToken {
   totalBuySol: number;
   totalSellSol: number;
   templateId: string;
-  source: 'pumpfun' | 'trending';
+  source: LaunchpadSource;
   usdMarketCap: number;
   /** RugCheck result (null = pending/disabled) */
   rugCheckResult: { score: number; topHolderPct: number; bundleDetected: boolean } | null;

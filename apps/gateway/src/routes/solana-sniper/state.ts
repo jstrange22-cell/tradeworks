@@ -43,6 +43,10 @@ export const DEFAULT_CONFIG_FIELDS: SniperConfigFields = {
   maxOpenPositions: 5,
   autoBuyPumpFun: true,
   autoBuyTrending: false,    // Disabled by default — trending tokens are riskier
+  autoBuyRaydiumLaunchlab: false,  // Opt-in: Raydium LaunchLab new tokens
+  autoBuyMoonshot: false,          // Opt-in: Moonshot (DEXScreener) new tokens
+  autoBuyBoop: false,              // Opt-in: Boop.fun new tokens
+  autoBuyMeteoraDbc: false,        // Opt-in: Meteora DBC new tokens
   minMoonshotScore: 40,
   stalePriceTimeoutMs: 60_000,        // 1 min — faster exit on dead coins
   maxPositionAgeMs: 180_000,          // 3 min — quick flips don't hold
@@ -710,6 +714,10 @@ export function templateToLegacyConfig(template: SniperTemplate): SniperConfig {
     maxOpenPositions: template.maxOpenPositions,
     autoBuyPumpFun: template.autoBuyPumpFun,
     autoBuyTrending: template.autoBuyTrending,
+    autoBuyRaydiumLaunchlab: template.autoBuyRaydiumLaunchlab,
+    autoBuyMoonshot: template.autoBuyMoonshot,
+    autoBuyBoop: template.autoBuyBoop,
+    autoBuyMeteoraDbc: template.autoBuyMeteoraDbc,
     minMoonshotScore: template.minMoonshotScore,
     stalePriceTimeoutMs: template.stalePriceTimeoutMs,
     maxPositionAgeMs: template.maxPositionAgeMs,
@@ -821,7 +829,9 @@ export const SNIPER_CONFIG_KEYS: ReadonlyArray<keyof SniperConfigFields> = [
   'buyAmountSol', 'dailyBudgetSol', 'slippageBps', 'priorityFee',
   'takeProfitPercent', 'stopLossPercent', 'minLiquidityUsd', 'maxMarketCapUsd',
   'requireMintRevoked', 'requireFreezeRevoked', 'maxOpenPositions',
-  'autoBuyPumpFun', 'autoBuyTrending', 'minMoonshotScore', 'paperMode',
+  'autoBuyPumpFun', 'autoBuyTrending',
+  'autoBuyRaydiumLaunchlab', 'autoBuyMoonshot', 'autoBuyBoop', 'autoBuyMeteoraDbc',
+  'minMoonshotScore', 'paperMode',
   'stalePriceTimeoutMs', 'maxPositionAgeMs', 'trailingStopActivatePercent',
   'trailingStopPercent', 'buyCooldownMs', 'minMarketCapUsd',
   'maxCreatorDeploysPerHour', 'maxTrendingMarketCapUsd', 'minTrendingMomentumPercent',
@@ -913,6 +923,10 @@ export function applyConfigToTemplate(
   if (fields.maxOpenPositions !== undefined) template.maxOpenPositions = fields.maxOpenPositions;
   if (fields.autoBuyPumpFun !== undefined) template.autoBuyPumpFun = fields.autoBuyPumpFun;
   if (fields.autoBuyTrending !== undefined) template.autoBuyTrending = fields.autoBuyTrending;
+  if (fields.autoBuyRaydiumLaunchlab !== undefined) template.autoBuyRaydiumLaunchlab = fields.autoBuyRaydiumLaunchlab;
+  if (fields.autoBuyMoonshot !== undefined) template.autoBuyMoonshot = fields.autoBuyMoonshot;
+  if (fields.autoBuyBoop !== undefined) template.autoBuyBoop = fields.autoBuyBoop;
+  if (fields.autoBuyMeteoraDbc !== undefined) template.autoBuyMeteoraDbc = fields.autoBuyMeteoraDbc;
   if (fields.minMoonshotScore !== undefined) template.minMoonshotScore = fields.minMoonshotScore;
   if (fields.paperMode !== undefined) template.paperMode = fields.paperMode;
   if (fields.stalePriceTimeoutMs !== undefined) template.stalePriceTimeoutMs = fields.stalePriceTimeoutMs;

@@ -41,10 +41,13 @@ import { pumpFunRouter, initPumpFunMonitor } from './routes/solana-pumpfun.js';
 import { sniperRouter, autoStartSniper } from './routes/solana-sniper/index.js';
 import { whaleRouter } from './routes/solana-whales.js';
 import { moonshotRouter, initMoonshotScanner } from './routes/solana-moonshot.js';
+import { launchpadRouter, initLaunchpadMonitors } from './routes/solana-launchpads.js';
 import { robinhoodRouter } from './routes/robinhood.js';
+import { polymarketRouter } from './routes/polymarket.js';
 import { journalRouter } from './routes/journal.js';
 import { arbitrageRouter } from './routes/arbitrage.js';
 import { notificationsRouter } from './routes/notifications.js';
+import { tradingviewWebhookRouter } from './routes/webhooks-tradingview.js';
 import { globalErrorHandler } from './middleware/error-handler.js';
 import { metricsMiddleware, metricsRouter } from './middleware/metrics.js';
 
@@ -78,6 +81,8 @@ app.use('/api/v1/auth', authRouter);
 app.use('/metrics', metricsRouter);
 app.use('/api/v1/market', marketDataRouter);
 app.use('/api/v1/market/instruments', instrumentsRouter);
+// TradingView webhook — public, no JWT (TV can't send auth headers); optional secret via ?secret=
+app.use('/api/v1/webhooks/tradingview', tradingviewWebhookRouter);
 
 // --- Development Routes (no auth for local dashboard) ---
 // TODO: Add authMiddleware back when JWT auth is configured
@@ -107,6 +112,9 @@ app.use('/api/v1/settings/asset-protection', devAuth, assetProtectionRouter);
 // --- Robinhood Crypto Route ---
 app.use('/api/v1/robinhood', devAuth, robinhoodRouter);
 
+// --- Polymarket Prediction Markets ---
+app.use('/api/v1/polymarket', devAuth, polymarketRouter);
+
 // --- Trade Journal ---
 app.use('/api/v1/journal', devAuth, journalRouter);
 
@@ -124,6 +132,7 @@ app.use('/api/v1/solana', devAuth, pumpFunRouter);
 app.use('/api/v1/solana', devAuth, sniperRouter);
 app.use('/api/v1/solana', devAuth, whaleRouter);
 app.use('/api/v1/solana', devAuth, moonshotRouter);
+app.use('/api/v1/solana', devAuth, launchpadRouter);
 
 // --- API Documentation ---
 
@@ -172,6 +181,7 @@ server.listen(PORT, HOST, () => {
   // Auto-start Solana monitors — pump.fun and moonshot run on public APIs (no wallet needed)
   initPumpFunMonitor();
   initMoonshotScanner();
+  initLaunchpadMonitors();
 
   // Auto-start the sniper engine so incoming tokens get evaluated immediately
   autoStartSniper();
