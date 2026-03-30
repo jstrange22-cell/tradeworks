@@ -85,27 +85,52 @@ async function fetchCryptoPrices(symbols: string[]): Promise<Record<string, numb
     if (STABLECOINS.has(s)) prices[s] = 1;
   }
 
-  // Fetch real prices in parallel
-  const toFetch = symbols.filter(s => PRICE_SYMBOL_MAP[s] && !(s in prices));
+  const toFetch = symbols.filter(s => !STABLECOINS.has(s));
+  if (toFetch.length === 0) return prices;
+
+  // ── Source 1: Coinbase spot prices (best for Coinbase-held assets) ──
   await Promise.allSettled(
     toFetch.map(async (symbol) => {
       try {
-        const instrument = PRICE_SYMBOL_MAP[symbol];
         const res = await fetch(
-          `https://api.crypto.com/exchange/v1/public/get-tickers?instrument_name=${instrument}`,
+          `https://api.coinbase.com/v2/prices/${symbol}-USD/spot`,
+          { signal: AbortSignal.timeout(5000) },
         );
-        const json = (await res.json()) as {
-          code: number;
-          result?: { data?: Array<{ a: string }> };
-        };
-        if (json.code === 0 && json.result?.data?.length) {
-          prices[symbol] = parseFloat(json.result.data[0].a);
+        if (res.ok) {
+          const json = (await res.json()) as { data?: { amount?: string } };
+          const price = parseFloat(json.data?.amount ?? '0');
+          if (price > 0) prices[symbol] = price;
         }
       } catch {
-        // Price unavailable — stays at 0
+        // Try next source
       }
     }),
   );
+
+  // ── Source 2: Crypto.com for anything Coinbase missed ──
+  const stillMissing = toFetch.filter(s => !(s in prices) && PRICE_SYMBOL_MAP[s]);
+  if (stillMissing.length > 0) {
+    await Promise.allSettled(
+      stillMissing.map(async (symbol) => {
+        try {
+          const instrument = PRICE_SYMBOL_MAP[symbol];
+          const res = await fetch(
+            `https://api.crypto.com/exchange/v1/public/get-tickers?instrument_name=${instrument}`,
+            { signal: AbortSignal.timeout(5000) },
+          );
+          const json = (await res.json()) as {
+            code: number;
+            result?: { data?: Array<{ a: string }> };
+          };
+          if (json.code === 0 && json.result?.data?.length) {
+            prices[symbol] = parseFloat(json.result.data[0].a);
+          }
+        } catch {
+          // Price unavailable
+        }
+      }),
+    );
+  }
 
   return prices;
 }
