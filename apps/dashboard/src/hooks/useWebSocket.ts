@@ -155,6 +155,29 @@ export function useWebSocket() {
     wsClient.subscribe('agents');
     wsClient.subscribe('risk');
     wsClient.subscribe('trades');
+    wsClient.subscribe('tradingview:alerts');
+
+    // TradingView webhook alerts → sonner toast
+    const unsubscribeTv = wsClient.on('tradingview:alerts', (message) => {
+      const d = message.data as Record<string, unknown>;
+      const symbol = typeof d.symbol === 'string' ? d.symbol : 'UNKNOWN';
+      const action = typeof d.action === 'string' ? d.action : '';
+      const price = typeof d.price === 'number' ? d.price : null;
+      const qty = typeof d.quantity === 'number' ? d.quantity : null;
+      const msg = typeof d.message === 'string' && d.message ? d.message : null;
+      const exchange = typeof d.exchange === 'string' ? d.exchange : 'TradingView';
+      const tf = typeof d.timeframe === 'string' && d.timeframe ? ` · ${d.timeframe}` : '';
+
+      const priceStr = price !== null ? ` @ $${price.toLocaleString(undefined, { maximumFractionDigits: 4 })}` : '';
+      const qtyStr = qty !== null ? ` · Qty ${qty}` : '';
+      const description = `${exchange}${tf}${priceStr}${qtyStr}${msg ? `\n${msg}` : ''}`;
+
+      if (action === 'buy') {
+        toast.success(`▲ BUY — ${symbol}`, { description, duration: 12_000 });
+      } else if (action === 'sell') {
+        toast.error(`▼ SELL — ${symbol}`, { description, duration: 12_000 });
+      }
+    });
 
     // Poll connection status
     intervalRef.current = setInterval(() => {
@@ -163,6 +186,7 @@ export function useWebSocket() {
 
     return () => {
       unsubscribe();
+      unsubscribeTv();
       wsClient.disconnect();
       if (intervalRef.current) clearInterval(intervalRef.current);
     };

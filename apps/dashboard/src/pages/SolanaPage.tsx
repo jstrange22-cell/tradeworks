@@ -5,7 +5,7 @@ import { StatCard } from '@/components/solana/shared';
 import { ScannerTab, PumpFunTab, SniperTab, WhaleTab, MoonshotTab, ActiveTradesPanel } from '@/components/solana';
 import { HoldingsTab } from '@/components/solana/HoldingsTab';
 import { SniperPnL } from '@/components/solana/SniperPnL';
-import { useWalletStatus, useBalances } from '@/hooks/useSolana';
+import { useWalletStatus, useBalances, useSniperTemplates } from '@/hooks/useSolana';
 import { usePhantomBalance } from '@/hooks/usePhantomBalance';
 import type { PageTab } from '@/types/solana';
 
@@ -22,8 +22,8 @@ const TABS: ReadonlyArray<{ key: PageTab; label: string; icon: React.ReactNode }
 export function SolanaPage() {
   const [activeTab, setActiveTab] = useState<PageTab>('scanner');
 
-  // Phantom browser wallet (balance from on-chain RPC)
-  const { balance: phantomSolBalance, loading: phantomLoading, connected: phantomConnected, publicKey: phantomKey } = usePhantomBalance();
+  // Phantom browser wallet (full balance: SOL + all tokens)
+  const { totalValueUsd: phantomTotalUsd, tokens: phantomTokens, loading: phantomLoading, connected: phantomConnected, publicKey: phantomKey } = usePhantomBalance();
 
   // Bot wallet (balance from gateway API)
   const walletQuery = useWalletStatus();
@@ -33,16 +33,23 @@ export function SolanaPage() {
   const balanceQuery = useBalances(botConnected);
   const balances = balanceQuery.data?.data;
 
+  // Sniper templates (for paper mode balance)
+  const templatesQuery = useSniperTemplates(botConnected);
+  const defaultTemplate = (templatesQuery.data as { data?: Array<{ id: string; paperMode?: boolean; paperBalanceSol?: number; running?: boolean; stats?: { totalTrades?: number; wins?: number; losses?: number; totalPnlSol?: number } }> })?.data?.find(t => t.id === 'default');
+  const isPaperMode = defaultTemplate?.paperMode ?? false;
+  const paperBalanceSol = defaultTemplate?.paperBalanceSol ?? 0;
+  const paperStats = defaultTemplate?.stats;
+
   const phantomDisplay = phantomConnected
     ? phantomLoading
       ? 'Loading...'
-      : phantomSolBalance !== null
-        ? `${phantomSolBalance.toFixed(4)} SOL`
-        : 'Error'
+      : phantomTotalUsd !== null
+        ? `$${phantomTotalUsd.toFixed(2)}`
+        : 'RPC unavailable'
     : 'Not connected';
 
   const phantomSub = phantomConnected && phantomKey
-    ? `${phantomKey.toBase58().slice(0, 4)}...${phantomKey.toBase58().slice(-4)}`
+    ? `${phantomTokens.length} token(s) · ${phantomKey.toBase58().slice(0, 4)}...${phantomKey.toBase58().slice(-4)}`
     : 'Click connect above';
 
   return (
@@ -80,6 +87,46 @@ export function SolanaPage() {
         </div>
       )}
 
+      {/* Paper Mode Banner */}
+      {isPaperMode && (
+        <div className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-500/20">
+            <Rocket className="h-5 w-5 text-amber-400" />
+          </div>
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-amber-300">PAPER TRADING</span>
+              <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-400">SIMULATED</span>
+            </div>
+            <span className="text-xs text-amber-400/70">No real money at risk — virtual balance only</span>
+          </div>
+          <div className="text-right">
+            <div className="text-lg font-bold text-amber-300">{paperBalanceSol.toFixed(4)} SOL</div>
+            <div className="text-xs text-amber-400/70">~${(paperBalanceSol * (balances?.solValueUsd && balances?.solBalance ? balances.solValueUsd / balances.solBalance : 81)).toFixed(2)}</div>
+          </div>
+          {paperStats && (
+            <div className="ml-4 flex gap-4 border-l border-amber-500/30 pl-4 text-xs">
+              <div className="text-center">
+                <div className="font-semibold text-slate-200">{paperStats.totalTrades ?? 0}</div>
+                <div className="text-amber-400/60">Trades</div>
+              </div>
+              <div className="text-center">
+                <div className={`font-semibold ${(paperStats.totalPnlSol ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {(paperStats.totalPnlSol ?? 0) >= 0 ? '+' : ''}{(paperStats.totalPnlSol ?? 0).toFixed(4)}
+                </div>
+                <div className="text-amber-400/60">P&L (SOL)</div>
+              </div>
+              <div className="text-center">
+                <div className="font-semibold text-slate-200">
+                  {paperStats.totalTrades ? Math.round(((paperStats.wins ?? 0) / paperStats.totalTrades) * 100) : 0}%
+                </div>
+                <div className="text-amber-400/60">Win Rate</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Stats row */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard
@@ -101,7 +148,7 @@ export function SolanaPage() {
           icon={<Wallet className="h-4 w-4 text-green-600 dark:text-green-400" />}
         />
         <StatCard
-          label="Phantom"
+          label="Phantom Wallet"
           value={phantomDisplay}
           sub={phantomSub}
           icon={<Sparkles className="h-4 w-4 text-orange-600 dark:text-orange-400" />}

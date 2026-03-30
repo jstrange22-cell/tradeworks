@@ -1,7 +1,7 @@
 {
   "engineTradingEnabled": true,
   "tradingBudgetUsd": 200,
-  "budgetUsedUsd": 0,
+  "budgetUsedUsd": 25.00227,
   "protectedAssets": {
     "STX": {
       "symbol": "STX",
@@ -137,6 +137,27 @@
       "quantity": 0,
       "priceUsd": 71392.01,
       "timestamp": "2026-03-15T18:53:21.802Z"
+    },
+    {
+      "symbol": "SOL",
+      "side": "sell",
+      "quantity": 0.266,
+      "priceUsd": 94,
+      "timestamp": "2026-03-18T05:35:33.829Z"
+    },
+    {
+      "symbol": "ETH",
+      "side": "sell",
+      "quantity": 0.011,
+      "priceUsd": 2314.65,
+      "timestamp": "2026-03-18T05:55:33.641Z"
+    },
+    {
+      "symbol": "AVAX",
+      "side": "buy",
+      "quantity": 2.43,
+      "priceUsd": 10.289,
+      "timestamp": "2026-03-18T06:15:33.505Z"
     }
   ],
   "snapshotTakenAt": "2026-03-02T05:02:49.709Z"

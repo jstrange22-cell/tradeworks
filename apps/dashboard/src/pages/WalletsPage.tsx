@@ -9,22 +9,23 @@ import { apiClient } from '@/lib/api-client';
 
 interface ExchangeAsset {
   symbol: string;
-  name: string;
-  amount: number;
+  name?: string;
+  available: number;
+  total: number;
   valueUsd: number;
 }
 
 interface ExchangeBalance {
   exchange: string;
-  totalUsd: number;
+  totalValueUsd: number;
   assets: ExchangeAsset[];
   connected: boolean;
   error?: string;
 }
 
 interface BalancesResponse {
-  exchanges: ExchangeBalance[];
-  totalUsd: number;
+  data: ExchangeBalance[];
+  totalValueUsd: number;
 }
 
 interface SolanaToken {
@@ -38,7 +39,8 @@ interface SolanaToken {
 
 interface SolanaBalanceData {
   address: string;
-  sol: number;
+  wallet?: string;
+  solBalance: number;
   solValueUsd: number;
   tokens: SolanaToken[];
   totalValueUsd: number;
@@ -66,7 +68,7 @@ export function WalletsPage() {
   const isLoading = portfolioQuery.isLoading || solanaQuery.isLoading;
 
   const solanaTotal = solanaData?.totalValueUsd ?? 0;
-  const exchangeTotal = portfolioData?.totalUsd ?? 0;
+  const exchangeTotal = portfolioData?.totalValueUsd ?? 0;
   const grandTotal = exchangeTotal + solanaTotal;
 
   return (
@@ -98,14 +100,14 @@ export function WalletsPage() {
           isLoading={solanaQuery.isLoading}
           error={solanaQuery.error ? 'Failed to load Solana balances' : undefined}
           onRefresh={() => solanaQuery.refetch()}
-          address={solanaData?.address}
+          address={solanaData?.wallet ?? solanaData?.address}
         >
           {solanaData && (
             <>
               <AssetRow
                 symbol="SOL"
                 name="Solana"
-                amount={solanaData.sol}
+                amount={solanaData.solBalance}
                 valueUsd={solanaData.solValueUsd}
               />
               {solanaData.tokens
@@ -126,27 +128,27 @@ export function WalletsPage() {
         </WalletCard>
 
         {/* Exchange Wallets */}
-        {portfolioData?.exchanges
+        {portfolioData?.data
           ?.filter(ex => ex.connected)
           .map(ex => (
             <WalletCard
               key={ex.exchange}
               name={ex.exchange}
               icon={exchangeIcon(ex.exchange)}
-              total={ex.totalUsd}
+              total={ex.totalValueUsd}
               isLoading={portfolioQuery.isLoading}
               error={ex.error}
               onRefresh={() => portfolioQuery.refetch()}
             >
               {ex.assets
-                .filter(a => a.amount > 0)
+                .filter(a => a.available > 0)
                 .sort((a, b) => b.valueUsd - a.valueUsd)
                 .map(a => (
                   <AssetRow
                     key={a.symbol}
                     symbol={a.symbol}
-                    name={a.name}
-                    amount={a.amount}
+                    name={a.name ?? a.symbol}
+                    amount={a.available}
                     valueUsd={a.valueUsd}
                   />
                 ))}
@@ -154,7 +156,7 @@ export function WalletsPage() {
           ))}
 
         {/* Disconnected exchanges */}
-        {portfolioData?.exchanges
+        {portfolioData?.data
           ?.filter(ex => !ex.connected)
           .map(ex => (
             <div

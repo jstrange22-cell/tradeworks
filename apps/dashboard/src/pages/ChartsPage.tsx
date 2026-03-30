@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { toast } from 'sonner';
 import { TradePanel } from '@/components/trade/TradePanel';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getCandlesticks, getOrderBook, getRecentTrades } from '@/lib/crypto-api';
-import { RefreshCw, AlertTriangle } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Zap } from 'lucide-react';
+import { TradingViewWidget } from '@/components/charts/TradingViewWidget';
 import { CandlestickChart } from '@/components/charts/CandlestickChart';
 import { OrderBookPanel } from '@/components/charts/OrderBookPanel';
 import { RecentTradesPanel } from '@/components/charts/RecentTradesPanel';
 import { PriceHeaderBar } from '@/components/charts/PriceHeaderBar';
 import { type IndicatorId } from '@/components/charts/IndicatorToolbar';
+import { useAISignal } from '@/hooks/useAISignal';
 
 export function ChartsPage() {
   const [instrument, setInstrument] = useState('BTC-USD');
@@ -16,7 +19,13 @@ export function ChartsPage() {
   const [activeIndicators, setActiveIndicators] = useState<Set<IndicatorId>>(new Set());
   const [showTradePanel, setShowTradePanel] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [chartMode, setChartMode] = useState<'tradingview' | 'internal'>('internal');
+  const [showAISignals, setShowAISignals] = useState(() => {
+    const stored = localStorage.getItem('showAISignals');
+    return stored === null ? true : stored === 'true';
+  });
   const chartWrapperRef = useRef<HTMLDivElement>(null);
+  const lastSignalRef = useRef<string>('neutral');
 
   const toggleFullscreen = useCallback(() => {
     if (!chartWrapperRef.current) return;
@@ -71,6 +80,40 @@ export function ChartsPage() {
     retry: 2,
   });
 
+  const aiSignal = useAISignal(candleData, instrument, timeframe, showAISignals);
+
+  // Fire toast when signal direction changes to buy or sell
+  useEffect(() => {
+    if (!aiSignal || !showAISignals) return;
+    const { direction, confidence, entryPrice, stopLoss, tp1, tp2, tp3 } = aiSignal;
+    if (direction === 'neutral') return;
+    if (direction === lastSignalRef.current) return;
+    lastSignalRef.current = direction;
+
+    const price = entryPrice.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    const sl = stopLoss.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    const t1 = tp1.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    const t2 = tp2.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    const t3 = tp3.toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+    if (direction === 'buy') {
+      toast.success(`BUY — ${instrument}`, {
+        description: `@ $${price} · Confidence ${confidence}%\nSL $${sl} · TP1 $${t1} · TP2 $${t2} · TP3 $${t3}`,
+        duration: 12_000,
+      });
+    } else {
+      toast.error(`SELL — ${instrument}`, {
+        description: `@ $${price} · Confidence ${confidence}%\nSL $${sl} · TP1 $${t1} · TP2 $${t2} · TP3 $${t3}`,
+        duration: 12_000,
+      });
+    }
+  }, [aiSignal, showAISignals, instrument]);
+
+  // Reset last signal when instrument or timeframe changes
+  useEffect(() => {
+    lastSignalRef.current = 'neutral';
+  }, [instrument, timeframe]);
+
   const priceInfo = (() => {
     if (!candleData || candleData.length === 0) return null;
     const sorted = [...candleData].sort((a, b) => a.timestamp - b.timestamp);
@@ -108,17 +151,65 @@ export function ChartsPage() {
         </div>
       )}
 
-      <CandlestickChart
-        instrument={instrument}
-        timeframe={timeframe}
-        onTimeframeChange={setTimeframe}
-        candleData={candleData}
-        activeIndicators={activeIndicators}
-        onToggleIndicator={toggleIndicator}
-        isFullscreen={isFullscreen}
-        onToggleFullscreen={toggleFullscreen}
-        chartWrapperRef={chartWrapperRef}
-      />
+      {/* Chart mode + AI toggle bar */}
+      <div className="flex items-center gap-2">
+        <div className="flex gap-1 rounded-lg border border-slate-700/50 bg-slate-800/50 p-1">
+          <button
+            onClick={() => setChartMode('internal')}
+            className={`rounded px-3 py-1 text-xs font-semibold transition ${
+              chartMode === 'internal' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Chart
+          </button>
+          <button
+            onClick={() => setChartMode('tradingview')}
+            className={`rounded px-3 py-1 text-xs font-semibold transition ${
+              chartMode === 'tradingview' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            TradingView
+          </button>
+        </div>
+
+        <button
+          onClick={() => setShowAISignals(v => { const next = !v; localStorage.setItem('showAISignals', String(next)); return next; })}
+          className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-bold transition ${
+            showAISignals
+              ? 'border-purple-500/50 text-white'
+              : 'border-slate-700/50 text-slate-400 hover:text-purple-300 hover:border-purple-500/30'
+          }`}
+          style={showAISignals ? { background: 'linear-gradient(135deg,#7c3aed,#4f46e5)' } : undefined}
+        >
+          <Zap className="h-3.5 w-3.5" />
+          AI Signals
+        </button>
+      </div>
+
+      {/* Chart */}
+      {chartMode === 'internal' ? (
+        <CandlestickChart
+          instrument={instrument}
+          timeframe={timeframe}
+          onTimeframeChange={setTimeframe}
+          candleData={candleData}
+          activeIndicators={activeIndicators}
+          onToggleIndicator={toggleIndicator}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={toggleFullscreen}
+          chartWrapperRef={chartWrapperRef}
+          aiSignal={aiSignal}
+          showAISignals={showAISignals}
+          onToggleAISignals={() => setShowAISignals(v => { const next = !v; localStorage.setItem('showAISignals', String(next)); return next; })}
+        />
+      ) : (
+        <TradingViewWidget
+          symbol={instrument}
+          timeframe={timeframe}
+          theme="dark"
+          height={580}
+        />
+      )}
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <OrderBookPanel bookData={bookData} />

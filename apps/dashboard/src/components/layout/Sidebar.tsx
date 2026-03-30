@@ -15,6 +15,7 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
+  TrendingUp,
 } from 'lucide-react';
 import { useUIStore } from '@/stores/ui-store';
 import { useEffect } from 'react';
@@ -22,6 +23,8 @@ import { useEffect } from 'react';
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/trades', icon: ArrowLeftRight, label: 'Trades' },
+  { to: '/solana', icon: Zap, label: 'Solana' },
+  { to: '/polymarket', icon: TrendingUp, label: 'Polymarket' },
   { to: '/agents', icon: Bot, label: 'Agents' },
   { to: '/risk', icon: ShieldAlert, label: 'Risk' },
   { to: '/strategies', icon: Lightbulb, label: 'Strategies' },
@@ -30,7 +33,6 @@ const navItems = [
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
   { to: '/journal', icon: BookOpen, label: 'Journal' },
   { to: '/wallets', icon: Wallet, label: 'Wallets' },
-  { to: '/solana', icon: Zap, label: 'Solana' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ] as const;
 

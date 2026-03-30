@@ -98,7 +98,7 @@ export function CryptoMarketRow({ ticker }: CryptoMarketRowProps) {
 
       {/* Sparkline */}
       <div className="my-2">
-        <SparklineChart instrument={displayName} isPositive={isPositive} />
+        <SparklineChart instrument={ticker.instrument_name} isPositive={isPositive} />
       </div>
 
       {/* Price + Change */}

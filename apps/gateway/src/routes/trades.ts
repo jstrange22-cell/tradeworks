@@ -1,6 +1,7 @@
 import { Router, type Router as RouterType } from 'express';
 import { z } from 'zod';
 import { TradeService } from '../services/trade-service.js';
+import { executionHistory } from './solana-sniper/state.js';
 
 /**
  * Trade routes.
@@ -15,7 +16,7 @@ const tradeService = new TradeService();
  */
 const TradeQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(20),
+  limit: z.coerce.number().int().min(1).max(500).default(20),
   instrument: z.string().optional(),
   side: z.enum(['buy', 'sell']).optional(),
   status: z.enum(['filled', 'partial', 'pending', 'cancelled', 'failed', 'simulated']).optional(),
@@ -34,32 +35,72 @@ tradesRouter.get('/', async (req, res) => {
   try {
     const query = TradeQuerySchema.parse(req.query);
 
-    const result = await tradeService.listTrades({
-      userId: req.user!.id,
-      page: query.page,
-      limit: query.limit,
-      filters: {
-        instrument: query.instrument,
-        side: query.side,
-        status: query.status,
-        exchange: query.exchange,
-        startDate: query.startDate,
-        endDate: query.endDate,
-      },
-      sort: {
-        field: query.sortBy,
-        order: query.sortOrder,
-      },
-    });
+    // Fetch DB trades (may be empty if DB unavailable)
+    let dbTrades: unknown[] = [];
+    let dbTotal = 0;
+    try {
+      const result = await tradeService.listTrades({
+        userId: req.user!.id,
+        page: 1,
+        limit: 500,
+        filters: {
+          instrument: query.instrument,
+          side: query.side,
+          status: query.status,
+          exchange: query.exchange,
+          startDate: query.startDate,
+          endDate: query.endDate,
+        },
+        sort: { field: query.sortBy, order: query.sortOrder },
+      });
+      dbTrades = result.trades as unknown[];
+      dbTotal = result.total;
+    } catch {
+      // DB unavailable — fall through to sniper-only response
+    }
+
+    // Merge in-memory sniper executions (only when no exchange filter)
+    const dbIds = new Set((dbTrades as Array<{ id: string }>).map((t) => t.id));
+    const sniperTrades = (query.exchange == null)
+      ? executionHistory
+          .filter((e) => e.status === 'success')
+          .filter((e) => !query.instrument || e.symbol === query.instrument)
+          .filter((e) => !query.side || e.action === query.side)
+          .map((e) => ({
+            id: e.id,
+            instrument: e.symbol,
+            market: 'crypto' as const,
+            side: e.action,
+            quantity: e.amountTokens ?? 0,
+            price: e.priceUsd ?? 0,
+            pnl: e.pnlSol ?? 0,
+            strategyId: e.templateId,
+            executedAt: e.timestamp,
+            exchange: 'solana',
+            paperMode: e.paperMode ?? false,
+          }))
+          .filter((e) => !dbIds.has(e.id))
+      : [];
+
+    type Row = { executedAt: string };
+    // Combine and sort by executedAt desc
+    const combined = [...(dbTrades as Row[]), ...sniperTrades].sort((a, b) =>
+      new Date(b.executedAt).getTime() - new Date(a.executedAt).getTime()
+    );
+
+    // Apply pagination
+    const offset = (query.page - 1) * query.limit;
+    const paginated = combined.slice(offset, offset + query.limit);
+    const total = dbTotal + sniperTrades.length;
 
     res.json({
-      data: result.trades,
+      data: paginated,
       pagination: {
         page: query.page,
         limit: query.limit,
-        total: result.total,
-        totalPages: Math.ceil(result.total / query.limit),
-        hasNext: query.page * query.limit < result.total,
+        total,
+        totalPages: Math.ceil(total / query.limit),
+        hasNext: query.page * query.limit < total,
         hasPrev: query.page > 1,
       },
     });

@@ -9,9 +9,9 @@ interface EngineStatusCardProps {
 }
 
 export function EngineStatusCard({ hasSolana }: EngineStatusCardProps) {
-  const { data: solBalanceData } = useQuery<{ data: { sol: number; usd: number; tokens: unknown[] } }>({
+  const { data: solBalanceData } = useQuery<{ data: { solBalance: number; solValueUsd: number } }>({
     queryKey: ['sol-balance-dash'],
-    queryFn: () => apiClient.get('/solana/wallet'),
+    queryFn: () => apiClient.get('/solana/balances'),
     enabled: hasSolana,
     refetchInterval: 30_000,
   });
@@ -65,7 +65,9 @@ export function EngineStatusCard({ hasSolana }: EngineStatusCardProps) {
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <SolBalanceCard solBalance={solBalanceData?.data} />
+        <SolBalanceCard solBalance={solBalanceData?.data
+          ? { sol: solBalanceData.data.solBalance, usd: solBalanceData.data.solValueUsd }
+          : undefined} />
         <SniperCard sniperStatus={sniperStatus} />
         <WhaleCard whaleMonitor={whaleMonitor} />
         <PumpfunCard pumpfunStatus={pumpfunStatus} />

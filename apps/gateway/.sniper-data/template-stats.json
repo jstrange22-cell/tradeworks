@@ -1,0 +1,37 @@
+{
+  "default": {
+    "totalTrades": 131,
+    "wins": 47,
+    "losses": 84,
+    "totalPnlSol": -0.051696814528284396,
+    "createdAt": "2026-03-22T03:28:34.631Z"
+  },
+  "moonshot-hunter": {
+    "totalTrades": 1,
+    "wins": 0,
+    "losses": 0,
+    "totalPnlSol": 0,
+    "createdAt": "2026-03-18T05:03:28.053Z"
+  },
+  "bag-builder": {
+    "totalTrades": 1,
+    "wins": 0,
+    "losses": 1,
+    "totalPnlSol": -0.032504281999999995,
+    "createdAt": "2026-03-18T23:56:06.468Z"
+  },
+  "quick-flip": {
+    "totalTrades": 3,
+    "wins": 1,
+    "losses": 2,
+    "totalPnlSol": -0.037823274000000004,
+    "createdAt": "2026-03-18T05:03:28.053Z"
+  },
+  "tpl_mn2mp3vz_3bd0li": {
+    "totalTrades": 16,
+    "wins": 8,
+    "losses": 7,
+    "totalPnlSol": -0.026495662902186638,
+    "createdAt": "2026-03-23T03:30:59.183Z"
+  }
+}

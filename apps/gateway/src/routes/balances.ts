@@ -223,32 +223,27 @@ async function fetchAlpacaBalances(apiKey: string, apiSecret: string, paper: boo
   }
 }
 
-async function fetchPolymarketBalances(apiKey: string, funderAddress: string): Promise<AssetBalance[]> {
+async function fetchPolymarketBalances(funderAddress: string): Promise<AssetBalance[]> {
   try {
-    // Polymarket uses USDC on Polygon — query positions via Gamma API
+    // Gamma data API — no auth needed, returns positions with current value
     const response = await fetch(
-      `https://gamma-api.polymarket.com/positions?user=${funderAddress}`,
-      {
-        headers: {
-          'POLY-ADDRESS': funderAddress,
-          'POLY-API-KEY': apiKey,
-        },
-      },
+      `https://data-api.polymarket.com/positions?user=${funderAddress}&sizeThreshold=.01`,
     );
 
     if (!response.ok) {
-      // If no positions, just return USDC placeholder
       return [{ symbol: 'USDC', available: 0, total: 0, valueUsd: 0 }];
     }
 
     const positions = (await response.json()) as Array<{
-      asset: string;
-      size: string;
-      currentPrice: string;
+      currentValue?: number;
+      value?: number;
+      size?: number;
+      curPrice?: number;
     }>;
 
     const totalValue = positions.reduce((sum, p) => {
-      return sum + parseFloat(p.size) * parseFloat(p.currentPrice || '0');
+      const val = p.currentValue ?? p.value ?? (p.size ?? 0) * (p.curPrice ?? 0);
+      return sum + (typeof val === 'number' ? val : 0);
     }, 0);
 
     return [
@@ -413,7 +408,8 @@ export async function fetchAllExchangeBalances(): Promise<{
             assets = await fetchAlpacaBalances(decryptedKey, decryptedSecret, false);
             break;
           case 'polymarket':
-            assets = await fetchPolymarketBalances(decryptedKey, decryptedKey);
+            // keyName holds the funderAddress (wallet address on Polygon)
+            assets = await fetchPolymarketBalances(keyRecord.keyName);
             break;
           default:
             assets = [];

@@ -8,7 +8,7 @@ interface WSMessage {
 }
 
 interface WSCommand {
-  command: string;
+  action: string;
   channel?: string;
   params?: Record<string, unknown>;
 }
@@ -51,7 +51,7 @@ export class WSClient {
 
         // Re-subscribe to channels
         this.subscriptions.forEach((channel) => {
-          this.send({ command: 'subscribe', channel });
+          this.send({ action: 'subscribe', channel });
         });
       };
 
@@ -94,14 +94,14 @@ export class WSClient {
   subscribe(channel: string): void {
     this.subscriptions.add(channel);
     if (this._isConnected) {
-      this.send({ command: 'subscribe', channel });
+      this.send({ action: 'subscribe', channel });
     }
   }
 
   unsubscribe(channel: string): void {
     this.subscriptions.delete(channel);
     if (this._isConnected) {
-      this.send({ command: 'unsubscribe', channel });
+      this.send({ action: 'unsubscribe', channel });
     }
   }
 
@@ -129,11 +129,11 @@ export class WSClient {
   }
 
   sendEmergencyStop(): void {
-    this.send({ command: 'emergency_stop' });
+    this.send({ action: 'emergency_stop' });
   }
 
   sendCloseAll(): void {
-    this.send({ command: 'close_all' });
+    this.send({ action: 'close_all' });
   }
 
   private dispatch(message: WSMessage): void {

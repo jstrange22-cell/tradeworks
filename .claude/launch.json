@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dashboard",
+      "runtimeExecutable": "C:\\Users\\recon\\AppData\\Roaming\\npm\\pnpm.cmd",
+      "runtimeArgs": ["--filter", "dashboard", "dev"],
+      "cwd": "C:\\Users\\recon\\Desktop\\Claude Desk\\tradeworks",
+      "port": 5173
+    },
+    {
+      "name": "gateway",
+      "runtimeExecutable": "C:\\Users\\recon\\AppData\\Roaming\\npm\\pnpm.cmd",
+      "runtimeArgs": ["--filter", "gateway", "dev"],
+      "port": 4000
+    }
+  ]
+}

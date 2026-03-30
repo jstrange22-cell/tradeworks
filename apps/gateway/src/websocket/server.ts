@@ -27,7 +27,22 @@ export function setupWebSocket(server: HttpServer): WebSocketServer {
     server,
     path: '/ws',
     verifyClient: (info, callback) => {
-      // Extract token from query parameter or Authorization header
+      // In development, allow unauthenticated connections and inject a dev user
+      // (mirrors the HTTP devAuth middleware behaviour)
+      if (process.env.NODE_ENV !== 'production') {
+        const devUser: AuthUser = {
+          id: 'dev-user',
+          email: 'dev@tradeworks.local',
+          role: 'admin',
+          iat: 0,
+          exp: 0,
+        };
+        (info.req as IncomingMessage & { user: AuthUser }).user = devUser;
+        callback(true);
+        return;
+      }
+
+      // Production: require JWT via query param or Authorization header
       const url = new URL(info.req.url ?? '', `http://${info.req.headers.host}`);
       const token = url.searchParams.get('token') ?? extractBearerToken(info.req);
 

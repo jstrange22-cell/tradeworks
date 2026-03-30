@@ -59,7 +59,9 @@ const HOST = process.env.HOST ?? '0.0.0.0';
 
 app.use(helmet());
 app.use(cors({
-  origin: process.env.CORS_ORIGIN ?? ['http://localhost:5173', 'http://localhost:3000'],
+  origin: process.env.CORS_ORIGIN
+    ? process.env.CORS_ORIGIN.split(',').map((o) => o.trim())
+    : ['http://localhost:5173', 'http://localhost:3000'],
   credentials: true,
 }));
 app.use(express.json({ limit: '10mb' }));

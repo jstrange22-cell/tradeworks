@@ -30,77 +30,89 @@ import type {
 export const DEFAULT_TEMPLATE_ID = 'default';
 
 export const DEFAULT_CONFIG_FIELDS: SniperConfigFields = {
-  buyAmountSol: 0.01,        // $1.30 per trade — better fee ratio than 0.0053
-  dailyBudgetSol: 999,
-  slippageBps: 800,           // 8% — lowered from 15% to stop overpaying
-  priorityFee: 400_000,      // 400k μL — reliable fills without overpaying
-  takeProfitPercent: 50,     // +50% take profit
-  stopLossPercent: -12,      // -12% stop — tighter than old -20%
+  // ── Position Sizing (research: 0.05-0.5 SOL, Half-Kelly ~5% of wallet) ──
+  buyAmountSol: 0.05,         // $6.50 per trade — overcomes fees/slippage
+  dailyBudgetSol: 2.0,        // ~$260/day cap — disciplined
+  slippageBps: 1500,           // 15% — new tokens need more room
+  priorityFee: 400_000,       // 400k μL — reliable fills
+  // ── Exits (research: recover cost at 2x, wider stops for memecoin volatility) ──
+  takeProfitPercent: 100,     // +100% (2x) — "ten 2x beats one 100x"
+  stopLossPercent: -35,       // -35% — wide enough to survive normal volatility
   minLiquidityUsd: 5_000,
-  maxMarketCapUsd: 100_000,
+  maxMarketCapUsd: 500_000,    // Higher cap for post-graduation tokens
   requireMintRevoked: true,
   requireFreezeRevoked: true,
-  maxOpenPositions: 5,
+  maxOpenPositions: 8,         // Research: 8-10 concurrent
   autoBuyPumpFun: true,
-  autoBuyTrending: false,    // Disabled by default — trending tokens are riskier
-  autoBuyRaydiumLaunchlab: false,  // Opt-in: Raydium LaunchLab new tokens
-  autoBuyMoonshot: false,          // Opt-in: Moonshot (DEXScreener) new tokens
-  autoBuyBoop: false,              // Opt-in: Boop.fun new tokens
-  autoBuyMeteoraDbc: false,        // Opt-in: Meteora DBC new tokens
+  autoBuyTrending: true,           // DexScreener trending tokens
+  autoBuyRaydiumLaunchlab: true,   // Raydium LaunchLab new tokens
+  autoBuyMoonshot: false,          // Low volume, not worth RPC cost
+  autoBuyBoop: false,              // Low volume
+  autoBuyMeteoraDbc: false,        // Low volume
   minMoonshotScore: 40,
-  stalePriceTimeoutMs: 60_000,        // 1 min — faster exit on dead coins
-  maxPositionAgeMs: 180_000,          // 3 min — quick flips don't hold
-  trailingStopActivatePercent: 15,    // Activate trail at +15%
-  trailingStopPercent: -8,            // Tight 8% trail
-  buyCooldownMs: 15_000,
+  stalePriceTimeoutMs: 180_000,        // 3 min — more patient
+  maxPositionAgeMs: 1_800_000,         // 30 min — let runners run
+  trailingStopActivatePercent: 25,     // Activate trail at +25%
+  trailingStopPercent: -15,            // 15% trail — tighter than stop but gives room
+  buyCooldownMs: 10_000,              // 10s cooldown
   minMarketCapUsd: 5_000,
   maxCreatorDeploysPerHour: 3,
   maxTrendingMarketCapUsd: 500_000,
   minTrendingMomentumPercent: 50,
   paperMode: false,
-  // Phase 1: Momentum Gate
-  momentumWindowMs: 5_000,            // 5 sec — get in fast
-  minUniqueBuyers: 3,
-  minBuySellRatio: 2.5,               // Strong buy dominance
-  minBuyVolumeSol: 0.3,
+  // Phase 1: Momentum Gate (research: longer window, more buyers, higher ratio)
+  momentumWindowMs: 15_000,            // 15 sec — filter fake momentum
+  minUniqueBuyers: 6,                  // 6 wallets — harder to sybil
+  minBuySellRatio: 3.0,                // Strong buy dominance required
+  minBuyVolumeSol: 1.0,               // Real money, not dust
   // Phase 2: Bonding Curve
-  minBondingCurveSol: 1.0,
-  maxBondingCurveProgress: 0.8,
+  minBondingCurveSol: 2.0,            // Higher floor for safety
+  maxBondingCurveProgress: 0.85,
   enableSpamFilter: true,
   // Phase 3: Circuit Breakers
-  consecutiveLossPauseThreshold: 5,
-  consecutiveLossPauseMs: 300_000,
-  maxDailyLossSol: 0.1,
+  consecutiveLossPauseThreshold: 4,    // Tighter: pause after 4 losses
+  consecutiveLossPauseMs: 600_000,     // 10 min pause — cool off
+  maxDailyLossSol: 0.5,               // 0.5 SOL daily loss cap
   // Phase 4: RugCheck
   enableRugCheck: true,
-  minRugCheckScore: 600,              // Stricter than old 500
-  maxTopHolderPct: 30,
-  rugCheckTimeoutMs: 2_000,
-  // Phase 5: Tiered Exits — disabled for quick flip default
-  enableTieredExits: false,
-  exitTier1PctGain: 50,
-  exitTier1SellPct: 30,
-  exitTier2PctGain: 100,
-  exitTier2SellPct: 30,
-  exitTier3PctGain: 200,
-  exitTier3SellPct: 30,
-  exitTier4PctGain: 500,
+  minRugCheckScore: 650,               // Stricter
+  maxTopHolderPct: 25,                 // Research: top 10 holders >30% = problematic
+  rugCheckTimeoutMs: 3_000,            // 3s timeout — worth waiting
+  // Phase 5: Tiered Exits — ENABLED by default (research: DCA out is critical)
+  enableTieredExits: true,
+  exitTier1PctGain: 100,   // At 2x: sell 50% (recover full cost)
+  exitTier1SellPct: 50,
+  exitTier2PctGain: 400,   // At 5x: sell 25% more
+  exitTier2SellPct: 25,
+  exitTier3PctGain: 900,   // At 10x: sell 15% more
+  exitTier3SellPct: 15,
+  exitTier4PctGain: 4900,  // At 50x: close remainder
   exitTier4SellPct: 100,
   // Phase 6: Jito
-  enableJito: false,
+  enableJito: false,                   // TODO: wire into execution path
   jitoTipLamports: 100_000,
   // Phase 7: AI Signals
   useAiSignals: false,
   minSignalConfidence: 0,
   // Phase 8: Dynamic Sizing
   enableDynamicSizing: false,
-  maxPositionPct: 0.10,
+  maxPositionPct: 0.05,               // Half-Kelly: 5% max per trade
   // Phase 9: Anti-Rug
   enableAntiRug: true,
-  antiRugSellVelocityRatio: 5.0,
+  antiRugSellVelocityRatio: 4.0,      // Tighter: 4x sell/buy ratio triggers
   antiRugVelocityWindowMs: 10_000,
-  antiRugLiquidityDropPct: 15,
+  antiRugLiquidityDropPct: 12,         // Tighter: 12% LP drain triggers
   antiRugMinPositionAgeMs: 5_000,
+  // Phase 10: Time-Based No-Pump Exit
+  enableNoPumpExit: true,
+  noPumpExitMs: 300_000,              // 5 min — if no 1.2x, exit
+  noPumpMinGainPct: 20,               // Must be up 20% by 5 min
+  noPumpTier2MinGainPct: 50,          // Must be up 50% by 15 min
+  // Phase 11: On-Chain Authority Verification
+  enableOnChainAuthorityCheck: true,
+  // Phase 12: Honeypot Pre-Check
+  enableHoneypotCheck: true,
+  honeypotMaxSlippagePct: 50,          // >50% sell slippage = honeypot
 };
 
 // Template presets are defined in ../../services/ai/strategy-templates.ts
@@ -344,7 +356,7 @@ function seedTemplateEntry(id: string, template: SniperTemplate): void {
     startedAt: null,
     dailySpentSol: 0,
     dailyResetDate: new Date().toDateString(),
-    paperBalanceSol: 0.5,
+    paperBalanceSol: 6.17,  // ~$500 at $81/SOL
     consecutiveLosses: 0,
     dailyRealizedLossSol: 0,
     circuitBreakerPausedUntil: 0,
@@ -363,105 +375,111 @@ export function seedDefaultTemplate(): void {
     });
   }
 
+  // ── Moonshot Hunter: Long hold, wide stops, let runners run ──
   if (!sniperTemplates.has('moonshot-hunter')) {
     seedTemplateEntry('moonshot-hunter', {
       id: 'moonshot-hunter',
       name: 'Moonshot Hunter',
       enabled: false,
       ...DEFAULT_CONFIG_FIELDS,
-      // Position sizing
       buyAmountSol: 0.1,
       maxOpenPositions: 5,
-      // Hold longer — let moonshots develop
-      maxPositionAgeMs: 3_600_000,
-      stalePriceTimeoutMs: 600_000,
-      // Wide stops — don't get shaken out on volatility
+      maxPositionAgeMs: 3_600_000,         // 1 hour
+      stalePriceTimeoutMs: 600_000,        // 10 min
       trailingStopActivatePercent: 50,
-      trailingStopPercent: -30,
-      stopLossPercent: -25,
-      // Early-stage tokens only
-      maxMarketCapUsd: 150_000,
-      maxBondingCurveProgress: 0.6,
-      // Strong momentum required
-      minBuySellRatio: 2.0,
-      minMoonshotScore: 45,
-      // Tiered exits — hold most until 10x
-      exitTier1PctGain: 100,  exitTier1SellPct: 20,
-      exitTier2PctGain: 300,  exitTier2SellPct: 20,
-      exitTier3PctGain: 600,  exitTier3SellPct: 30,
-      exitTier4PctGain: 1000, exitTier4SellPct: 100,
-      // Risk controls
+      trailingStopPercent: -25,
+      stopLossPercent: -40,                // Wide — survive volatility
+      maxMarketCapUsd: 200_000,
+      minBuySellRatio: 3.0,
+      minMoonshotScore: 50,
+      // Tiered: hold most until 10x+
+      enableTieredExits: true,
+      exitTier1PctGain: 200,  exitTier1SellPct: 25,   // At 3x sell 25%
+      exitTier2PctGain: 500,  exitTier2SellPct: 25,   // At 6x sell 25%
+      exitTier3PctGain: 900,  exitTier3SellPct: 25,   // At 10x sell 25%
+      exitTier4PctGain: 4900, exitTier4SellPct: 100,   // At 50x close
+      // No-pump exit: more patient
+      noPumpExitMs: 600_000,               // 10 min grace
+      noPumpMinGainPct: 10,
+      noPumpTier2MinGainPct: 30,
       consecutiveLossPauseThreshold: 3,
-      maxDailyLossSol: 0.3,
+      maxDailyLossSol: 0.5,
       stats: makeEmptyStats(),
     });
   }
 
-  if (!sniperTemplates.has('bag-builder')) {
-    seedTemplateEntry('bag-builder', {
-      id: 'bag-builder',
-      name: 'Bag Builder',
+  // ── Graduation Sniper: Only buy tokens that graduated (1.4% that survived) ──
+  if (!sniperTemplates.has('graduation-sniper')) {
+    seedTemplateEntry('graduation-sniper', {
+      id: 'graduation-sniper',
+      name: 'Graduation Sniper',
       enabled: false,
       ...DEFAULT_CONFIG_FIELDS,
-      // Moderate sizing — balanced risk/reward
-      buyAmountSol: 0.075,
+      // Bigger size — higher conviction plays
+      buyAmountSol: 0.15,
       maxOpenPositions: 6,
-      // Hold long enough for 2-3x to develop
-      maxPositionAgeMs: 7_200_000,    // 2 hours
-      stalePriceTimeoutMs: 300_000,   // 5 min
-      // Moderate stops — survive volatility but cut real losers fast
-      trailingStopActivatePercent: 60,
+      // Post-graduation: higher mcap floor
+      minMarketCapUsd: 80_000,             // Only graduated tokens
+      maxMarketCapUsd: 500_000,
+      // Longer holds — these tokens have proven demand
+      maxPositionAgeMs: 3_600_000,         // 1 hour
+      stalePriceTimeoutMs: 300_000,        // 5 min
+      stopLossPercent: -50,                // Wide — proven tokens deserve patience
+      trailingStopActivatePercent: 30,
       trailingStopPercent: -20,
-      stopLossPercent: -15,           // Hard stop at -15%
-      // Entry filters — balanced
-      maxMarketCapUsd: 120_000,
-      maxBondingCurveProgress: 0.5,
-      minBuySellRatio: 1.8,
-      minMoonshotScore: 40,
-      // Tiered exits — 30% at 2x, 50% at 3x, keep 20% as moonshot bag forever
-      // Tier 1: +100% (2x) → sell 30%  (70% remaining)
-      // Tier 2: +200% (3x) → sell 71% of remaining → ~20% of original left as bag
-      // Tier 3/4: disabled (bag rides to infinity or stop loss)
-      exitTier1PctGain: 100, exitTier1SellPct: 30,
-      exitTier2PctGain: 200, exitTier2SellPct: 71,
-      exitTier3PctGain: 99999, exitTier3SellPct: 0,
-      exitTier4PctGain: 99999, exitTier4SellPct: 0,
-      // Conservative risk controls
-      consecutiveLossPauseThreshold: 4,
-      maxDailyLossSol: 0.25,
+      // Tiered: recover cost at 2x, ride rest
+      enableTieredExits: true,
+      exitTier1PctGain: 100,  exitTier1SellPct: 50,   // At 2x recover cost
+      exitTier2PctGain: 400,  exitTier2SellPct: 25,   // At 5x take more
+      exitTier3PctGain: 900,  exitTier3SellPct: 15,   // At 10x take more
+      exitTier4PctGain: 4900, exitTier4SellPct: 100,   // At 50x close
+      // Relaxed momentum — graduated tokens have already proven
+      momentumWindowMs: 10_000,
+      minUniqueBuyers: 4,
+      minBuySellRatio: 2.0,
+      minBuyVolumeSol: 0.5,
+      // No-pump: patient
+      noPumpExitMs: 600_000,
+      noPumpMinGainPct: 15,
+      noPumpTier2MinGainPct: 40,
+      // Conservative risk
+      consecutiveLossPauseThreshold: 3,
+      maxDailyLossSol: 0.75,
+      dailyBudgetSol: 3.0,
       stats: makeEmptyStats(),
     });
   }
 
+  // ── Quick Flip: Fast in-and-out, aggressive profit-taking ──
   if (!sniperTemplates.has('quick-flip')) {
     seedTemplateEntry('quick-flip', {
       id: 'quick-flip',
       name: 'Quick Flip',
       enabled: false,
       ...DEFAULT_CONFIG_FIELDS,
-      // Small size — many small trades
       buyAmountSol: 0.05,
-      maxOpenPositions: 8,
-      // Very short hold — in and out in minutes
-      maxPositionAgeMs: 180_000,
-      stalePriceTimeoutMs: 60_000,
-      // Tight stops — exit fast on stale price
-      trailingStopActivatePercent: 20,
-      trailingStopPercent: -12,
-      stopLossPercent: -15,
-      // Buy very early on the bonding curve
-      maxMarketCapUsd: 80_000,
-      maxBondingCurveProgress: 0.4,
-      minBuySellRatio: 1.5,
-      minMoonshotScore: 35,
-      // Tiered exits — take profits early and often
-      exitTier1PctGain: 30,  exitTier1SellPct: 50,
-      exitTier2PctGain: 60,  exitTier2SellPct: 30,
-      exitTier3PctGain: 100, exitTier3SellPct: 20,
-      exitTier4PctGain: 500, exitTier4SellPct: 100,
-      // Aggressive circuit breaker
+      maxOpenPositions: 10,
+      maxPositionAgeMs: 300_000,           // 5 min
+      stalePriceTimeoutMs: 120_000,        // 2 min
+      trailingStopActivatePercent: 15,
+      trailingStopPercent: -10,
+      stopLossPercent: -25,
+      maxMarketCapUsd: 100_000,
+      maxBondingCurveProgress: 0.5,
+      minBuySellRatio: 3.5,               // Very strong momentum only
+      minMoonshotScore: 40,
+      // Tiered: take profit early and often
+      enableTieredExits: true,
+      exitTier1PctGain: 50,   exitTier1SellPct: 50,   // At 1.5x sell half
+      exitTier2PctGain: 100,  exitTier2SellPct: 30,   // At 2x sell 30%
+      exitTier3PctGain: 200,  exitTier3SellPct: 20,   // At 3x sell rest
+      exitTier4PctGain: 500,  exitTier4SellPct: 100,
+      // Aggressive no-pump exit
+      noPumpExitMs: 180_000,               // 3 min
+      noPumpMinGainPct: 15,
+      noPumpTier2MinGainPct: 30,
       consecutiveLossPauseThreshold: 3,
-      maxDailyLossSol: 0.15,
+      maxDailyLossSol: 0.25,
       stats: makeEmptyStats(),
     });
   }
@@ -661,7 +679,7 @@ export function getRuntime(templateId: string): TemplateRuntimeState {
       startedAt: null,
       dailySpentSol: 0,
       dailyResetDate: new Date().toDateString(),
-      paperBalanceSol: 0.5, // Default 0.5 SOL virtual balance
+      paperBalanceSol: 6.17,  // ~$500 at $81/SOL // Default 0.5 SOL virtual balance
       consecutiveLosses: 0,
       dailyRealizedLossSol: 0,
       circuitBreakerPausedUntil: 0,
@@ -763,6 +781,13 @@ export function templateToLegacyConfig(template: SniperTemplate): SniperConfig {
     antiRugVelocityWindowMs: template.antiRugVelocityWindowMs,
     antiRugLiquidityDropPct: template.antiRugLiquidityDropPct,
     antiRugMinPositionAgeMs: template.antiRugMinPositionAgeMs,
+    enableNoPumpExit: template.enableNoPumpExit,
+    noPumpExitMs: template.noPumpExitMs,
+    noPumpMinGainPct: template.noPumpMinGainPct,
+    noPumpTier2MinGainPct: template.noPumpTier2MinGainPct,
+    enableOnChainAuthorityCheck: template.enableOnChainAuthorityCheck,
+    enableHoneypotCheck: template.enableHoneypotCheck,
+    honeypotMaxSlippagePct: template.honeypotMaxSlippagePct,
   };
 }
 
@@ -806,7 +831,7 @@ export function ensurePositionCheckRunning(): void {
         console.error('[Sniper] Position check error:', message);
       });
     }
-  }, 20_000); // 20s interval (was 10s — reduces RPC pressure)
+  }, 3_000); // 3s interval — fast fallback for tokens without real-time WebSocket
 }
 
 /** Stop the global position-check interval if no templates are running */
@@ -856,6 +881,12 @@ export const SNIPER_CONFIG_KEYS: ReadonlyArray<keyof SniperConfigFields> = [
   // Phase 9: Anti-Rug Protection
   'enableAntiRug', 'antiRugSellVelocityRatio', 'antiRugVelocityWindowMs',
   'antiRugLiquidityDropPct', 'antiRugMinPositionAgeMs',
+  // Phase 10: Time-Based No-Pump Exit
+  'enableNoPumpExit', 'noPumpExitMs', 'noPumpMinGainPct', 'noPumpTier2MinGainPct',
+  // Phase 11: On-Chain Authority Verification
+  'enableOnChainAuthorityCheck',
+  // Phase 12: Honeypot Pre-Check
+  'enableHoneypotCheck', 'honeypotMaxSlippagePct',
 ] as const;
 
 export function validateConfigUpdates(
@@ -981,6 +1012,16 @@ export function applyConfigToTemplate(
   if (fields.antiRugVelocityWindowMs !== undefined) template.antiRugVelocityWindowMs = fields.antiRugVelocityWindowMs;
   if (fields.antiRugLiquidityDropPct !== undefined) template.antiRugLiquidityDropPct = fields.antiRugLiquidityDropPct;
   if (fields.antiRugMinPositionAgeMs !== undefined) template.antiRugMinPositionAgeMs = fields.antiRugMinPositionAgeMs;
+  // Phase 10: Time-Based No-Pump Exit
+  if (fields.enableNoPumpExit !== undefined) template.enableNoPumpExit = fields.enableNoPumpExit;
+  if (fields.noPumpExitMs !== undefined) template.noPumpExitMs = fields.noPumpExitMs;
+  if (fields.noPumpMinGainPct !== undefined) template.noPumpMinGainPct = fields.noPumpMinGainPct;
+  if (fields.noPumpTier2MinGainPct !== undefined) template.noPumpTier2MinGainPct = fields.noPumpTier2MinGainPct;
+  // Phase 11: On-Chain Authority Verification
+  if (fields.enableOnChainAuthorityCheck !== undefined) template.enableOnChainAuthorityCheck = fields.enableOnChainAuthorityCheck;
+  // Phase 12: Honeypot Pre-Check
+  if (fields.enableHoneypotCheck !== undefined) template.enableHoneypotCheck = fields.enableHoneypotCheck;
+  if (fields.honeypotMaxSlippagePct !== undefined) template.honeypotMaxSlippagePct = fields.honeypotMaxSlippagePct;
 }
 
 // ── Template CRUD ──────────────────────────────────────────────────────
@@ -1011,7 +1052,7 @@ export function createTemplate(
     startedAt: null,
     dailySpentSol: 0,
     dailyResetDate: new Date().toDateString(),
-    paperBalanceSol: 0.5,
+    paperBalanceSol: 6.17,  // ~$500 at $81/SOL
     consecutiveLosses: 0,
     dailyRealizedLossSol: 0,
     circuitBreakerPausedUntil: 0,

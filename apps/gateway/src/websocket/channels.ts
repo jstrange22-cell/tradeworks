@@ -45,6 +45,10 @@ export const CHANNELS = {
     rateLimit: 10,
     requiresRole: ['admin', 'trader'],
   },
+  'tradingview:alerts': {
+    description: 'Real-time buy/sell signals forwarded from TradingView webhook alerts',
+    rateLimit: 10,
+  },
 } as const satisfies Record<string, ChannelDefinition>;
 
 export type ChannelName = keyof typeof CHANNELS;

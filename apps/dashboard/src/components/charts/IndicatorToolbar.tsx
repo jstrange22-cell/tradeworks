@@ -1,4 +1,4 @@
-import { Maximize2, Minimize2 } from 'lucide-react';
+import { Maximize2, Minimize2, Zap } from 'lucide-react';
 
 const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h', '1d'] as const;
 
@@ -28,6 +28,8 @@ interface IndicatorToolbarProps {
   onToggleIndicator: (id: IndicatorId) => void;
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
+  showAISignals?: boolean;
+  onToggleAISignals?: () => void;
 }
 
 export function IndicatorToolbar({
@@ -37,6 +39,8 @@ export function IndicatorToolbar({
   onToggleIndicator,
   isFullscreen,
   onToggleFullscreen,
+  showAISignals,
+  onToggleAISignals,
 }: IndicatorToolbarProps) {
   return (
     <div className="flex items-center justify-between border-b border-slate-800 px-3 py-1.5">
@@ -66,9 +70,7 @@ export function IndicatorToolbar({
               key={ind.id}
               onClick={() => onToggleIndicator(ind.id)}
               className={`rounded px-2 py-0.5 text-[10px] font-semibold transition-all ${
-                isActive
-                  ? 'text-white'
-                  : 'text-slate-600 hover:text-slate-400'
+                isActive ? 'text-white' : 'text-slate-600 hover:text-slate-400'
               }`}
               style={isActive ? { backgroundColor: ind.color + '20', color: ind.color } : undefined}
             >
@@ -76,6 +78,26 @@ export function IndicatorToolbar({
             </button>
           );
         })}
+
+        {/* AI Signals toggle */}
+        {onToggleAISignals && (
+          <button
+            onClick={onToggleAISignals}
+            className={`flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-bold transition-all ${
+              showAISignals
+                ? 'text-white shadow-sm'
+                : 'text-slate-500 hover:text-purple-300'
+            }`}
+            style={showAISignals
+              ? { background: 'linear-gradient(135deg,#7c3aed,#4f46e5)', color: '#fff' }
+              : undefined
+            }
+            title="AI Signal Overlay"
+          >
+            <Zap className="h-3 w-3" />
+            AI Signals
+          </button>
+        )}
       </div>
 
       {/* Fullscreen Toggle */}

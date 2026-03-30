@@ -1,0 +1,1083 @@
+[
+  {
+    "mint": "CH5HmJBGt7urDia2Tbd3TNW9JQsypBHrmwDqEScPpump",
+    "symbol": "Scalpoor",
+    "name": "The Scalpoor",
+    "confidence": 61,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005407890649269949,
+    "stopLoss": 0.0000037855234544889643,
+    "takeProfits": [
+      0.000008111835973904923,
+      0.000010815781298539898,
+      0.000016223671947809847
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 77/100 — 12 unique buyers, 14.5x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 13760597.75 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 77,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:58:18.174Z"
+  },
+  {
+    "mint": "6dywMsFv4Ft5qwH4q8Kgz4hYafLjrzBSsBXA35J8pump",
+    "symbol": "PSYOPRICK",
+    "name": "PsyopPatrick",
+    "confidence": 56,
+    "quality": "STANDARD",
+    "direction": "hold",
+    "entry": 0.000005107974592928578,
+    "stopLoss": 0.0000035755822150500043,
+    "takeProfits": [
+      0.000007661961889392867,
+      0.000010215949185857156,
+      0.000015323923778785734
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 48/100 — 9 unique buyers, 0.0x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 37693252.20 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 48,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:57:44.794Z"
+  },
+  {
+    "mint": "6DAoaBytmCSfbwWtG99pvrxQSaDk6RWh7Sme8PLdpump",
+    "symbol": "$70",
+    "name": "posting till memecoin reaches",
+    "confidence": 51,
+    "quality": "SPECULATIVE",
+    "direction": "hold",
+    "entry": 0.000005751164958061505,
+    "stopLoss": 0.000004025815470643053,
+    "takeProfits": [
+      0.000008626747437092257,
+      0.00001150232991612301,
+      0.000017253494874184514
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 50/100 (high) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 51/100 — 11 unique buyers, 0.0x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 102244168.19 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 50,
+    "momentumScore": 51,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:57:35.770Z"
+  },
+  {
+    "mint": "4DHHQ3Dr5EqJ1BqdU6cZSads1RAVkHtZd68imd6Rpump",
+    "symbol": "HUMANDENG",
+    "name": "Humandeng",
+    "confidence": 60,
+    "quality": "STANDARD",
+    "direction": "hold",
+    "entry": 0.0000050751786269027596,
+    "stopLoss": 0.0000035526250388319313,
+    "takeProfits": [
+      0.000007612767940354139,
+      0.000010150357253805519,
+      0.000015225535880708278
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 100/100 (low) — no flags",
+      "Momentum score 43/100 — 5 unique buyers, 0.0x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 68387981.64 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 100,
+    "momentumScore": 43,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:57:02.987Z"
+  },
+  {
+    "mint": "FmoAqKD2iGL8gXXxdtv64MpsV28QG81oEGpAQkbPpump",
+    "symbol": "Camry",
+    "name": "Camry Coin",
+    "confidence": 58,
+    "quality": "STANDARD",
+    "direction": "hold",
+    "entry": 0.000005407890649269949,
+    "stopLoss": 0.0000037855234544889643,
+    "takeProfits": [
+      0.000008111835973904923,
+      0.000010815781298539898,
+      0.000016223671947809847
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 59/100 — 17 unique buyers, 0.0x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 209610936.09 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 59,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:55:05.855Z"
+  },
+  {
+    "mint": "5NYpC9vL4gfV8vYgmWaUmsyHoejFThtwjGh7pVDfTaB1",
+    "symbol": "AGENTPUNCH",
+    "name": "Agent Punch",
+    "confidence": 54,
+    "quality": "SPECULATIVE",
+    "direction": "buy",
+    "entry": 0.000005569713864107482,
+    "stopLoss": 0.000003898799704875237,
+    "takeProfits": [
+      0.000008354570796161223,
+      0.000011139427728214964,
+      0.000016709141592322447
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 50/100 (high) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 63/100 — 22 unique buyers, 0.0x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 27620263.54 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 50,
+    "momentumScore": 63,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:55:02.539Z"
+  },
+  {
+    "mint": "CdxNPSVWxVC8qf3sYxJPh6FUq9WKC6eCz1ikS2fApump",
+    "symbol": "SHINY",
+    "name": "Shiny Coin",
+    "confidence": 60,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005911483594497059,
+    "stopLoss": 0.000004138038516147941,
+    "takeProfits": [
+      0.000008867225391745588,
+      0.000011822967188994118,
+      0.000017734450783491176
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 68/100 — 11 unique buyers, 3.5x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 194885873.43 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 68,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:53:58.437Z"
+  },
+  {
+    "mint": "DkScmjPbYvNG6YjQ9NUwjGpQT963zLYdi3saJCPpump",
+    "symbol": "PILLY#001",
+    "name": "Digital Collectible Pilly",
+    "confidence": 52,
+    "quality": "REJECTED",
+    "direction": "hold",
+    "entry": 0.000005407890649269949,
+    "stopLoss": 0.0000037855234544889643,
+    "takeProfits": [
+      0.000008111835973904923,
+      0.000010815781298539898,
+      0.000016223671947809847
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 25/100 (critical) — GoPlus API unavailable — scan inconclusive; Low RugCheck score: 1/1000",
+      "Momentum score 80/100 — 14 unique buyers, 32.3x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 51482931.69 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging",
+      "WARNING: security score below 50, proceed with caution"
+    ],
+    "taScore": 50,
+    "securityScore": 25,
+    "momentumScore": 80,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:53:36.012Z"
+  },
+  {
+    "mint": "uWcA2M3skDUVz8Xo4gnNafFfF5RKMXYiUosiWybLsX6",
+    "symbol": "artcoin",
+    "name": "artcoin",
+    "confidence": 60,
+    "quality": "STANDARD",
+    "direction": "hold",
+    "entry": 0.000006446600802822273,
+    "stopLoss": 0.000004512620561975591,
+    "takeProfits": [
+      0.00000966990120423341,
+      0.000012893201605644546,
+      0.00001933980240846682
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 100/100 (low) — no flags",
+      "Momentum score 43/100 — 5 unique buyers, 0.0x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 163923831.92 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 100,
+    "momentumScore": 43,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:53:28.587Z"
+  },
+  {
+    "mint": "2G3435gmnXRQJ1eg1PdR7u6qpgqw4n9s2za66oN6pump",
+    "symbol": "coin#001",
+    "name": "Digital Collectible Coin",
+    "confidence": 60,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005399548358060076,
+    "stopLoss": 0.0000037796838506420527,
+    "takeProfits": [
+      0.000008099322537090113,
+      0.000010799096716120152,
+      0.000016198645074180226
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 70/100 — 21 unique buyers, 1.9x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 317892891.71 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 70,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:52:35.552Z"
+  },
+  {
+    "mint": "FFYzMUkopWEo3VPiPVeNmFzQDB9pUv4mWReSTvdYpump",
+    "symbol": "Scalper",
+    "name": "The Scalper",
+    "confidence": 58,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005751164958061505,
+    "stopLoss": 0.000004025815470643053,
+    "takeProfits": [
+      0.000008626747437092257,
+      0.00001150232991612301,
+      0.000017253494874184514
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 61/100 — 11 unique buyers, 2.3x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 113973430.67 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 61,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:51:52.130Z"
+  },
+  {
+    "mint": "4V1WvhQUavisxeByCdNGp1CzLPkuN6W7j2C1seeypump",
+    "symbol": "FLAG",
+    "name": "False Flag",
+    "confidence": 62,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000013072781403537891,
+    "stopLoss": 0.000009150946982476524,
+    "takeProfits": [
+      0.000019609172105306838,
+      0.000026145562807075783,
+      0.000039218344210613676
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 79/100 — 38 unique buyers, 3.4x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 245103982.69 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 79,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:51:21.138Z"
+  },
+  {
+    "mint": "7iog8ja2jamDdoR6rryYn63SHmMsyXf2SZeqi54Spump",
+    "symbol": "Tools",
+    "name": "Digital Tools",
+    "confidence": 63,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005407890649269949,
+    "stopLoss": 0.0000037855234544889643,
+    "takeProfits": [
+      0.000008111835973904923,
+      0.000010815781298539898,
+      0.000016223671947809847
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 83/100 — 21 unique buyers, 4.1x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 425754996.63 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 83,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:50:58.742Z"
+  },
+  {
+    "mint": "A4yTvjNrwfBtPw7RrT6HefpGLEwxZidK45guLgdzpump",
+    "symbol": "HoweyCoins",
+    "name": "HoweyCoins",
+    "confidence": 61,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005595384436160292,
+    "stopLoss": 0.000003916769105312204,
+    "takeProfits": [
+      0.00000839307665424044,
+      0.000011190768872320584,
+      0.00001678615330848088
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 74/100 — 20 unique buyers, 2.5x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 228676051.42 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 74,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:50:39.403Z"
+  },
+  {
+    "mint": "7XFeMRQbnnWAgNZGjNM5zWWqViYgQExjHGQUTkPKpump",
+    "symbol": "Tools",
+    "name": "Digital Tools",
+    "confidence": 59,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005234054828802277,
+    "stopLoss": 0.000003663838380161594,
+    "takeProfits": [
+      0.000007851082243203416,
+      0.000010468109657604554,
+      0.000015702164486406832
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 63/100 — 25 unique buyers, 0.0x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 391005048.79 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 63,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:50:30.442Z"
+  },
+  {
+    "mint": "6SkbU7Hfkg9on6Nm97oBN3yMKJZgmkAvx5MBqrATpump",
+    "symbol": "TOLY#501",
+    "name": "Digital Collectible Toly",
+    "confidence": 60,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005240214352283317,
+    "stopLoss": 0.0000036681500465983218,
+    "takeProfits": [
+      0.000007860321528424976,
+      0.000010480428704566634,
+      0.000015720643056849952
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 70/100 — 9 unique buyers, 4.4x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 340488642.95 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 70,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:50:26.729Z"
+  },
+  {
+    "mint": "E67MHCgPB8BM3atLpZHAdfdqazoECyuX4pPwy8y3pump",
+    "symbol": "Scalper",
+    "name": "The Scalper",
+    "confidence": 60,
+    "quality": "STANDARD",
+    "direction": "hold",
+    "entry": 0.00000505498696684589,
+    "stopLoss": 0.0000035384908767921224,
+    "takeProfits": [
+      0.0000075824804502688346,
+      0.00001010997393369178,
+      0.000015164960900537669
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 100/100 (low) — no flags",
+      "Momentum score 47/100 — 8 unique buyers, 0.0x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 36726195.67 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 100,
+    "momentumScore": 47,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:50:16.399Z"
+  },
+  {
+    "mint": "32idX41VoFRJSc3Etg9LiLmaz3aXbvDYs14nYJMHpump",
+    "symbol": "coin#001",
+    "name": "Digital Collectible Coin",
+    "confidence": 60,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005738262740559299,
+    "stopLoss": 0.000004016783918391509,
+    "takeProfits": [
+      0.000008607394110838949,
+      0.000011476525481118598,
+      0.000017214788221677898
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 71/100 — 18 unique buyers, 2.6x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 373564213.32 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 71,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:49:03.542Z"
+  },
+  {
+    "mint": "G35M13myhbuMS9fKHspb6umXAhoiqkxRkKYDZ4MJpump",
+    "symbol": "Land",
+    "name": "Land",
+    "confidence": 60,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005751164958061505,
+    "stopLoss": 0.000004025815470643053,
+    "takeProfits": [
+      0.000008626747437092257,
+      0.00001150232991612301,
+      0.000017253494874184514
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 69/100 — 79 unique buyers, 1.7x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 683598860.61 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 69,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:49:01.443Z"
+  },
+  {
+    "mint": "9rGMUJDpa4SisZg9YVjeS57x1mYsTjkcDPjqU1otpump",
+    "symbol": "RarePepe",
+    "name": "The first Digital Collectible",
+    "confidence": 60,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.0000050751786269027596,
+    "stopLoss": 0.0000035526250388319313,
+    "takeProfits": [
+      0.000007612767940354139,
+      0.000010150357253805519,
+      0.000015225535880708278
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 72/100 — 8 unique buyers, 21.4x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 369920999.63 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 72,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:48:48.435Z"
+  },
+  {
+    "mint": "FBRsKXB6Hu6nUadqe3tZuEdq4JuT85zh7qaSZ1jVpump",
+    "symbol": "scalpoor",
+    "name": "the scalpoor",
+    "confidence": 63,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005911483594497059,
+    "stopLoss": 0.000004138038516147941,
+    "takeProfits": [
+      0.000008867225391745588,
+      0.000011822967188994118,
+      0.000017734450783491176
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 85/100 — 22 unique buyers, 4.5x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 317436584.60 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 85,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:47:14.280Z"
+  },
+  {
+    "mint": "B87ezjtw8EMTFUX7zTFdtQLa3RMfoV4EpNFN4nYmpump",
+    "symbol": "scalpoor",
+    "name": "the scalpoor",
+    "confidence": 62,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005911483594497059,
+    "stopLoss": 0.000004138038516147941,
+    "takeProfits": [
+      0.000008867225391745588,
+      0.000011822967188994118,
+      0.000017734450783491176
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 79/100 — 22 unique buyers, 3.4x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 344031595.10 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 79,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:45:16.482Z"
+  },
+  {
+    "mint": "HKH1N3KVLAj3KrW1DXnuxG6vQUaAV63wcNka5zQzpump",
+    "symbol": "HUMANS",
+    "name": "Humans First",
+    "confidence": 64,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005316479622086719,
+    "stopLoss": 0.000003721535735460703,
+    "takeProfits": [
+      0.00000797471943313008,
+      0.000010632959244173438,
+      0.00001594943886626016
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 88/100 — 32 unique buyers, 17.3x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 778580333.82 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 88,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:44:37.465Z"
+  },
+  {
+    "mint": "DZqo34fWirxXe6z1yYjeSqYwviUB1xjC3GoZXQ7Vpump",
+    "symbol": "dog#002",
+    "name": "Digital Collectible Dog",
+    "confidence": 63,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005399548358060076,
+    "stopLoss": 0.0000037796838506420527,
+    "takeProfits": [
+      0.000008099322537090113,
+      0.000010799096716120152,
+      0.000016198645074180226
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 85/100 — 18 unique buyers, 5.3x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 301313872.92 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 85,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:42:57.735Z"
+  },
+  {
+    "mint": "5tzxsVWGp3UA1FSuoKuSJQVfK8Q1LdzuyRayjKD8GhzN",
+    "symbol": "TOMORROW",
+    "name": "tomorrow is a brand new day",
+    "confidence": 63,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000006446600802822273,
+    "stopLoss": 0.000004512620561975591,
+    "takeProfits": [
+      0.00000966990120423341,
+      0.000012893201605644546,
+      0.00001933980240846682
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 83/100 — 18 unique buyers, 4.7x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 466353245.49 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 83,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:42:50.313Z"
+  },
+  {
+    "mint": "FpsmZijNUpbf9XXvwmU2NFuGQpdCz4PdykSYX1dEpump",
+    "symbol": "HoweyCoins",
+    "name": "HoweyCoins",
+    "confidence": 64,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005399548358060076,
+    "stopLoss": 0.0000037796838506420527,
+    "takeProfits": [
+      0.000008099322537090113,
+      0.000010799096716120152,
+      0.000016198645074180226
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 88/100 — 20 unique buyers, 11.3x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 561816332.16 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 88,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:41:53.828Z"
+  },
+  {
+    "mint": "6pM55KPViktjKdv3nZs18nuDd7Po7XgPpUp4UEpUpump",
+    "symbol": "Kingpin",
+    "name": "Hardware Hacker",
+    "confidence": 57,
+    "quality": "STANDARD",
+    "direction": "hold",
+    "entry": 0.000005738262740907467,
+    "stopLoss": 0.000004016783918635226,
+    "takeProfits": [
+      0.0000086073941113612,
+      0.000011476525481814934,
+      0.0000172147882227224
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 53/100 — 7 unique buyers, 1.8x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 181194546.51 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 53,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:41:09.254Z"
+  },
+  {
+    "mint": "9ofqQLHWQFSvJEvMy9jUGVQFy21jXccbQ17R7bNvpump",
+    "symbol": "Kingpin",
+    "name": "Hardware Hacker",
+    "confidence": 60,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005751164958061505,
+    "stopLoss": 0.000004025815470643053,
+    "takeProfits": [
+      0.000008626747437092257,
+      0.00001150232991612301,
+      0.000017253494874184514
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 68/100 — 5 unique buyers, 929.0x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 11391565.79 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 68,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:41:01.177Z"
+  },
+  {
+    "mint": "4GKTTPSiyGPiRmjQkr82WKoeNykguarRZKwdwJtXpump",
+    "symbol": "LOOKUP",
+    "name": "On-demand lookup",
+    "confidence": 51,
+    "quality": "SPECULATIVE",
+    "direction": "hold",
+    "entry": 0.00006287,
+    "stopLoss": 0.000044009,
+    "takeProfits": [
+      0.000094305,
+      0.00012574,
+      0.00018861
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 74/100 — bullish: MACD[1m], EMA9[1m], EMA21[1m] | bearish: BollingerBands[1m], OBV[1m]",
+      "Security score 75/100 (medium) — no flags",
+      "Momentum score 13/100 — 0 unique buyers, 0.0x buy/sell ratio",
+      "Volume/liquidity score 0/100 — 0.00 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: high_volatility"
+    ],
+    "taScore": 74,
+    "securityScore": 75,
+    "momentumScore": 13,
+    "sentimentScore": 0,
+    "regime": "high_volatility",
+    "timestamp": "2026-03-18T01:40:28.296Z"
+  },
+  {
+    "mint": "AC3DuL2g3h4HSjyKhgJ5VsFzCrkkpG89vE814z48pump",
+    "symbol": "LOOKUP",
+    "name": "On-demand lookup",
+    "confidence": 47,
+    "quality": "SPECULATIVE",
+    "direction": "hold",
+    "entry": 0.00001174,
+    "stopLoss": 0.000008217999999999998,
+    "takeProfits": [
+      0.00001761,
+      0.00002348,
+      0.00003522
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 76/100 — bullish: MACD[1m], EMA9[1m], EMA21[1m] | bearish: BollingerBands[1m], WilliamsR[1m]",
+      "Security score 50/100 (high) — Low RugCheck score: 1/1000",
+      "Momentum score 13/100 — 0 unique buyers, 0.0x buy/sell ratio",
+      "Volume/liquidity score 0/100 — 0.00 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: high_volatility"
+    ],
+    "taScore": 76,
+    "securityScore": 50,
+    "momentumScore": 13,
+    "sentimentScore": 0,
+    "regime": "high_volatility",
+    "timestamp": "2026-03-18T01:40:09.479Z"
+  },
+  {
+    "mint": "Gyis79QwgcYJMeQprRTTfEcB3rug1xEAqkas2dR9pump",
+    "symbol": "ape#003",
+    "name": "Digital Collectible Ape",
+    "confidence": 60,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005738262740559299,
+    "stopLoss": 0.000004016783918391509,
+    "takeProfits": [
+      0.000008607394110838949,
+      0.000011476525481118598,
+      0.000017214788221677898
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 63/100 — 31 unique buyers, 0.0x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 481167894.70 SOL buy volume",
+      "Sentiment score 13 (neutral) — NLP:13 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 63,
+    "sentimentScore": 13,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:40:05.715Z"
+  },
+  {
+    "mint": "AhkN7eo4jNZApuhYhNggUqUrhiYm36Ax7YYJpx6rpump",
+    "symbol": "dog#001",
+    "name": "Digital Collectible Dog",
+    "confidence": 57,
+    "quality": "STANDARD",
+    "direction": "hold",
+    "entry": 0.000005240214352283317,
+    "stopLoss": 0.0000036681500465983218,
+    "takeProfits": [
+      0.000007860321528424976,
+      0.000010480428704566634,
+      0.000015720643056849952
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 57/100 — 9 unique buyers, 2.2x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 176221865.24 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 57,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:39:25.376Z"
+  },
+  {
+    "mint": "5jX2VNvLrB7UV1VTfiVkQCf79UvMEa1wWt42456ipump",
+    "symbol": "RachelGPT",
+    "name": "RachelGPT",
+    "confidence": 62,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.000005567617661752192,
+    "stopLoss": 0.0000038973323632265344,
+    "takeProfits": [
+      0.000008351426492628288,
+      0.000011135235323504384,
+      0.000016702852985256575
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 82/100 — 25 unique buyers, 4.1x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 270171260.72 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 82,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:39:16.879Z"
+  },
+  {
+    "mint": "A6g8qBENFyPAAEzmiA6qVegw6EcSdk4gNhZZrps5pump",
+    "symbol": "Collector",
+    "name": "The Collector",
+    "confidence": 55,
+    "quality": "STANDARD",
+    "direction": "hold",
+    "entry": 0.000005751164958061505,
+    "stopLoss": 0.000004025815470643053,
+    "takeProfits": [
+      0.000008626747437092257,
+      0.00001150232991612301,
+      0.000017253494874184514
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 47/100 — 8 unique buyers, 0.0x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 134051642.48 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 47,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:32:02.842Z"
+  },
+  {
+    "mint": "3zUScxSLP26MYJmnXe7ZShC7BFgGD3CJj7Q4i9Papump",
+    "symbol": "Everydays",
+    "name": "The First 5000 Days",
+    "confidence": 60,
+    "quality": "STANDARD",
+    "direction": "hold",
+    "entry": 0.000005071137074976335,
+    "stopLoss": 0.0000035497959524834343,
+    "takeProfits": [
+      0.000007606705612464503,
+      0.00001014227414995267,
+      0.000015213411224929005
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 100/100 (low) — no flags",
+      "Momentum score 44/100 — 6 unique buyers, 0.0x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 221270861.91 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 100,
+    "momentumScore": 44,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:30:45.136Z"
+  },
+  {
+    "mint": "BvJ6oNYv2SD6P4hTTjTMXELxb9cCcv2Gihmr8WfEpump",
+    "symbol": "SOL",
+    "name": "SOL",
+    "confidence": 64,
+    "quality": "STANDARD",
+    "direction": "buy",
+    "entry": 0.00000574767993165579,
+    "stopLoss": 0.000004023375952159053,
+    "takeProfits": [
+      0.000008621519897483685,
+      0.00001149535986331158,
+      0.00001724303979496737
+    ],
+    "riskRewardRatio": 1.67,
+    "reasoning": [
+      "TA score 50/100",
+      "Security score 75/100 (medium) — GoPlus API unavailable — scan inconclusive",
+      "Momentum score 88/100 — 29 unique buyers, 8.0x buy/sell ratio",
+      "Volume/liquidity score 60/100 — 429099459.56 SOL buy volume",
+      "Sentiment score 0 (neutral) — NLP:0 Reddit:0 DexSocial:0",
+      "Regime: ranging"
+    ],
+    "taScore": 50,
+    "securityScore": 75,
+    "momentumScore": 88,
+    "sentimentScore": 0,
+    "regime": "ranging",
+    "timestamp": "2026-03-18T01:27:58.394Z"
+  }
+]

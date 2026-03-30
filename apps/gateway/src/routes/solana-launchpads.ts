@@ -55,28 +55,28 @@ const LAUNCHPAD_CONFIGS: Record<string, LaunchpadConfig> = {
     name: 'Raydium LaunchLab',
     programId: 'LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj',
     source: 'raydium_launchlab',
-    enabled: true,
+    enabled: true,  // Re-enabled with 2 RPC calls/sec rate limit
     createPatterns: ['Instruction: InitializeV2', 'Instruction: Initialize'],
   },
   moonshot: {
     name: 'Moonshot',
     programId: 'MoonCVVNZFSYkqNXP6bxHLPL6QQJiMagDL3qcqUQTrG',
     source: 'moonshot',
-    enabled: true,
+    enabled: false,  // Disabled: burns RPC credits, autoBuy flag is off anyway
     createPatterns: ['Instruction: TokenMint', 'Instruction: Initialize'],
   },
   boop: {
     name: 'Boop.fun',
     programId: 'boop8hVGQGqehUK2iVEMEnMrL5RbjywRzHKBmBE7ry4',
     source: 'boop',
-    enabled: true,
+    enabled: false,  // Disabled: burns RPC credits, autoBuy flag is off anyway
     createPatterns: ['Instruction: Create', 'Instruction: Initialize'],
   },
   meteora_dbc: {
     name: 'Meteora DBC',
     programId: 'dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN',
     source: 'meteora_dbc',
-    enabled: true,
+    enabled: false,  // Disabled: burns RPC credits, autoBuy flag is off anyway
     createPatterns: ['Instruction: CreatePool', 'Instruction: InitializePool'],
   },
 };
@@ -86,9 +86,9 @@ const LAUNCHPAD_CONFIGS: Record<string, LaunchpadConfig> = {
 const monitorStates = new Map<string, MonitorState>();
 const seenMints = new Map<string, Set<string>>();
 
-/** Rate limiter: max 5 getParsedTransaction calls/sec across all launchpads */
+/** Rate limiter: max 2 getParsedTransaction calls/sec across all launchpads */
 let rpcCallTimestamps: number[] = [];
-const MAX_RPC_CALLS_PER_SEC = 5;
+const MAX_RPC_CALLS_PER_SEC = 2;
 
 /** Health check interval handle */
 let healthCheckInterval: ReturnType<typeof setInterval> | null = null;

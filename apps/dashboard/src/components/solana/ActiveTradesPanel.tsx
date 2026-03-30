@@ -273,7 +273,7 @@ export function ActiveTradesPanel() {
         consecutiveLosses={status?.consecutiveLosses ?? 0}
         circuitBreakerPaused={status?.circuitBreakerPaused ?? false}
         circuitBreakerResumesAt={status?.circuitBreakerResumesAt}
-        solPrice={94.78}
+        solPrice={(status as { solPriceUsd?: number } | undefined)?.solPriceUsd ?? 130}
       />
 
       {/* Section C: Collapsible Config */}

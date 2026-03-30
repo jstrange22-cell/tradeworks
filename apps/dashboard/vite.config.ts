@@ -52,6 +52,7 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    strictPort: true,
     proxy: {
       '/crypto-api': {
         target: 'https://api.crypto.com/exchange/v1/public',

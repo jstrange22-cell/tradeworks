@@ -106,6 +106,25 @@ export function getMemoryKeysByService(service: string): MemoryApiKey[] {
 }
 
 /**
+ * Upsert a key into the in-memory store, replacing any existing key for the same service.
+ * Used by integrations with their own setup flow (e.g. Polymarket).
+ */
+export function upsertMemoryKey(
+  service: string,
+  keyName: string,
+  encryptedKey: ReturnType<typeof encryptApiKey>,
+  environment: string,
+  encryptedSecret?: ReturnType<typeof encryptApiKey>,
+): void {
+  for (const [id, k] of memoryApiKeys.entries()) {
+    if (k.service === service) memoryApiKeys.delete(id);
+  }
+  const id = `key-${Date.now()}`;
+  memoryApiKeys.set(id, { id, service, keyName, encryptedKey, encryptedSecret, environment, createdAt: new Date().toISOString() });
+  saveKeysToDisk(memoryApiKeys);
+}
+
+/**
  * API Key creation schema.
  */
 const ApiKeySchema = z.object({

@@ -1,0 +1,41 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// © TradeWorks
+//@version=5
+indicator("TradeVisor Channel", overlay=true, max_lines_count=500)
+
+// ─── Inputs ───────────────────────────────────────────────────────────────────
+emaLen       = input.int(8,  "EMA Length",          minval=1, maxval=50)
+showBoundary = input.bool(true, "Show Channel Bands")
+
+// ─── EMA of Highs / Lows ─────────────────────────────────────────────────────
+emaHigh = ta.ema(high, emaLen)
+emaLow  = ta.ema(low,  emaLen)
+emaMid  = (emaHigh + emaLow) / 2
+
+// ─── Direction — midline rising or falling ────────────────────────────────────
+rising = emaMid >= emaMid[1]
+
+// ─── Colors ───────────────────────────────────────────────────────────────────
+midColor   = rising ? color.new(#22c55e, 0)  : color.new(#ef4444, 0)
+upperColor = color.new(#22c55e, 60)
+lowerColor = color.new(#ef4444, 60)
+
+// ─── Plot midline (bold, color changes per bar) ───────────────────────────────
+plot(emaMid, "Midline", color=midColor, linewidth=2)
+
+// ─── Upper / lower channel boundaries ────────────────────────────────────────
+plot(showBoundary ? emaHigh : na, "Upper Band", color=upperColor, linewidth=1)
+plot(showBoundary ? emaLow  : na, "Lower Band", color=lowerColor, linewidth=1)
+
+// ─── BUY / SELL signals ───────────────────────────────────────────────────────
+// BUY: midline crosses up (was falling, now rising) while price is above lower band
+// SELL: midline crosses down (was rising, now falling) while price is below upper band
+buySignal  = ta.crossover(emaMid, emaMid[1])  and close > emaLow
+sellSignal = ta.crossunder(emaMid, emaMid[1]) and close < emaHigh
+
+plotshape(buySignal,  title="BUY",  style=shape.arrowup,   location=location.belowbar, color=color.new(#22c55e, 0), size=size.small, text="BUY")
+plotshape(sellSignal, title="SELL", style=shape.arrowdown,  location=location.abovebar, color=color.new(#ef4444, 0), size=size.small, text="SELL")
+
+// ─── Alerts ───────────────────────────────────────────────────────────────────
+alertcondition(buySignal,  "BUY Signal",  "TradeVisor Channel: BUY signal fired")
+alertcondition(sellSignal, "SELL Signal", "TradeVisor Channel: SELL signal fired")

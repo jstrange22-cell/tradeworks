@@ -8,6 +8,9 @@ import { WinRateByStrategy } from '@/components/analytics/WinRateByStrategy';
 import { SharpeRatioChart } from '@/components/analytics/SharpeRatioChart';
 import { BestWorstTrades } from '@/components/analytics/BestWorstTrades';
 import { TradeFrequencyChart } from '@/components/analytics/TradeFrequencyChart';
+import { CumulativePnlChart } from '@/components/analytics/CumulativePnlChart';
+import { SolanaAnalyticsPanel } from '@/components/analytics/SolanaAnalyticsPanel';
+import { EVMetricsPanel } from '@/components/analytics/EVMetricsPanel';
 
 export function AnalyticsPage() {
   const { data: tradesData, isLoading } = useQuery<TradesResponse>({
@@ -47,6 +50,15 @@ export function AnalyticsPage() {
 
       {/* Summary Stats */}
       <AnalyticsSummary trades={trades} />
+
+      {/* Expected Value Analysis */}
+      <EVMetricsPanel trades={trades} />
+
+      {/* Cumulative P&L Curve */}
+      <CumulativePnlChart trades={trades} />
+
+      {/* Solana Sniper Analytics */}
+      <SolanaAnalyticsPanel />
 
       {/* Charts Row 1: Heatmap + Win Rate */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">

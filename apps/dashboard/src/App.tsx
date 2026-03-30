@@ -21,6 +21,7 @@ const AnalyticsPage = lazy(() => import('@/pages/AnalyticsPage').then(m => ({ de
 const JournalPage = lazy(() => import('@/pages/JournalPage').then(m => ({ default: m.JournalPage })));
 const SolanaPage = lazy(() => import('@/pages/SolanaPage').then(m => ({ default: m.SolanaPage })));
 const WalletsPage = lazy(() => import('@/pages/WalletsPage').then(m => ({ default: m.WalletsPage })));
+const PolymarketPage = lazy(() => import('@/pages/PolymarketPage').then(m => ({ default: m.PolymarketPage })));
 
 function PageLoader() {
   return (
@@ -53,6 +54,7 @@ const router = createBrowserRouter([
       { path: '/journal', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><JournalPage /></Suspense></PageErrorBoundary> },
       { path: '/wallets', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><WalletsPage /></Suspense></PageErrorBoundary> },
       { path: '/solana', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><SolanaPage /></Suspense></PageErrorBoundary> },
+      { path: '/polymarket', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><PolymarketPage /></Suspense></PageErrorBoundary> },
       { path: '/settings', element: <PageErrorBoundary><Suspense fallback={<PageLoader />}><SettingsPage /></Suspense></PageErrorBoundary> },
     ],
   },

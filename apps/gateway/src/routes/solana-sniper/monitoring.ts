@@ -748,6 +748,29 @@ export function handlePositionTradeEvent(event: PumpPortalTradeEvent): void {
         .finally(() => { pendingSells.delete(event.mint); });
       return;
     }
+
+    // No-pump exit (real-time — check on every trade event for responsiveness)
+    if (template.enableNoPumpExit && template.noPumpExitMs > 0) {
+      const positionAgeMs = Date.now() - new Date(position.boughtAt).getTime();
+      if (positionAgeMs > template.noPumpExitMs && position.pnlPercent < template.noPumpMinGainPct) {
+        console.log(
+          `[Sniper][${template.name}] 📉 NO-PUMP EXIT (trade event) ${position.symbol}: ${position.pnlPercent.toFixed(1)}% after ${Math.floor(positionAgeMs / 60000)}min`,
+        );
+        pendingSells.set(event.mint, Date.now());
+        void executeSellSnipe(event.mint, 'no_pump', templateId)
+          .finally(() => { pendingSells.delete(event.mint); });
+        return;
+      }
+      if (positionAgeMs > template.noPumpExitMs * 3 && position.pnlPercent < template.noPumpTier2MinGainPct) {
+        console.log(
+          `[Sniper][${template.name}] 📉 NO-PUMP T2 EXIT (trade event) ${position.symbol}: ${position.pnlPercent.toFixed(1)}% after ${Math.floor(positionAgeMs / 60000)}min`,
+        );
+        pendingSells.set(event.mint, Date.now());
+        void executeSellSnipe(event.mint, 'no_pump', templateId)
+          .finally(() => { pendingSells.delete(event.mint); });
+        return;
+      }
+    }
   }
 }
 
@@ -1114,6 +1137,37 @@ export async function checkPositions(): Promise<void> {
             pendingSells.set(mint, Date.now());
             try {
               await executeSellSnipe(mint, 'stale_price', templateId);
+            } finally {
+              pendingSells.delete(mint);
+            }
+            continue;
+          }
+        }
+
+        // ── NO-PUMP EXIT (Phase 10): exit if token hasn't pumped enough by deadline ──
+        if (template.enableNoPumpExit && template.noPumpExitMs > 0) {
+          const gainPct = position.pnlPercent;
+          // Tier 1: must be up noPumpMinGainPct% by noPumpExitMs
+          if (positionAgeMs > template.noPumpExitMs && gainPct < template.noPumpMinGainPct) {
+            console.log(
+              `[Sniper][${template.name}] 📉 NO-PUMP EXIT ${position.symbol} — only ${gainPct.toFixed(1)}% after ${Math.floor(positionAgeMs / 60000)}min (need ${template.noPumpMinGainPct}%)`,
+            );
+            pendingSells.set(mint, Date.now());
+            try {
+              await executeSellSnipe(mint, 'no_pump', templateId);
+            } finally {
+              pendingSells.delete(mint);
+            }
+            continue;
+          }
+          // Tier 2: must be up noPumpTier2MinGainPct% by 3x noPumpExitMs
+          if (positionAgeMs > template.noPumpExitMs * 3 && gainPct < template.noPumpTier2MinGainPct) {
+            console.log(
+              `[Sniper][${template.name}] 📉 NO-PUMP T2 EXIT ${position.symbol} — only ${gainPct.toFixed(1)}% after ${Math.floor(positionAgeMs / 60000)}min (need ${template.noPumpTier2MinGainPct}%)`,
+            );
+            pendingSells.set(mint, Date.now());
+            try {
+              await executeSellSnipe(mint, 'no_pump', templateId);
             } finally {
               pendingSells.delete(mint);
             }

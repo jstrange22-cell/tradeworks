@@ -139,6 +139,23 @@ export interface SniperConfigFields {
   antiRugLiquidityDropPct: number;
   /** Don't trigger anti-rug in first N ms after buy — initial trades are noisy (default: 5000) */
   antiRugMinPositionAgeMs: number;
+  // ── Phase 10: Time-Based No-Pump Exit ──
+  /** Enable time-based exit if token hasn't pumped (default: true) */
+  enableNoPumpExit: boolean;
+  /** Exit if gain < noPumpMinGainPct after this many ms (default: 300000 = 5 min) */
+  noPumpExitMs: number;
+  /** Minimum gain % required to avoid no-pump exit (default: 20) */
+  noPumpMinGainPct: number;
+  /** Second tier: exit if gain < this % after noPumpExitMs * 3 (default: 50) */
+  noPumpTier2MinGainPct: number;
+  // ── Phase 11: On-Chain Authority Verification ──
+  /** Verify mint/freeze authority directly on-chain instead of trusting RugCheck (default: true) */
+  enableOnChainAuthorityCheck: boolean;
+  // ── Phase 12: Honeypot Pre-Check ──
+  /** Simulate a sell before buying to detect honeypots (default: true) */
+  enableHoneypotCheck: boolean;
+  /** Max sell slippage % from Jupiter quote before flagging as honeypot (default: 50) */
+  honeypotMaxSlippagePct: number;
 }
 
 /** Backwards-compatible config shape (config fields + enabled flag) */
@@ -192,7 +209,7 @@ export interface SnipeExecution {
   signature: string | null;
   status: 'pending' | 'success' | 'failed';
   error: string | null;
-  trigger: 'manual' | LaunchpadSource | 'take_profit' | 'stop_loss' | 'stale_price' | 'max_age' | 'trailing_stop' | 'liquidity_crash' | 'rug_detected';
+  trigger: 'manual' | LaunchpadSource | 'take_profit' | 'stop_loss' | 'stale_price' | 'max_age' | 'trailing_stop' | 'liquidity_crash' | 'rug_detected' | 'no_pump' | 'honeypot';
   templateId: string;
   templateName: string;
   timestamp: string;
