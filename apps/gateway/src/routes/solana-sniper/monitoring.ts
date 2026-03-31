@@ -268,6 +268,15 @@ export function evaluatePendingToken(pending: PendingToken): void {
     return;
   }
 
+  // Zero-sell detection: if NO selling at all during observation, it's likely coordinated buying.
+  // Require 50% more unique buyers to compensate for the suspicion.
+  if (pending.totalSellSol === 0 && uniqueBuyers < Math.ceil(template.minUniqueBuyers * 1.5)) {
+    console.log(`[Sniper][${template.name}] REJECTED ${pending.symbol} — zero sells + only ${uniqueBuyers} buyers (need ${Math.ceil(template.minUniqueBuyers * 1.5)} when no sells)`);
+    pendingTokens.delete(pending.mint);
+    unsubscribeTokenTrades([pending.mint]);
+    return;
+  }
+
   // PASSED all checks — execute buy
   console.log(
     `[Sniper][${template.name}] MOMENTUM CONFIRMED ${pending.symbol}: ${uniqueBuyers} buyers, ${buySellRatio.toFixed(1)}x ratio, ${pending.totalBuySol.toFixed(4)} SOL volume (${(elapsed / 1000).toFixed(1)}s window)`,
@@ -671,7 +680,35 @@ export function handlePositionTradeEvent(event: PumpPortalTradeEvent): void {
       }
     }
 
-    // ── Tiered Exits (Phase 5) ──
+    // ── BONDING CURVE QUICK SCALP: sell unbonded tokens after 3-5s if profitable ──
+    // Bonding curve tokens have terrible sell fills — exit fast for any profit.
+    // Graduated tokens (vSolInBondingCurve === 0 or very high) use normal tiered exits.
+    const isOnBondingCurve = event.vSolInBondingCurve > 0 && event.vSolInBondingCurve < 85;
+    const posAge = Date.now() - new Date(position.boughtAt).getTime();
+
+    if (isOnBondingCurve && posAge >= 3_000 && position.pnlPercent > 5) {
+      // Any profit > 5% on a bonding curve token after 3 seconds = SELL IMMEDIATELY
+      console.log(
+        `[Sniper][${template.name}] ⚡ QUICK SCALP ${position.symbol}: +${position.pnlPercent.toFixed(1)}% after ${(posAge / 1000).toFixed(1)}s (bonding curve — selling before slippage)`,
+      );
+      pendingSells.set(event.mint, Date.now());
+      void executeSellSnipe(event.mint, 'take_profit', templateId)
+        .finally(() => { pendingSells.delete(event.mint); });
+      return;
+    }
+
+    if (isOnBondingCurve && posAge >= 5_000 && position.pnlPercent > 0) {
+      // Any profit at all after 5 seconds = sell (don't wait for it to dump)
+      console.log(
+        `[Sniper][${template.name}] ⚡ QUICK SCALP ${position.symbol}: +${position.pnlPercent.toFixed(1)}% after ${(posAge / 1000).toFixed(1)}s (bonding curve — taking any profit)`,
+      );
+      pendingSells.set(event.mint, Date.now());
+      void executeSellSnipe(event.mint, 'take_profit', templateId)
+        .finally(() => { pendingSells.delete(event.mint); });
+      return;
+    }
+
+    // ── Tiered Exits (Phase 5) — for graduated tokens with real DEX liquidity ──
     if (template.enableTieredExits && position.pnlPercent > 0) {
       const tiersSold = position.tiersSold ?? [];
       const tiers = [

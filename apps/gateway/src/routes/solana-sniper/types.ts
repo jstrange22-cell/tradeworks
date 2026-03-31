@@ -10,9 +10,20 @@
 
 export type LaunchpadSource = 'pumpfun' | 'trending' | 'raydium_launchlab' | 'moonshot' | 'boop' | 'meteora_dbc';
 
+// ── Strategy Types ─────────────────────────────────────────────────────
+
+export type StrategyType =
+  | 'momentum'          // Default: momentum gate → buy → tiered exit
+  | 'graduation_hold'   // Buy early, hold through graduation, sell on DEX only
+  | 'quick_scalp'       // Buy, sell at any profit after 3-5s on bonding curve
+  | 'copy_trade'        // Mirror whale wallet buys/sells
+  | 'graduation_snipe'; // Buy AT graduation moment, sell on DEX
+
 // ── Configuration ───────────────────────────────────────────────────────
 
 export interface SniperConfigFields {
+  /** Strategy type — determines entry/exit behavior */
+  strategyType: StrategyType;
   /** SOL amount per snipe (e.g. 0.05 = 0.05 SOL) */
   buyAmountSol: number;
   /** Max SOL to spend per day */
@@ -156,6 +167,21 @@ export interface SniperConfigFields {
   enableHoneypotCheck: boolean;
   /** Max sell slippage % from Jupiter quote before flagging as honeypot (default: 50) */
   honeypotMaxSlippagePct: number;
+  // ── Phase 13: Strategy-Specific Settings ──
+  /** Don't sell on bonding curve — abandon position instead (graduation_hold strategy) */
+  abandonOnBondingCurve: boolean;
+  /** Min bonding curve progress (0-1) to trigger graduation snipe buy (default: 0.90) */
+  graduationBuyThreshold: number;
+  /** Max time to hold waiting for graduation before abandoning (ms, default: 3600000 = 1hr) */
+  graduationMaxWaitMs: number;
+  /** Wallet addresses to copy trade (copy_trade strategy) */
+  copyWalletAddresses: string[];
+  /** Delay in ms before mirroring a whale buy (default: 500) */
+  copyTradeDelayMs: number;
+  /** Quick scalp: min seconds before selling (default: 3) */
+  quickScalpMinAgeMs: number;
+  /** Quick scalp: min profit % to trigger immediate sell (default: 5) */
+  quickScalpMinProfitPct: number;
 }
 
 /** Backwards-compatible config shape (config fields + enabled flag) */

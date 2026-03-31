@@ -315,4 +315,4 @@ export interface HoldingsSummary {
   realizedPnlSol: number;
 }
 
-export type PageTab = 'scanner' | 'pumpfun' | 'sniper' | 'whales' | 'moonshot' | 'holdings' | 'pnl';
+export type PageTab = 'strategies' | 'scanner' | 'pumpfun' | 'sniper' | 'whales' | 'moonshot' | 'holdings' | 'pnl';

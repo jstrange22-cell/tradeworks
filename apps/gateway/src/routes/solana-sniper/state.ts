@@ -30,9 +30,10 @@ import type {
 export const DEFAULT_TEMPLATE_ID = 'default';
 
 export const DEFAULT_CONFIG_FIELDS: SniperConfigFields = {
+  strategyType: 'momentum',   // Default: momentum-based trading
   // ── Position Sizing (research: 0.05-0.5 SOL, Half-Kelly ~5% of wallet) ──
-  buyAmountSol: 0.05,         // $6.50 per trade — overcomes fees/slippage
-  dailyBudgetSol: 2.0,        // ~$260/day cap — disciplined
+  buyAmountSol: 0.03,         // ~$2.40 per trade — smaller = less price impact on sell
+  dailyBudgetSol: 999,        // Unlimited — use circuit breaker for risk control
   slippageBps: 1500,           // 15% — new tokens need more room
   priorityFee: 400_000,       // 400k μL — reliable fills
   // ── Exits (research: recover cost at 2x, wider stops for memecoin volatility) ──
@@ -52,8 +53,8 @@ export const DEFAULT_CONFIG_FIELDS: SniperConfigFields = {
   minMoonshotScore: 40,
   stalePriceTimeoutMs: 180_000,        // 3 min — more patient
   maxPositionAgeMs: 1_800_000,         // 30 min — let runners run
-  trailingStopActivatePercent: 25,     // Activate trail at +25%
-  trailingStopPercent: -15,            // 15% trail — tighter than stop but gives room
+  trailingStopActivatePercent: 15,     // Activate trail at +15% — trail is our best exit type in live
+  trailingStopPercent: -12,            // 12% trail — tighter to lock in more gain before slippage
   buyCooldownMs: 10_000,              // 10s cooldown
   minMarketCapUsd: 5_000,
   maxCreatorDeploysPerHour: 3,
@@ -61,12 +62,12 @@ export const DEFAULT_CONFIG_FIELDS: SniperConfigFields = {
   minTrendingMomentumPercent: 50,
   paperMode: false,
   // Phase 1: Momentum Gate (research: longer window, more buyers, higher ratio)
-  momentumWindowMs: 15_000,            // 15 sec — filter fake momentum
-  minUniqueBuyers: 6,                  // 6 wallets — harder to sybil
+  momentumWindowMs: 20_000,            // 20 sec — longer window filters fake pumps
+  minUniqueBuyers: 7,                  // 7 wallets — harder to sybil
   minBuySellRatio: 3.0,                // Strong buy dominance required
   minBuyVolumeSol: 1.0,               // Real money, not dust
   // Phase 2: Bonding Curve
-  minBondingCurveSol: 2.0,            // Higher floor for safety
+  minBondingCurveSol: 3.0,            // Require 15%+ bonding curve progress
   maxBondingCurveProgress: 0.85,
   enableSpamFilter: true,
   // Phase 3: Circuit Breakers
@@ -78,15 +79,17 @@ export const DEFAULT_CONFIG_FIELDS: SniperConfigFields = {
   minRugCheckScore: 650,               // Stricter
   maxTopHolderPct: 25,                 // Research: top 10 holders >30% = problematic
   rugCheckTimeoutMs: 3_000,            // 3s timeout — worth waiting
-  // Phase 5: Tiered Exits — ENABLED by default (research: DCA out is critical)
+  // Phase 5: Tiered Exits — LOWERED for live execution reality
+  // Paper assumed instant fills. Live loses ~40-60% of gain to slippage.
+  // So trigger earlier to capture gains before they evaporate.
   enableTieredExits: true,
-  exitTier1PctGain: 100,   // At 2x: sell 50% (recover full cost)
+  exitTier1PctGain: 40,    // At 1.4x: sell 50% — captures ~20% actual gain after slippage
   exitTier1SellPct: 50,
-  exitTier2PctGain: 400,   // At 5x: sell 25% more
-  exitTier2SellPct: 25,
-  exitTier3PctGain: 900,   // At 10x: sell 15% more
-  exitTier3SellPct: 15,
-  exitTier4PctGain: 4900,  // At 50x: close remainder
+  exitTier2PctGain: 100,   // At 2x: sell 30% more
+  exitTier2SellPct: 30,
+  exitTier3PctGain: 300,   // At 4x: sell 20% more
+  exitTier3SellPct: 20,
+  exitTier4PctGain: 900,   // At 10x: close remainder
   exitTier4SellPct: 100,
   // Phase 6: Jito
   enableJito: false,                   // TODO: wire into execution path
@@ -103,16 +106,24 @@ export const DEFAULT_CONFIG_FIELDS: SniperConfigFields = {
   antiRugVelocityWindowMs: 10_000,
   antiRugLiquidityDropPct: 12,         // Tighter: 12% LP drain triggers
   antiRugMinPositionAgeMs: 5_000,
-  // Phase 10: Time-Based No-Pump Exit
+  // Phase 10: Time-Based No-Pump Exit (tightened from paper results)
   enableNoPumpExit: true,
-  noPumpExitMs: 300_000,              // 5 min — if no 1.2x, exit
-  noPumpMinGainPct: 20,               // Must be up 20% by 5 min
-  noPumpTier2MinGainPct: 50,          // Must be up 50% by 15 min
+  noPumpExitMs: 180_000,              // 3 min — tightened from 5 min
+  noPumpMinGainPct: 10,               // Must be up 10% by 3 min (was 20% at 5 min)
+  noPumpTier2MinGainPct: 30,          // Must be up 30% by 9 min (was 50% at 15 min)
   // Phase 11: On-Chain Authority Verification
   enableOnChainAuthorityCheck: true,
   // Phase 12: Honeypot Pre-Check
   enableHoneypotCheck: true,
   honeypotMaxSlippagePct: 50,          // >50% sell slippage = honeypot
+  // Phase 13: Strategy-Specific
+  abandonOnBondingCurve: false,        // Only true for graduation_hold
+  graduationBuyThreshold: 0.90,        // Buy when bonding curve 90% complete
+  graduationMaxWaitMs: 3_600_000,      // 1 hour max wait for graduation
+  copyWalletAddresses: [],             // Whale addresses to mirror
+  copyTradeDelayMs: 500,               // 500ms delay before mirroring
+  quickScalpMinAgeMs: 3_000,           // 3 seconds min hold
+  quickScalpMinProfitPct: 5,           // 5% min profit to scalp
 };
 
 // Template presets are defined in ../../services/ai/strategy-templates.ts
@@ -483,6 +494,142 @@ export function seedDefaultTemplate(): void {
       stats: makeEmptyStats(),
     });
   }
+
+  // ── Strategy: Graduation Hold — buy early, hold through graduation, sell on DEX ──
+  if (!sniperTemplates.has('graduation-hold')) {
+    seedTemplateEntry('graduation-hold', {
+      id: 'graduation-hold',
+      name: 'Graduation Hold',
+      enabled: false,
+      ...DEFAULT_CONFIG_FIELDS,
+      strategyType: 'graduation_hold',
+      buyAmountSol: 0.05,
+      maxOpenPositions: 10,
+      // Hold until graduation — very long max age
+      maxPositionAgeMs: 3_600_000,         // 1 hour — abandon if no graduation
+      stalePriceTimeoutMs: 600_000,        // 10 min stale tolerance
+      // NEVER sell on bonding curve — abandon instead
+      abandonOnBondingCurve: true,
+      stopLossPercent: -90,                // Effectively disabled — we abandon, not sell
+      // After graduation, use tight tiered exits on DEX
+      enableTieredExits: true,
+      exitTier1PctGain: 100,  exitTier1SellPct: 50,
+      exitTier2PctGain: 300,  exitTier2SellPct: 25,
+      exitTier3PctGain: 500,  exitTier3SellPct: 15,
+      exitTier4PctGain: 900,  exitTier4SellPct: 100,
+      trailingStopActivatePercent: 50,
+      trailingStopPercent: -20,
+      // Strict entry — only buy tokens likely to graduate
+      minUniqueBuyers: 8,
+      minBuySellRatio: 3.5,
+      minBuyVolumeSol: 2.0,
+      momentumWindowMs: 20_000,
+      minRugCheckScore: 700,
+      maxTopHolderPct: 20,
+      graduationMaxWaitMs: 3_600_000,
+      consecutiveLossPauseThreshold: 9999,
+      maxDailyLossSol: 999,
+      stats: makeEmptyStats(),
+    });
+  }
+
+  // ── Strategy: Quick Scalp — buy, sell any profit after 3-5s on bonding curve ──
+  if (!sniperTemplates.has('quick-scalp')) {
+    seedTemplateEntry('quick-scalp', {
+      id: 'quick-scalp',
+      name: 'Quick Scalp',
+      enabled: false,
+      ...DEFAULT_CONFIG_FIELDS,
+      strategyType: 'quick_scalp',
+      buyAmountSol: 0.05,
+      maxOpenPositions: 8,
+      maxPositionAgeMs: 60_000,            // 1 min max — get in, get out
+      stalePriceTimeoutMs: 30_000,
+      stopLossPercent: -25,
+      // Scalp settings
+      quickScalpMinAgeMs: 3_000,           // Sell after 3 seconds
+      quickScalpMinProfitPct: 5,           // If >5% profit
+      // Disable tiered exits — scalp handles bonding curve, trail handles graduated
+      enableTieredExits: false,
+      trailingStopActivatePercent: 15,
+      trailingStopPercent: -10,
+      // Fast momentum gate
+      momentumWindowMs: 10_000,
+      minUniqueBuyers: 6,
+      minBuySellRatio: 3.0,
+      consecutiveLossPauseThreshold: 9999,
+      maxDailyLossSol: 999,
+      stats: makeEmptyStats(),
+    });
+  }
+
+  // ── Strategy: Copy Trading — mirror whale wallet buys/sells ──
+  if (!sniperTemplates.has('copy-trade')) {
+    seedTemplateEntry('copy-trade', {
+      id: 'copy-trade',
+      name: 'Copy Trading',
+      enabled: false,
+      ...DEFAULT_CONFIG_FIELDS,
+      strategyType: 'copy_trade',
+      buyAmountSol: 0.05,
+      maxOpenPositions: 10,
+      maxPositionAgeMs: 1_800_000,         // 30 min
+      // Copy trade settings
+      copyWalletAddresses: [],             // User adds wallet addresses
+      copyTradeDelayMs: 500,
+      // No momentum gate — whale IS the signal
+      momentumWindowMs: 1_000,             // Minimal observation
+      minUniqueBuyers: 1,                  // Just the whale
+      minBuySellRatio: 0,                  // Don't filter
+      minBuyVolumeSol: 0,
+      // Standard exits
+      enableTieredExits: true,
+      exitTier1PctGain: 50,   exitTier1SellPct: 50,
+      exitTier2PctGain: 100,  exitTier2SellPct: 30,
+      exitTier3PctGain: 300,  exitTier3SellPct: 20,
+      exitTier4PctGain: 900,  exitTier4SellPct: 100,
+      trailingStopActivatePercent: 20,
+      trailingStopPercent: -15,
+      stopLossPercent: -30,
+      consecutiveLossPauseThreshold: 9999,
+      maxDailyLossSol: 999,
+      stats: makeEmptyStats(),
+    });
+  }
+
+  // ── Strategy: Graduation Snipe — buy AT graduation moment, sell on DEX ──
+  if (!sniperTemplates.has('graduation-snipe')) {
+    seedTemplateEntry('graduation-snipe', {
+      id: 'graduation-snipe',
+      name: 'Graduation Snipe',
+      enabled: false,
+      ...DEFAULT_CONFIG_FIELDS,
+      strategyType: 'graduation_snipe',
+      buyAmountSol: 0.10,                  // Bigger size — higher conviction
+      maxOpenPositions: 5,
+      maxPositionAgeMs: 1_800_000,         // 30 min
+      // Only buy when token is about to graduate
+      graduationBuyThreshold: 0.90,        // Buy at 90% bonding curve progress
+      minMarketCapUsd: 50_000,             // Near graduation mcap
+      maxMarketCapUsd: 500_000,
+      // All exits on DEX — good fills
+      enableTieredExits: true,
+      exitTier1PctGain: 50,   exitTier1SellPct: 50,
+      exitTier2PctGain: 100,  exitTier2SellPct: 30,
+      exitTier3PctGain: 200,  exitTier3SellPct: 20,
+      exitTier4PctGain: 500,  exitTier4SellPct: 100,
+      trailingStopActivatePercent: 15,
+      trailingStopPercent: -10,
+      stopLossPercent: -25,
+      // No traditional momentum gate — graduation IS the signal
+      momentumWindowMs: 5_000,
+      minUniqueBuyers: 3,
+      minBuySellRatio: 1.0,
+      consecutiveLossPauseThreshold: 9999,
+      maxDailyLossSol: 999,
+      stats: makeEmptyStats(),
+    });
+  }
 }
 
 seedDefaultTemplate();
@@ -788,6 +935,14 @@ export function templateToLegacyConfig(template: SniperTemplate): SniperConfig {
     enableOnChainAuthorityCheck: template.enableOnChainAuthorityCheck,
     enableHoneypotCheck: template.enableHoneypotCheck,
     honeypotMaxSlippagePct: template.honeypotMaxSlippagePct,
+    strategyType: template.strategyType,
+    abandonOnBondingCurve: template.abandonOnBondingCurve,
+    graduationBuyThreshold: template.graduationBuyThreshold,
+    graduationMaxWaitMs: template.graduationMaxWaitMs,
+    copyWalletAddresses: template.copyWalletAddresses,
+    copyTradeDelayMs: template.copyTradeDelayMs,
+    quickScalpMinAgeMs: template.quickScalpMinAgeMs,
+    quickScalpMinProfitPct: template.quickScalpMinProfitPct,
   };
 }
 
@@ -851,6 +1006,7 @@ export function stopPositionCheckIfIdle(): void {
 // ── Validation Helpers ────────────────────────────────────────────────
 
 export const SNIPER_CONFIG_KEYS: ReadonlyArray<keyof SniperConfigFields> = [
+  'strategyType',
   'buyAmountSol', 'dailyBudgetSol', 'slippageBps', 'priorityFee',
   'takeProfitPercent', 'stopLossPercent', 'minLiquidityUsd', 'maxMarketCapUsd',
   'requireMintRevoked', 'requireFreezeRevoked', 'maxOpenPositions',
@@ -887,6 +1043,10 @@ export const SNIPER_CONFIG_KEYS: ReadonlyArray<keyof SniperConfigFields> = [
   'enableOnChainAuthorityCheck',
   // Phase 12: Honeypot Pre-Check
   'enableHoneypotCheck', 'honeypotMaxSlippagePct',
+  // Phase 13: Strategy-Specific
+  'abandonOnBondingCurve', 'graduationBuyThreshold', 'graduationMaxWaitMs',
+  'copyWalletAddresses', 'copyTradeDelayMs',
+  'quickScalpMinAgeMs', 'quickScalpMinProfitPct',
 ] as const;
 
 export function validateConfigUpdates(
@@ -1022,6 +1182,15 @@ export function applyConfigToTemplate(
   // Phase 12: Honeypot Pre-Check
   if (fields.enableHoneypotCheck !== undefined) template.enableHoneypotCheck = fields.enableHoneypotCheck;
   if (fields.honeypotMaxSlippagePct !== undefined) template.honeypotMaxSlippagePct = fields.honeypotMaxSlippagePct;
+  // Phase 13: Strategy-Specific
+  if (fields.strategyType !== undefined) template.strategyType = fields.strategyType;
+  if (fields.abandonOnBondingCurve !== undefined) template.abandonOnBondingCurve = fields.abandonOnBondingCurve;
+  if (fields.graduationBuyThreshold !== undefined) template.graduationBuyThreshold = fields.graduationBuyThreshold;
+  if (fields.graduationMaxWaitMs !== undefined) template.graduationMaxWaitMs = fields.graduationMaxWaitMs;
+  if (fields.copyWalletAddresses !== undefined) template.copyWalletAddresses = fields.copyWalletAddresses;
+  if (fields.copyTradeDelayMs !== undefined) template.copyTradeDelayMs = fields.copyTradeDelayMs;
+  if (fields.quickScalpMinAgeMs !== undefined) template.quickScalpMinAgeMs = fields.quickScalpMinAgeMs;
+  if (fields.quickScalpMinProfitPct !== undefined) template.quickScalpMinProfitPct = fields.quickScalpMinProfitPct;
 }
 
 // ── Template CRUD ──────────────────────────────────────────────────────

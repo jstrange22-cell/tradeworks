@@ -327,6 +327,30 @@ solanaBalancesRouter.get('/balances', async (_req, res) => {
     // DexScreener fallback for any mints Helius couldn't price
     await fetchDexScreenerPrices(mintsToPrice, prices);
 
+    // Jupiter fallback for anything still unpriced
+    const stillUnpriced = mintsToPrice.filter(m => !prices[m] && m !== SOL_MINT);
+    if (stillUnpriced.length > 0) {
+      try {
+        const jupRes = await fetch(
+          `https://api.jup.ag/price/v2?ids=${stillUnpriced.join(',')}`,
+          { signal: AbortSignal.timeout(5000) },
+        );
+        if (jupRes.ok) {
+          const jupData = (await jupRes.json()) as { data: Record<string, { price?: string }> };
+          for (const mint of stillUnpriced) {
+            const p = parseFloat(jupData.data?.[mint]?.price ?? '0');
+            if (p > 0) prices[mint] = p;
+          }
+          const resolved = stillUnpriced.filter(m => prices[m]);
+          if (resolved.length > 0) {
+            console.log(`[Solana] Jupiter resolved ${resolved.length}/${stillUnpriced.length} unpriced tokens`);
+          }
+        }
+      } catch {
+        // Jupiter unavailable — prices stay at 0
+      }
+    }
+
     // Build SOL values
     const solPrice = prices[SOL_MINT] ?? 0;
     const solValueUsd = solBalance * solPrice;

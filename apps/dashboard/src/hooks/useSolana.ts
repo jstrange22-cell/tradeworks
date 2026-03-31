@@ -207,6 +207,30 @@ export function useDeleteSniperTemplate() {
   });
 }
 
+export function useStartTemplate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.post<{ message: string }>(`/solana/sniper/templates/${id}/start`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sniper-templates'] });
+      queryClient.invalidateQueries({ queryKey: ['sniper-status'] });
+    },
+  });
+}
+
+export function useStopTemplate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.post<{ message: string }>(`/solana/sniper/templates/${id}/stop`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sniper-templates'] });
+      queryClient.invalidateQueries({ queryKey: ['sniper-status'] });
+    },
+  });
+}
+
 export function useToggleSniperTemplate() {
   const queryClient = useQueryClient();
   return useMutation({

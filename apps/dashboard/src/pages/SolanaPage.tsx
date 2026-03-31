@@ -5,11 +5,13 @@ import { StatCard } from '@/components/solana/shared';
 import { ScannerTab, PumpFunTab, SniperTab, WhaleTab, MoonshotTab, ActiveTradesPanel } from '@/components/solana';
 import { HoldingsTab } from '@/components/solana/HoldingsTab';
 import { SniperPnL } from '@/components/solana/SniperPnL';
+import { StrategiesTab } from '@/components/solana/StrategiesTab';
 import { useWalletStatus, useBalances, useSniperTemplates } from '@/hooks/useSolana';
 import { usePhantomBalance } from '@/hooks/usePhantomBalance';
 import type { PageTab } from '@/types/solana';
 
 const TABS: ReadonlyArray<{ key: PageTab; label: string; icon: React.ReactNode }> = [
+  { key: 'strategies', label: 'Strategies', icon: <Zap className="h-3.5 w-3.5" /> },
   { key: 'scanner', label: 'Scanner', icon: <TrendingUp className="h-3.5 w-3.5" /> },
   { key: 'pumpfun', label: 'pump.fun', icon: <Rocket className="h-3.5 w-3.5" /> },
   { key: 'sniper', label: 'Sniper', icon: <Crosshair className="h-3.5 w-3.5" /> },
@@ -20,7 +22,7 @@ const TABS: ReadonlyArray<{ key: PageTab; label: string; icon: React.ReactNode }
 ] as const;
 
 export function SolanaPage() {
-  const [activeTab, setActiveTab] = useState<PageTab>('scanner');
+  const [activeTab, setActiveTab] = useState<PageTab>('strategies');
 
   // Phantom browser wallet (full balance: SOL + all tokens)
   const { totalValueUsd: phantomTotalUsd, tokens: phantomTokens, loading: phantomLoading, connected: phantomConnected, publicKey: phantomKey } = usePhantomBalance();
@@ -176,6 +178,7 @@ export function SolanaPage() {
       </div>
 
       {/* Tab Content */}
+      {activeTab === 'strategies' && <StrategiesTab />}
       {activeTab === 'scanner' && <ScannerTab balances={balances} />}
       {activeTab === 'pumpfun' && <PumpFunTab />}
       {activeTab === 'sniper' && <SniperTab />}

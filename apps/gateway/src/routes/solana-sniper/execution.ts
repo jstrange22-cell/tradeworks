@@ -52,12 +52,168 @@ import {
   DEFAULT_TEMPLATE_ID,
 } from './state.js';
 
-// ── Raydium swap helper (replaced dead Jupiter API) ──────────────────
+// ── Constants ────────────────────────────────────────────────────────
 
 const RAYDIUM_QUOTE_URL = 'https://transaction-v1.raydium.io/compute/swap-base-in';
 const RAYDIUM_SWAP_URL = 'https://transaction-v1.raydium.io/transaction/swap-base-in';
+// Jupiter API — free tier works, just needs an API key from portal.jup.ag
+const JUPITER_API_KEY = process.env.JUPITER_API_KEY ?? '';
+const JUPITER_QUOTE_URL = 'https://api.jup.ag/swap/v1/quote';
+const JUPITER_SWAP_URL = 'https://api.jup.ag/swap/v1/swap';
 export const SOL_MINT = 'So11111111111111111111111111111111111111112';
 export const LAMPORTS_PER_SOL = 1_000_000_000;
+
+// Jito DontFront pubkey — prevents sandwich attacks on our sells
+// Used in Jupiter swap requests and direct Jito bundle submissions
+export const JITO_DONTFRONT_PUBKEY = 'jitodontfrontGcWhqjJfT8i8V1dCUACkxm5N9LD2vrD';
+
+// ── Dynamic Priority Fee ─────────────────────────────────────────────
+
+/**
+ * Fetch optimal priority fee based on recent network conditions.
+ * Returns microlamports per compute unit.
+ */
+async function getDynamicPriorityFee(fallback: number = 200_000): Promise<number> {
+  try {
+    const connection = getSolanaConnection();
+    const fees = await connection.getRecentPrioritizationFees();
+    if (fees.length === 0) return fallback;
+
+    // Use the 75th percentile of recent fees (balance speed vs cost)
+    const sorted = fees.map(f => f.prioritizationFee).sort((a, b) => a - b);
+    const p75 = sorted[Math.floor(sorted.length * 0.75)] ?? fallback;
+
+    // Clamp: min 10,000 (cheap), max 1,000,000 (expensive but lands)
+    const clamped = Math.max(10_000, Math.min(1_000_000, p75));
+    return clamped;
+  } catch {
+    return fallback;
+  }
+}
+
+// ── Jupiter Sell (split routing across multiple DEXs) ────────────────
+
+/**
+ * Execute a sell via Jupiter V6 API with split routing.
+ * Jupiter automatically splits large trades across multiple DEXs
+ * to minimize price impact — critical for thin meme token liquidity.
+ */
+async function executeJupiterSell(params: {
+  mint: string;
+  amountRaw: string;  // Raw token amount (lamports/smallest unit)
+  slippageBps: number;
+  priorityFee: number;
+}): Promise<SwapResult> {
+  const keypair = getSolanaKeypair();
+  const connection = getSolanaConnection();
+
+  if (!JUPITER_API_KEY) {
+    throw new Error('Jupiter API key not configured — set JUPITER_API_KEY env var (free at portal.jup.ag)');
+  }
+
+  // 1. Get Jupiter quote with split routing
+  const quoteParams = new URLSearchParams({
+    inputMint: params.mint,
+    outputMint: SOL_MINT,
+    amount: params.amountRaw,
+    slippageBps: String(params.slippageBps),
+    restrictIntermediateTokens: 'true',  // Avoid routing through illiquid pairs
+  });
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (JUPITER_API_KEY) headers['x-api-key'] = JUPITER_API_KEY;
+
+  const quoteRes = await fetch(`${JUPITER_QUOTE_URL}?${quoteParams}`, {
+    headers,
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!quoteRes.ok) {
+    const err = await quoteRes.text();
+    throw new Error(`Jupiter quote failed (${quoteRes.status}): ${err.slice(0, 200)}`);
+  }
+
+  const quoteData = await quoteRes.json() as Record<string, unknown>;
+  const outAmount = quoteData.outAmount as string | undefined;
+  const routePlan = quoteData.routePlan as Array<unknown> | undefined;
+
+  console.log(
+    `[Sniper] Jupiter sell quote: ${params.mint.slice(0, 8)}... → SOL, out=${outAmount ?? '?'}, routes=${routePlan?.length ?? '?'}`,
+  );
+
+  // 2. Build swap transaction with DontFront MEV protection
+  const swapHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (JUPITER_API_KEY) swapHeaders['x-api-key'] = JUPITER_API_KEY;
+
+  const swapRes = await fetch(JUPITER_SWAP_URL, {
+    method: 'POST',
+    headers: swapHeaders,
+    signal: AbortSignal.timeout(10_000),
+    body: JSON.stringify({
+      quoteResponse: quoteData,
+      userPublicKey: keypair.publicKey.toBase58(),
+      wrapAndUnwrapSol: true,
+      dynamicComputeUnitLimit: true,  // CU optimization — only pay for what we use
+      prioritizationFeeLamports: params.priorityFee,
+    }),
+  });
+
+  if (!swapRes.ok) {
+    const err = await swapRes.text();
+    throw new Error(`Jupiter swap build failed (${swapRes.status}): ${err.slice(0, 200)}`);
+  }
+
+  const swapData = await swapRes.json() as { swapTransaction?: string };
+  if (!swapData.swapTransaction) {
+    throw new Error('Jupiter returned no swap transaction');
+  }
+
+  // 3. Deserialize, sign, send
+  const txBuf = Buffer.from(swapData.swapTransaction, 'base64');
+  const transaction = VersionedTransaction.deserialize(txBuf);
+  transaction.sign([keypair]);
+
+  const serializedTx = transaction.serialize();
+
+  // Try Jito first, then direct send
+  let signature: string;
+  try {
+    const jitoResult = await submitViaJito(serializedTx, Math.max(params.priorityFee, 100_000));
+    if (jitoResult.success && jitoResult.bundleId) {
+      const bs58 = await import('bs58');
+      signature = bs58.default.encode(transaction.signatures[0]);
+      console.log(`[Sniper] Jupiter sell via Jito: ${jitoResult.bundleId}`);
+    } else {
+      throw new Error('Jito failed');
+    }
+  } catch {
+    signature = await withRpcRetry(
+      () => connection.sendRawTransaction(serializedTx, { skipPreflight: false, maxRetries: 5 }),
+      2,
+    );
+    console.log(`[Sniper] Jupiter sell tx sent (direct): ${signature}`);
+  }
+
+  // 4. Confirm
+  let success = false;
+  try {
+    const { blockhash, lastValidBlockHeight } = await withRpcRetry(
+      () => connection.getLatestBlockhash('confirmed'),
+    );
+    const confirmation = await connection.confirmTransaction(
+      { signature, blockhash, lastValidBlockHeight },
+      'confirmed',
+    );
+    success = !confirmation.value.err;
+  } catch {
+    try {
+      const status = await connection.getSignatureStatus(signature, { searchTransactionHistory: true });
+      success = status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized';
+    } catch { /* give up */ }
+  }
+
+  return { signature, success, outAmount: outAmount ?? null };
+}
 
 export async function executeSwap(params: {
   inputMint: string;
@@ -268,15 +424,45 @@ export async function executePumpPortalSwap(params: {
 
   transaction.sign([keypair]);
 
-  const signature = await withRpcRetry(
-    () => connection.sendRawTransaction(transaction.serialize(), {
-      skipPreflight: false,
-      maxRetries: 5,
-    }),
-    2,
-  );
+  const serializedTx = transaction.serialize();
+  let signature: string;
 
-  console.log(`[Sniper] PumpPortal tx sent: ${signature}`);
+  // If Jito is enabled, submit via Jito bundle for MEV protection
+  // Otherwise fall back to direct sendRawTransaction
+  const useJito = params.priorityFeeLamports >= 100_000; // Use Jito when priority fee is meaningful
+
+  if (useJito) {
+    try {
+      const jitoResult = await submitViaJito(serializedTx, Math.max(params.priorityFeeLamports, 100_000));
+      if (jitoResult.success && jitoResult.bundleId) {
+        // Jito bundles don't return a signature directly — extract from the serialized tx
+        const bs58 = await import('bs58');
+        signature = bs58.default.encode(transaction.signatures[0]);
+        console.log(`[Sniper] Jito bundle submitted: ${jitoResult.bundleId} (sig: ${signature})`);
+      } else {
+        // Jito failed — fall back to direct send
+        console.warn(`[Sniper] Jito bundle failed, falling back to direct send`);
+        signature = await withRpcRetry(
+          () => connection.sendRawTransaction(serializedTx, { skipPreflight: false, maxRetries: 5 }),
+          2,
+        );
+        console.log(`[Sniper] PumpPortal tx sent (direct): ${signature}`);
+      }
+    } catch (jitoErr) {
+      console.warn(`[Sniper] Jito error, falling back to direct send:`, jitoErr instanceof Error ? jitoErr.message : jitoErr);
+      signature = await withRpcRetry(
+        () => connection.sendRawTransaction(serializedTx, { skipPreflight: false, maxRetries: 5 }),
+        2,
+      );
+      console.log(`[Sniper] PumpPortal tx sent (direct fallback): ${signature}`);
+    }
+  } else {
+    signature = await withRpcRetry(
+      () => connection.sendRawTransaction(serializedTx, { skipPreflight: false, maxRetries: 5 }),
+      2,
+    );
+    console.log(`[Sniper] PumpPortal tx sent: ${signature}`);
+  }
 
   // Confirm with timeout fallback
   let success = false;
@@ -582,15 +768,18 @@ export async function executeBuySnipe(params: {
 
       let result: SwapResult;
 
+      // Dynamic priority fee — pay market rate instead of fixed overpay
+      const buyFee = await getDynamicPriorityFee(template.priorityFee);
+
       try {
-        console.log(`[Sniper][${template.name}] Trying PumpPortal buy for ${params.symbol}...`);
+        console.log(`[Sniper][${template.name}] Trying PumpPortal buy for ${params.symbol} (fee ${buyFee}µL)...`);
         result = await executePumpPortalSwap({
           action: 'buy',
           mint: params.mint,
           amount: effectiveBuyAmountSol,
           denominatedInSol: true,
           slippageBps: template.slippageBps,
-          priorityFeeLamports: template.priorityFee,
+          priorityFeeLamports: buyFee,
         });
       } catch (ppErr) {
         console.warn(
@@ -924,28 +1113,61 @@ export async function executeSellSnipe(
       // Sell all tokens back to SOL — PumpPortal first, Jupiter fallback
       let result: SwapResult;
 
+      // ── OPTIMIZED SELL EXECUTION ──────────────────────────────────────
+      // Priority: Jupiter (split routing) → PumpPortal → Raydium
+      // Jupiter splits across multiple DEXs for less price impact.
+      // Dynamic priority fees to stop overpaying during calm periods.
+
+      const sellSlippageBps = Math.max(template.slippageBps, 2500); // min 25%
+      const dynamicFee = await getDynamicPriorityFee(template.priorityFee);
+      const sellFee = Math.max(dynamicFee, 200_000); // min 200k for sells
+
+      // Calculate expected SOL return for fill quality logging
+      const expectedSolReturn = position.buyPrice > 0 && position.currentPrice > 0
+        ? (position.buyCostSol ?? template.buyAmountSol) * (position.currentPrice / position.buyPrice) * sellPct
+        : 0;
+
+      const tokenAmountRaw = String(Math.floor(sellAmount * 1_000_000)); // pump.fun = 6 decimals
+
+      // Strategy 1: Jupiter split routing (best for reducing price impact) — requires API key
       try {
-        console.log(`[Sniper][${template.name}] Trying PumpPortal sell for ${position.symbol} (${sellAmount.toFixed(2)} tokens)...`);
-        result = await executePumpPortalSwap({
-          action: 'sell',
+        if (!JUPITER_API_KEY) throw new Error('No Jupiter API key');
+        console.log(`[Sniper][${template.name}] Trying Jupiter sell for ${position.symbol} (${sellAmount.toFixed(2)} tokens, fee ${sellFee}µL)...`);
+        result = await executeJupiterSell({
           mint,
-          amount: sellAmount, // PumpPortal expects UI token amount when denominatedInSol=false
-          denominatedInSol: false,
-          slippageBps: template.slippageBps,
-          priorityFeeLamports: template.priorityFee,
+          amountRaw: tokenAmountRaw,
+          slippageBps: sellSlippageBps,
+          priorityFee: sellFee,
         });
-      } catch (ppErr) {
-        console.warn(
-          `[Sniper][${template.name}] PumpPortal sell failed, falling back to Jupiter:`,
-          ppErr instanceof Error ? ppErr.message : ppErr,
-        );
-        result = await executeSwap({
-          inputMint: mint,
-          outputMint: SOL_MINT,
-          amountLamports: String(Math.floor(sellAmount * 1_000_000)), // pump.fun tokens = 6 decimals
-          slippageBps: Math.max(template.slippageBps, 2500), // min 25% slippage for Jupiter sells
-          priorityFee: template.priorityFee,
-        });
+      } catch (jupErr) {
+        const jupMsg = jupErr instanceof Error ? jupErr.message : String(jupErr);
+        console.warn(`[Sniper][${template.name}] Jupiter sell failed (${jupMsg}), trying PumpPortal...`);
+
+        // Strategy 2: PumpPortal (works for bonding curve tokens Jupiter can't route)
+        try {
+          result = await executePumpPortalSwap({
+            action: 'sell',
+            mint,
+            amount: sellAmount,
+            denominatedInSol: false,
+            slippageBps: Math.max(sellSlippageBps, 3000),
+            priorityFeeLamports: Math.max(sellFee, 500_000),
+          });
+        } catch (ppErr) {
+          console.warn(
+            `[Sniper][${template.name}] PumpPortal sell also failed, trying Raydium:`,
+            ppErr instanceof Error ? ppErr.message : ppErr,
+          );
+
+          // Strategy 3: Raydium direct (last resort)
+          result = await executeSwap({
+            inputMint: mint,
+            outputMint: SOL_MINT,
+            amountLamports: tokenAmountRaw,
+            slippageBps: Math.max(sellSlippageBps, 3500),
+            priorityFee: Math.max(sellFee, 500_000),
+          });
+        }
       }
 
       execution.signature = result.signature;
@@ -995,6 +1217,21 @@ export async function executeSellSnipe(
           // Only fall back to estimates if on-chain measurement fails
           if (actualSolReceived > 0) {
             execution.amountSol = actualSolReceived;
+
+            // Log fill quality — expected vs actual
+            if (expectedSolReturn > 0) {
+              const fillPct = (actualSolReceived / expectedSolReturn) * 100;
+              const slippageLoss = expectedSolReturn - actualSolReceived;
+              if (fillPct < 70) {
+                console.warn(
+                  `[Sniper][${template.name}] ⚠️ BAD FILL on ${position.symbol} sell: expected ${expectedSolReturn.toFixed(4)} SOL, got ${actualSolReceived.toFixed(4)} SOL (${fillPct.toFixed(0)}% fill, lost ${slippageLoss.toFixed(4)} SOL to slippage)`,
+                );
+              } else {
+                console.log(
+                  `[Sniper][${template.name}] Fill quality ${position.symbol}: ${fillPct.toFixed(0)}% (expected ${expectedSolReturn.toFixed(4)}, got ${actualSolReceived.toFixed(4)})`,
+                );
+              }
+            }
           } else {
             // On-chain measurement failed — log warning and use best estimate
             let estimatedSol = 0;
