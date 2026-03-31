@@ -1,0 +1,169 @@
+# ============================================================================
+# TradeWorks APEX — Sandbox Security Policy
+# Autonomous Trading Intelligence Agent
+# ============================================================================
+
+version: "1.0"
+policy_name: tradeworks-apex-sandbox
+
+# ── Filesystem Restrictions ────────────────────────────────────────────────
+
+filesystem:
+  default: DENY
+  rules:
+    - path: /sandbox
+      access: READ_WRITE
+      recursive: true
+    - path: /tmp
+      access: READ_WRITE
+      recursive: true
+    - path: ~/.openclaw/skills/
+      access: READ_ONLY
+      recursive: true
+    - path: ~/.openclaw/workspace/SOUL.md
+      access: READ_ONLY
+      recursive: false
+
+# ── Network Restrictions ───────────────────────────────────────────────────
+
+network:
+  default: DENY
+  outbound:
+    # LLM Inference
+    - host: api.anthropic.com
+      ports: [443]
+      protocol: HTTPS
+      note: "Claude (primary model)"
+    - host: api.deepseek.com
+      ports: [443]
+      protocol: HTTPS
+      note: "DeepSeek (fallback model)"
+
+    # TradeWorks Internal Gateway
+    - host: localhost
+      ports: [4000]
+      protocol: HTTP
+      note: "TradeWorks gateway API"
+    - host: tradeworks-gateway
+      ports: [4000]
+      protocol: HTTP
+      note: "Docker service name"
+
+    # Crypto Exchanges
+    - host: api.coinbase.com
+      ports: [443]
+      protocol: HTTPS
+    - host: advanced-trade-ws.coinbase.com
+      ports: [443]
+      protocol: HTTPS
+    - host: ws-feed.exchange.coinbase.com
+      ports: [443]
+      protocol: HTTPS
+
+    # Equities
+    - host: api.alpaca.markets
+      ports: [443]
+      protocol: HTTPS
+    - host: data.alpaca.markets
+      ports: [443]
+      protocol: HTTPS
+    - host: paper-api.alpaca.markets
+      ports: [443]
+      protocol: HTTPS
+    - host: stream.data.alpaca.markets
+      ports: [443]
+      protocol: HTTPS
+
+    # Solana RPC & DEX
+    - host: "*.helius-rpc.com"
+      ports: [443]
+      protocol: HTTPS
+    - host: api.mainnet-beta.solana.com
+      ports: [443]
+      protocol: HTTPS
+    - host: api.jup.ag
+      ports: [443]
+      protocol: HTTPS
+    - host: pumpportal.fun
+      ports: [443]
+      protocol: HTTPS
+    - host: transaction-v1.raydium.io
+      ports: [443]
+      protocol: HTTPS
+
+    # Jito MEV Protection
+    - host: mainnet.block-engine.jito.wtf
+      ports: [443]
+      protocol: HTTPS
+
+    # Market Data
+    - host: api.dexscreener.com
+      ports: [443]
+      protocol: HTTPS
+    - host: public-api.birdeye.so
+      ports: [443]
+      protocol: HTTPS
+    - host: api.coingecko.com
+      ports: [443]
+      protocol: HTTPS
+    - host: api.crypto.com
+      ports: [443]
+      protocol: HTTPS
+
+    # Token Security
+    - host: api.gopluslabs.io
+      ports: [443]
+      protocol: HTTPS
+    - host: api.rugcheck.xyz
+      ports: [443]
+      protocol: HTTPS
+
+    # Prediction Markets
+    - host: clob.polymarket.com
+      ports: [443]
+      protocol: HTTPS
+    - host: gamma-api.polymarket.com
+      ports: [443]
+      protocol: HTTPS
+
+    # Sports Betting
+    - host: api.the-odds-api.com
+      ports: [443]
+      protocol: HTTPS
+
+    # News & Sentiment
+    - host: api.tavily.com
+      ports: [443]
+      protocol: HTTPS
+
+# ── Command Blocklist ──────────────────────────────────────────────────────
+
+commands:
+  blocked:
+    - pattern: "openclaw skills install"
+      reason: "Skill installation not permitted in sandbox"
+    - pattern: "pip install"
+      reason: "Python package installation not permitted"
+    - pattern: "npm install"
+      reason: "Node package installation not permitted"
+    - pattern: "curl"
+      reason: "Direct HTTP not permitted — use skill tools"
+    - pattern: "wget"
+      reason: "Direct HTTP not permitted — use skill tools"
+    - pattern: "write_file"
+      reason: "File writes restricted to /sandbox only"
+    - pattern: "edit_file"
+      reason: "File edits restricted to /sandbox only"
+    - pattern: "rm -rf"
+      reason: "Destructive file operations not permitted"
+    - pattern: "sudo"
+      reason: "Privilege escalation not permitted"
+
+# ── Process Limits ─────────────────────────────────────────────────────────
+
+process_limits:
+  max_memory: "4G"
+  max_cpu: 2
+  max_processes: 50
+  max_network_connections: 100
+  max_request_timeout_ms: 30000

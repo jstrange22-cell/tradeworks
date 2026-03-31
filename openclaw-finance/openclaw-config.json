@@ -1,0 +1,83 @@
+{
+  "name": "tradeworks-apex-agent",
+  "version": "1.0.0",
+  "description": "APEX — TradeWorks Autonomous Trading Intelligence Agent. Multi-market portfolio management, AI signal generation, risk management, and automated trade execution across crypto, equities, prediction markets, and sports betting.",
+  "author": "Strange Digital Group",
+  "model": {
+    "primary": "claude-opus-4-5",
+    "fallback": [
+      {
+        "model": "deepseek-chat",
+        "provider": "deepseek",
+        "trigger": "rate_limit_or_error"
+      }
+    ],
+    "temperature": 0.2,
+    "maxTokens": 8192
+  },
+  "permissions": {
+    "granted": [
+      "read_portfolio",
+      "read_positions",
+      "read_trades",
+      "read_risk_metrics",
+      "read_market_data",
+      "read_balances",
+      "execute_trades",
+      "cancel_orders",
+      "close_positions",
+      "run_backtest",
+      "generate_signals",
+      "scan_tokens",
+      "sniper_execute",
+      "sniper_config",
+      "whale_track",
+      "arbitrage_scan",
+      "journal_write",
+      "journal_read",
+      "polymarket_trade",
+      "sports_analyze",
+      "engine_control",
+      "circuit_breaker_trip",
+      "notifications_send",
+      "market_research",
+      "strategy_evaluate",
+      "web_search"
+    ],
+    "denied": [
+      "modify_skills",
+      "access_host_fs",
+      "install_packages",
+      "modify_config",
+      "execute_shell",
+      "write_config",
+      "access_env_vars",
+      "execute_arbitrary_code",
+      "write_to_host",
+      "read_credentials",
+      "export_api_keys",
+      "modify_wallet_keys",
+      "transfer_funds_external",
+      "modify_soul_template",
+      "escalate_permissions"
+    ]
+  },
+  "skills": [
+    { "name": "PortfolioIntelligenceSkill", "command": "portfolio", "description": "Portfolio overview, P&L, allocation, equity curve" },
+    { "name": "TradeExecutionSkill", "command": "trade", "description": "Execute, close, or modify trades across all markets" },
+    { "name": "RiskManagementSkill", "command": "risk", "description": "Risk metrics, Kelly sizing, portfolio heat, circuit breaker" },
+    { "name": "MarketScannerSkill", "command": "scan", "description": "Scan crypto tokens, stocks, prediction markets, sports lines" },
+    { "name": "SignalGeneratorSkill", "command": "signal", "description": "Generate AI trading signals with confidence scoring" },
+    { "name": "SolanaSniperSkill", "command": "sniper", "description": "Manage sniper bot templates, strategies, and positions" },
+    { "name": "WhaleTrackerSkill", "command": "whale", "description": "Track whale wallets, copy trading, smart money alerts" },
+    { "name": "BacktestSkill", "command": "backtest", "description": "Historical strategy backtesting and evaluation" },
+    { "name": "ArbitrageSkill", "command": "arb", "description": "Cross-exchange and cross-market arbitrage detection" },
+    { "name": "PolymarketSkill", "command": "predict", "description": "Prediction market analysis, odds comparison, betting" },
+    { "name": "SportsBettingSkill", "command": "sports", "description": "Sports odds, line shopping, +EV detection, prop analysis" },
+    { "name": "MacroRegimeSkill", "command": "regime", "description": "Macro market regime classification and cross-market correlation" },
+    { "name": "JournalSkill", "command": "journal", "description": "Trade journal, decision logging, performance review" },
+    { "name": "IntelligenceBriefSkill", "command": "brief", "description": "Market intelligence reports, morning briefs, news digests" }
+  ],
+  "policy": "openclaw-finance/policy.yaml",
+  "soul_template": "openclaw-finance/SOUL.md"
+}
