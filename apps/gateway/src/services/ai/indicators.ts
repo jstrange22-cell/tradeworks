@@ -360,3 +360,28 @@ export function computeAllIndicators(candles: OHLCV[]): IndicatorSignal[] {
 
   return results;
 }
+
+// ── Multi-Timeframe Wrapper ─────────────────────────────────────────────
+
+export interface MultiTimeframeIndicators {
+  h1: IndicatorSignal[];
+  h4: IndicatorSignal[];
+  d1: IndicatorSignal[];
+}
+
+/**
+ * Compute all 6 indicators across 3 timeframes (1h, 4h, 1D).
+ * Used by Tradevisor multi-TF aggregator to detect alignment across timeframes.
+ * Assumes all candle arrays are oldest-first.
+ */
+export function computeAllIndicatorsMulti(
+  h1: OHLCV[],
+  h4: OHLCV[],
+  d1: OHLCV[],
+): MultiTimeframeIndicators {
+  return {
+    h1: computeAllIndicators(h1),
+    h4: computeAllIndicators(h4),
+    d1: computeAllIndicators(d1),
+  };
+}
