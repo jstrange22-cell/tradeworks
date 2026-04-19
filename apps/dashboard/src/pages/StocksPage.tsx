@@ -57,6 +57,49 @@ interface StockPortfolio {
   byEngine: Record<string, { trades: number; pnl: number; winRate: number }>;
 }
 
+// ── TradeVisor Paper Ledger (separate from the orchestrator's engine portfolio) ──
+
+interface EquityPositionRow {
+  id: string;
+  symbol: string;
+  shares: number;
+  entryPrice: number;
+  currentPrice: number;
+  entryAt: string;
+  signalSource: string;
+  signalScore: number;
+}
+
+interface OptionPositionRow {
+  id: string;
+  symbol: string;
+  occSymbol: string;
+  type: 'call' | 'put';
+  strike: number;
+  expiry: string;
+  contracts: number;
+  entryMid: number;
+  currentMid: number;
+  entryIV?: number;
+  entryAt: string;
+  signalSource: string;
+  signalScore: number;
+}
+
+interface TradevisorLedger {
+  paperCashUsd: number;
+  equityPositions: EquityPositionRow[];
+  optionPositions: OptionPositionRow[];
+  equityCount: number;
+  optionCount: number;
+  maxEquityPositions: number;
+  maxOptionPositions: number;
+  equityValueUsd: number;
+  optionValueUsd: number;
+  totalValueUsd: number;
+  stats: { totalTrades: number; wins: number; losses: number };
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 const ENGINE_LABELS: Record<string, { name: string; color: string; bg: string }> = {
@@ -103,6 +146,13 @@ export function StocksPage() {
     refetchInterval: 10_000,
   });
   const p = (portfolioData as { data: StockPortfolio } | undefined)?.data;
+
+  const { data: ledgerData } = useQuery({
+    queryKey: ['stocks-tradevisor-ledger'],
+    queryFn: () => apiClient.get<{ data: TradevisorLedger }>('/stocks/portfolio'),
+    refetchInterval: 15_000,
+  });
+  const tv = (ledgerData as { data: TradevisorLedger } | undefined)?.data;
 
   const { data: scanData, refetch: forceScan, isFetching: scanning } = useQuery({
     queryKey: ['stocks-scan'],
@@ -172,6 +222,104 @@ export function StocksPage() {
           </div>
         </div>
       </div>
+
+      {/* TradeVisor Paper Ledger — separate equity & options caps (N/10 each) */}
+      {tv && (
+        <div className="rounded-xl border border-sky-500/30 bg-sky-500/5 p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <Target className="h-4 w-4 text-sky-400" />
+            <span className="text-xs font-semibold text-sky-300">TradeVisor Paper Ledger</span>
+            <span className="ml-auto text-[10px] text-slate-500">
+              Cash ${tv.paperCashUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })} · Total ${tv.totalValueUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {/* Equity capacity */}
+            <div className="rounded-lg bg-slate-900/40 p-3">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[11px] font-semibold text-slate-200">Equities</span>
+                <span className="text-[10px] text-slate-400">
+                  {tv.equityCount}/{tv.maxEquityPositions}
+                </span>
+              </div>
+              <div className="h-1.5 w-full rounded-full bg-slate-700 overflow-hidden">
+                <div
+                  className="h-full bg-sky-500 transition-all"
+                  style={{ width: `${(tv.equityCount / Math.max(tv.maxEquityPositions, 1)) * 100}%` }}
+                />
+              </div>
+              <div className="mt-1.5 text-[10px] text-slate-500">
+                Value ${tv.equityValueUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </div>
+              {tv.equityPositions.length > 0 && (
+                <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+                  {tv.equityPositions.slice(0, 6).map(pos => {
+                    const pnlUsd = (pos.currentPrice - pos.entryPrice) * pos.shares;
+                    const pnlPct = ((pos.currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+                    return (
+                      <div key={pos.id} className="flex items-center justify-between rounded bg-slate-800/60 px-2 py-1 text-[10px]">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="font-semibold text-white truncate">{pos.symbol}</span>
+                          <span className="text-slate-500">×{pos.shares.toFixed(pos.shares < 1 ? 3 : 0)}</span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-slate-400">${pos.currentPrice.toFixed(2)}</span>
+                          <span className={`font-mono ${pnlUsd >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {pnlUsd >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            {/* Options capacity */}
+            <div className="rounded-lg bg-slate-900/40 p-3">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[11px] font-semibold text-slate-200">Options</span>
+                <span className="text-[10px] text-slate-400">
+                  {tv.optionCount}/{tv.maxOptionPositions}
+                </span>
+              </div>
+              <div className="h-1.5 w-full rounded-full bg-slate-700 overflow-hidden">
+                <div
+                  className="h-full bg-amber-500 transition-all"
+                  style={{ width: `${(tv.optionCount / Math.max(tv.maxOptionPositions, 1)) * 100}%` }}
+                />
+              </div>
+              <div className="mt-1.5 text-[10px] text-slate-500">
+                Value ${tv.optionValueUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </div>
+              {tv.optionPositions.length > 0 && (
+                <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+                  {tv.optionPositions.slice(0, 6).map(pos => {
+                    const pnlUsd = (pos.currentMid - pos.entryMid) * pos.contracts * 100;
+                    const pnlPct = ((pos.currentMid - pos.entryMid) / pos.entryMid) * 100;
+                    return (
+                      <div key={pos.id} className="flex items-center justify-between rounded bg-slate-800/60 px-2 py-1 text-[10px]">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="font-semibold text-white truncate">{pos.symbol}</span>
+                          <span className={`px-1 rounded text-[9px] ${pos.type === 'call' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                            {pos.type.toUpperCase()}
+                          </span>
+                          <span className="text-slate-500">${pos.strike} · {pos.expiry}</span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-slate-400">×{pos.contracts}</span>
+                          <span className={`font-mono ${pnlUsd >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {pnlUsd >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Live Activity Panel */}
       <div className={`rounded-xl border px-3 py-3 ${

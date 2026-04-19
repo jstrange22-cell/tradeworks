@@ -31,6 +31,10 @@ import {
   type CreateOrderParams,
 } from '../services/stocks/alpaca-client.js';
 import { scanForSwingTrades, DEFAULT_WATCHLIST } from '../services/stocks/swing-scanner.js';
+import { loadPaperLedger, savePaperLedger } from '../services/stock-intelligence/stock-orchestrator.js';
+import { executeEquitySignal, executeOptionsSignal } from '../services/stock-intelligence/stock-agent.js';
+import { MAX_EQUITY_POSITIONS, MAX_OPTION_POSITIONS } from '../services/stock-intelligence/stock-models.js';
+import { getOptionQuote } from '../services/stocks/robinhood-options.js';
 
 export const stocksRouter: RouterType = Router();
 
@@ -233,6 +237,174 @@ stocksRouter.get('/config', (_req, res) => {
       ...config,
       marketOpen: true, // Will be dynamic once isMarketOpen() is refined
       defaultWatchlistSize: DEFAULT_WATCHLIST.length,
+      optionsEnabled: process.env.ENABLE_OPTIONS === 'true',
+      liveEquities: process.env.ENABLE_LIVE_EQUITIES === 'true',
+      liveOptions: process.env.ENABLE_LIVE_OPTIONS === 'true',
+      maxEquityPositions: MAX_EQUITY_POSITIONS,
+      maxOptionPositions: MAX_OPTION_POSITIONS,
     },
   });
+});
+
+// ── TradeVisor Paper Ledger (equity + options) ─────────────────────────────
+
+// GET /portfolio — Unified portfolio snapshot for dashboard
+stocksRouter.get('/portfolio', (_req, res) => {
+  try {
+    const ledger = loadPaperLedger();
+    const equityValue = ledger.equityPositions.reduce(
+      (sum, p) => sum + p.shares * p.currentPrice, 0,
+    );
+    const optionValue = ledger.optionPositions.reduce(
+      (sum, p) => sum + p.contracts * p.currentMid * 100, 0,
+    );
+    res.json({
+      data: {
+        paperCashUsd: ledger.paperCashUsd,
+        equityPositions: ledger.equityPositions,
+        optionPositions: ledger.optionPositions,
+        equityCount: ledger.equityPositions.length,
+        optionCount: ledger.optionPositions.length,
+        maxEquityPositions: MAX_EQUITY_POSITIONS,
+        maxOptionPositions: MAX_OPTION_POSITIONS,
+        equityValueUsd: equityValue,
+        optionValueUsd: optionValue,
+        totalValueUsd: ledger.paperCashUsd + equityValue + optionValue,
+        stats: ledger.stats,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load portfolio', message: err instanceof Error ? err.message : 'Unknown' });
+  }
+});
+
+// GET /equity-positions — Open equity positions (N/10)
+stocksRouter.get('/equity-positions', (_req, res) => {
+  try {
+    const ledger = loadPaperLedger();
+    res.json({
+      data: ledger.equityPositions,
+      count: ledger.equityPositions.length,
+      max: MAX_EQUITY_POSITIONS,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load equity positions', message: err instanceof Error ? err.message : 'Unknown' });
+  }
+});
+
+// GET /option-positions — Open option positions (N/10)
+stocksRouter.get('/option-positions', (_req, res) => {
+  try {
+    const ledger = loadPaperLedger();
+    res.json({
+      data: ledger.optionPositions,
+      count: ledger.optionPositions.length,
+      max: MAX_OPTION_POSITIONS,
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load option positions', message: err instanceof Error ? err.message : 'Unknown' });
+  }
+});
+
+// POST /close/:kind/:id — Manual close of a paper position (kind = equity | option)
+stocksRouter.post('/close/:kind/:id', async (req, res) => {
+  try {
+    const kind = req.params.kind;
+    const id = req.params.id;
+    const ledger = loadPaperLedger();
+
+    if (kind === 'equity') {
+      const idx = ledger.equityPositions.findIndex(p => p.id === id);
+      if (idx === -1) { res.status(404).json({ error: 'Equity position not found' }); return; }
+      const pos = ledger.equityPositions[idx];
+      const exitPrice = typeof req.body?.exitPrice === 'number' && req.body.exitPrice > 0
+        ? req.body.exitPrice
+        : pos.currentPrice;
+      const pnlUsd = (exitPrice - pos.entryPrice) * pos.shares;
+      const pnlPct = ((exitPrice - pos.entryPrice) / pos.entryPrice) * 100;
+      ledger.paperCashUsd += pos.shares * exitPrice;
+      ledger.equityClosed.unshift({
+        ...pos,
+        exitPrice,
+        exitAt: new Date().toISOString(),
+        pnlUsd,
+        pnlPct,
+      });
+      ledger.equityPositions.splice(idx, 1);
+      ledger.stats.totalTrades += 1;
+      if (pnlUsd >= 0) ledger.stats.wins += 1; else ledger.stats.losses += 1;
+      savePaperLedger(ledger);
+      res.json({ data: { closed: ledger.equityClosed[0], pnlUsd, pnlPct } });
+      return;
+    }
+
+    if (kind === 'option') {
+      const idx = ledger.optionPositions.findIndex(p => p.id === id);
+      if (idx === -1) { res.status(404).json({ error: 'Option position not found' }); return; }
+      const pos = ledger.optionPositions[idx];
+      let exitMid = typeof req.body?.exitMid === 'number' && req.body.exitMid > 0
+        ? req.body.exitMid
+        : pos.currentMid;
+      if (!exitMid || exitMid <= 0) {
+        try {
+          const quote = await getOptionQuote(pos.occSymbol);
+          exitMid = quote.mid;
+        } catch { exitMid = pos.entryMid; }
+      }
+      const pnlUsd = (exitMid - pos.entryMid) * pos.contracts * 100;
+      const pnlPct = ((exitMid - pos.entryMid) / pos.entryMid) * 100;
+      ledger.paperCashUsd += pos.contracts * exitMid * 100;
+      ledger.optionClosed.unshift({
+        ...pos,
+        exitMid,
+        exitAt: new Date().toISOString(),
+        pnlUsd,
+        pnlPct,
+      });
+      ledger.optionPositions.splice(idx, 1);
+      ledger.stats.totalTrades += 1;
+      if (pnlUsd >= 0) ledger.stats.wins += 1; else ledger.stats.losses += 1;
+      savePaperLedger(ledger);
+      res.json({ data: { closed: ledger.optionClosed[0], pnlUsd, pnlPct } });
+      return;
+    }
+
+    res.status(400).json({ error: 'kind must be "equity" or "option"' });
+  } catch (err) {
+    res.status(500).json({ error: 'Close failed', message: err instanceof Error ? err.message : 'Unknown' });
+  }
+});
+
+// POST /signal/test — Dev hook: manually fire a TradeVisor-style stock signal
+// Body: { ticker, action: 'buy'|'sell', price, score?, grade?, route?: 'equity'|'options'|'both' }
+stocksRouter.post('/signal/test', async (req, res) => {
+  try {
+    const { ticker, action, price, score, grade, route } = req.body ?? {};
+    if (!ticker || !action || typeof price !== 'number') {
+      res.status(400).json({ error: 'ticker, action, price required' });
+      return;
+    }
+    const validGrades = new Set(['prime', 'strong', 'standard', 'reject'] as const);
+    const g = typeof grade === 'string' && validGrades.has(grade as 'prime' | 'strong' | 'standard' | 'reject')
+      ? (grade as 'prime' | 'strong' | 'standard' | 'reject')
+      : 'standard';
+    const signal = {
+      ticker: String(ticker).toUpperCase(),
+      action: action === 'sell' ? 'sell' as const : 'buy' as const,
+      price,
+      score: typeof score === 'number' ? score : 4,
+      grade: g,
+    };
+    const which = route ?? 'both';
+    const results: Record<string, boolean> = {};
+    if (which === 'equity' || which === 'both') {
+      results.equity = await executeEquitySignal(signal);
+    }
+    if ((which === 'options' || which === 'both') && process.env.ENABLE_OPTIONS === 'true') {
+      results.options = await executeOptionsSignal(signal);
+    }
+    res.json({ data: { signal, results } });
+  } catch (err) {
+    res.status(500).json({ error: 'Signal test failed', message: err instanceof Error ? err.message : 'Unknown' });
+  }
 });

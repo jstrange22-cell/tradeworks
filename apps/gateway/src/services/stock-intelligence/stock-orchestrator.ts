@@ -13,8 +13,12 @@ import { logger } from '../../lib/logger.js';
 import type {
   StockOpportunity, StockPaperTrade, StockPaperPortfolio,
   StockEngineStatus, StockConfig, StockRegime,
+  PaperLedgerState, EquityPosition,
 } from './stock-models.js';
-import { DEFAULT_STOCK_CONFIG as defaultConfig } from './stock-models.js';
+import {
+  DEFAULT_STOCK_CONFIG as defaultConfig,
+  DEFAULT_PAPER_LEDGER,
+} from './stock-models.js';
 import { scanMeanReversion } from './engines/e1-mean-reversion.js';
 import { scanMomentumRotation } from './engines/e2-momentum-rotator.js';
 import { scanPairsTrading } from './engines/e3-pairs-trader.js';
@@ -72,6 +76,102 @@ function loadStockState(): void {
     logger.info({ paperCash, open: openPositions.length, closed: closedPositions.length }, '[StocksIntel] Restored paper state from disk');
   } catch (err) {
     logger.warn({ err: err instanceof Error ? err.message : err }, '[StocksIntel] Failed to load paper state, starting fresh');
+  }
+}
+
+// ── TradeVisor Stock-Agent Paper Ledger (split equity + option books) ──
+// The stock-agent (signal-driven paper trader) has its own ledger file
+// so it stays isolated from the 14-engine orchestrator persistence above.
+// Consumers call loadPaperLedger() / savePaperLedger() from stock-agent.ts.
+
+const PAPER_LEDGER_FILE = path.join(DATA_DIR, 'paper-ledger.json');
+const LEGACY_PAPER_STATE_FILE = path.join(DATA_DIR, 'paper-state.json');
+
+function normalizeLedger(raw: Partial<PaperLedgerState> & { positions?: EquityPosition[] }): PaperLedgerState {
+  const equityPositions = Array.isArray(raw.equityPositions) ? raw.equityPositions : [];
+  const optionPositions = Array.isArray(raw.optionPositions) ? raw.optionPositions : [];
+  const equityClosed = Array.isArray(raw.equityClosed) ? raw.equityClosed : [];
+  const optionClosed = Array.isArray(raw.optionClosed) ? raw.optionClosed : [];
+
+  // Legacy migration: if a file had a single `positions[]` but no
+  // `equityPositions[]`, move it across.
+  if (Array.isArray(raw.positions) && equityPositions.length === 0) {
+    equityPositions.push(...raw.positions);
+  }
+
+  return {
+    paperCashUsd: typeof raw.paperCashUsd === 'number' ? raw.paperCashUsd : DEFAULT_PAPER_LEDGER.paperCashUsd,
+    equityPositions,
+    optionPositions,
+    equityClosed,
+    optionClosed,
+    stats: raw.stats ?? { ...DEFAULT_PAPER_LEDGER.stats },
+  };
+}
+
+/**
+ * Load the stock-agent paper ledger from disk.
+ *
+ * Migration path:
+ *   - If `paper-ledger.json` exists → load it directly.
+ *   - Else if `paper-state.json` carries a legacy `positions[]` field → copy
+ *     that file to `paper-state.pre-migration.json`, upgrade the shape to
+ *     the new ledger schema, and write it out as `paper-ledger.json`.
+ *   - Else → return a fresh DEFAULT_PAPER_LEDGER.
+ *
+ * Returns a fully-populated PaperLedgerState. Never throws.
+ */
+export function loadPaperLedger(): PaperLedgerState {
+  try {
+    if (fs.existsSync(PAPER_LEDGER_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(PAPER_LEDGER_FILE, 'utf-8')) as Partial<PaperLedgerState>;
+      const ledger = normalizeLedger(raw);
+      logger.info(
+        {
+          cash: ledger.paperCashUsd,
+          equity: ledger.equityPositions.length,
+          options: ledger.optionPositions.length,
+        },
+        '[StockAgent] Restored paper ledger from disk',
+      );
+      return ledger;
+    }
+
+    // One-time migration from legacy `paper-state.json` iff it has `positions[]`.
+    if (fs.existsSync(LEGACY_PAPER_STATE_FILE)) {
+      const legacy = JSON.parse(fs.readFileSync(LEGACY_PAPER_STATE_FILE, 'utf-8')) as Partial<PaperLedgerState> & { positions?: EquityPosition[] };
+      if (Array.isArray(legacy.positions) && legacy.positions.length > 0) {
+        const archivePath = path.join(DATA_DIR, 'paper-state.pre-migration.json');
+        try { fs.copyFileSync(LEGACY_PAPER_STATE_FILE, archivePath); } catch { /* best-effort archive */ }
+        const migrated = normalizeLedger(legacy);
+        fs.writeFileSync(PAPER_LEDGER_FILE, JSON.stringify(migrated, null, 2));
+        logger.info(
+          { archived: archivePath, equity: migrated.equityPositions.length },
+          '[StockAgent] Migrated legacy positions[] → equityPositions[]',
+        );
+        return migrated;
+      }
+    }
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : err }, '[StockAgent] Failed to load paper ledger, starting fresh');
+  }
+
+  return {
+    ...DEFAULT_PAPER_LEDGER,
+    equityPositions: [],
+    optionPositions: [],
+    equityClosed: [],
+    optionClosed: [],
+    stats: { ...DEFAULT_PAPER_LEDGER.stats },
+  };
+}
+
+/** Persist the stock-agent paper ledger. Never throws (fire-and-forget). */
+export function savePaperLedger(state: PaperLedgerState): void {
+  try {
+    fs.writeFileSync(PAPER_LEDGER_FILE, JSON.stringify(state, null, 2));
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : err }, '[StockAgent] Failed to persist paper ledger');
   }
 }
 

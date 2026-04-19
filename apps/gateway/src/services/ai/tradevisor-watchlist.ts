@@ -49,6 +49,14 @@ const TOP_30_TICKERS: Array<{ ticker: string; chain: 'crypto' }> = [
   'RENDER', 'FET', 'JASMY', 'PEPE', 'SHIB', 'WIF', 'BONK',
 ].map(ticker => ({ ticker, chain: 'crypto' as const }));
 
+// ── Top 10 US Equities (seeded on startup) ───────────────────────────────
+// Liquid broad-market ETFs + megacap names. TradeVisor analyzes these on
+// the same scan cadence as the crypto list; confirmed signals route into
+// the stock-agent (see services/stock-intelligence/stock-agent.ts).
+const TOP_STOCKS: Array<{ ticker: string; chain: 'stock' }> = [
+  'SPY', 'QQQ', 'AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMD', 'META', 'GOOGL', 'AMZN',
+].map(ticker => ({ ticker, chain: 'stock' as const }));
+
 export function addToWatchlist(ticker: string, source: string, chain: 'crypto' | 'stock' | 'solana'): boolean {
   // Block blue chips from even entering the watchlist
   if (WATCHLIST_BLOCKED.has(ticker.toUpperCase())) {
@@ -195,7 +203,7 @@ export function setOnTradevisorSignal(cb: (result: TradevisorResult) => void): v
   onSignalCallback = cb;
 }
 
-/** Seed the watchlist with the top 30 Coinbase tickers if not already present. */
+/** Seed the watchlist with the top crypto + stock tickers if not already present. */
 export function seedWatchlist(): void {
   let added = 0;
   for (const { ticker, chain } of TOP_30_TICKERS) {
@@ -203,8 +211,17 @@ export function seedWatchlist(): void {
       added++;
     }
   }
-  if (added > 0) {
-    logger.info({ added, total: watchlist.size }, `[Tradevisor] Seeded ${added} top-30 tickers into watchlist`);
+  let stockAdded = 0;
+  for (const { ticker, chain } of TOP_STOCKS) {
+    if (addToWatchlist(ticker, 'seed:top10-stocks', chain)) {
+      stockAdded++;
+    }
+  }
+  if (added > 0 || stockAdded > 0) {
+    logger.info(
+      { crypto: added, stocks: stockAdded, total: watchlist.size },
+      `[Tradevisor] Seeded ${added} crypto + ${stockAdded} stock tickers into watchlist`,
+    );
   }
 }
 

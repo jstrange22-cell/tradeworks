@@ -399,20 +399,52 @@ server.listen(PORT, HOST, () => {
         { ticker: result.ticker, chain: result.chain, action: result.action, score: result.confluenceScore, grade: result.grade },
         `[Tradevisor] CONFIRMED SIGNAL → ${result.action.toUpperCase()} ${result.ticker} (${result.grade}, ${result.chain})`,
       );
-      if (result.chain !== 'stock') {
+      if (result.chain === 'stock') {
+        // Stock branch: fire equity paper trade + optional options paper trade.
+        // Both handlers internally gate on confluence score, cooldown, and
+        // per-book position caps — see services/stock-intelligence/stock-agent.ts.
         try {
-          const { executeSignalTrade } = await import('./routes/crypto-agent.js');
-          // Map TradeVisor chain ('crypto' | 'solana') → TradeSignal chain ('coinbase' | 'solana')
-          // so the router doesn't fall into DexScreener lookup for major-cap CEX-listed coins.
-          const signalChain = result.chain === 'crypto' ? 'coinbase' : 'solana';
-          executeSignalTrade({
-            symbol: result.ticker, action: result.action, price: result.currentPrice,
-            source: `tradevisor_${result.grade}`, confidence: result.confidence,
-            reason: `Tradevisor ${result.action.toUpperCase()}: ${result.ticker} — ${result.confluenceScore}/6 (${result.grade})`,
-            chain: signalChain,
+          const { executeEquitySignal, executeOptionsSignal } = await import('./services/stock-intelligence/stock-agent.js');
+          await executeEquitySignal({
+            ticker: result.ticker,
+            action: result.action,
+            price: result.currentPrice,
+            score: result.confluenceScore,
+            grade: result.grade,
           });
-        } catch { /* crypto agent not loaded */ }
+          if (process.env.ENABLE_OPTIONS === 'true') {
+            await executeOptionsSignal({
+              ticker: result.ticker,
+              action: result.action,
+              price: result.currentPrice,
+              score: result.confluenceScore,
+              grade: result.grade,
+            });
+          }
+        } catch (err) {
+          logger.warn(
+            { err: err instanceof Error ? err.message : err, ticker: result.ticker },
+            '[Tradevisor] Stock execution failed',
+          );
+        }
+        return;
       }
+
+      // Non-stock (crypto | solana) branch — the stock branch above already
+      // returned for result.chain === 'stock', so this is always a crypto
+      // or solana signal from here on.
+      try {
+        const { executeSignalTrade } = await import('./routes/crypto-agent.js');
+        // Map TradeVisor chain ('crypto' | 'solana') → TradeSignal chain ('coinbase' | 'solana')
+        // so the router doesn't fall into DexScreener lookup for major-cap CEX-listed coins.
+        const signalChain = result.chain === 'crypto' ? 'coinbase' : 'solana';
+        executeSignalTrade({
+          symbol: result.ticker, action: result.action, price: result.currentPrice,
+          source: `tradevisor_${result.grade}`, confidence: result.confidence,
+          reason: `Tradevisor ${result.action.toUpperCase()}: ${result.ticker} — ${result.confluenceScore}/6 (${result.grade})`,
+          chain: signalChain,
+        });
+      } catch { /* crypto agent not loaded */ }
     });
     startTradevisorLoop();
     logger.info('[Startup] Tradevisor ENABLED');
