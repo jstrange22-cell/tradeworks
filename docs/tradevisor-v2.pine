@@ -1,0 +1,129 @@
+// Tradevisor V2 — Hull Moving Average Cloud with Signals
+// By Strange Digital Group / APEX System
+// Apply to any crypto chart, set alerts with webhook
+
+//@version=6
+indicator("Tradevisor V2", overlay=true, max_bars_back=500)
+
+// ── Inputs ──────────────────────────────────────────────────────────
+fastLen   = input.int(10, "Fast HMA Period", minval=2)
+slowLen   = input.int(20, "Slow HMA Period", minval=4)
+atrLen    = input.int(10, "ATR Period", minval=1)
+atrMult   = input.float(3.5, "ATR Cloud Multiplier", step=0.1)
+rsiLen    = input.int(14, "RSI Period")
+macdFast  = input.int(12, "MACD Fast")
+macdSlow  = input.int(26, "MACD Slow")
+macdSig   = input.int(9, "MACD Signal")
+
+// ── Hull Moving Average ─────────────────────────────────────────────
+hma(src, len) =>
+    wma1 = ta.wma(src, len / 2)
+    wma2 = ta.wma(src, len)
+    ta.wma(2 * wma1 - wma2, math.round(math.sqrt(len)))
+
+fastHMA = hma(close, fastLen)
+slowHMA = hma(close, slowLen)
+
+// ── ATR Cloud ───────────────────────────────────────────────────────
+atrVal    = ta.atr(atrLen)
+midLine   = (fastHMA + slowHMA) / 2
+upperBand = midLine + atrVal * atrMult
+lowerBand = midLine - atrVal * atrMult
+
+// ── Signal Detection ────────────────────────────────────────────────
+bullCross = ta.crossover(fastHMA, slowHMA)
+bearCross = ta.crossunder(fastHMA, slowHMA)
+
+// ── Signal Confidence Scoring ───────────────────────────────────────
+rsiVal     = ta.rsi(close, rsiLen)
+[macdLine, signalLine, histLine] = ta.macd(close, macdFast, macdSlow, macdSig)
+volRatio   = volume / ta.sma(volume, 20)
+
+calcConfidence(isBull) =>
+    conf = 50.0
+    // HMA separation strength
+    hmaSep = math.abs(fastHMA - slowHMA) / close * 1000
+    conf += math.min(hmaSep * 5, 15)
+    // RSI confirmation
+    if isBull
+        conf += rsiVal < 40 ? 10 : rsiVal < 50 ? 5 : 0
+    else
+        conf += rsiVal > 60 ? 10 : rsiVal > 50 ? 5 : 0
+    // MACD confirmation
+    if isBull
+        conf += histLine > 0 ? 10 : 0
+    else
+        conf += histLine < 0 ? 10 : 0
+    // Volume confirmation
+    conf += volRatio > 1.5 ? 10 : volRatio > 1.2 ? 5 : 0
+    math.min(conf, 100)
+
+buyConf  = bullCross ? calcConfidence(true) : 0.0
+sellConf = bearCross ? calcConfidence(false) : 0.0
+
+buyGrade  = buyConf >= 80 ? "A+" : buyConf >= 65 ? "A" : "B"
+sellGrade = sellConf >= 80 ? "A+" : sellConf >= 65 ? "A" : "B"
+
+// ── TP/SL Calculation ───────────────────────────────────────────────
+risk = atrVal * atrMult
+tp1Buy  = close + risk * 1
+tp2Buy  = close + risk * 2
+tp3Buy  = close + risk * 3
+slBuy   = lowerBand
+
+tp1Sell = close - risk * 1
+tp2Sell = close - risk * 2
+tp3Sell = close - risk * 3
+slSell  = upperBand
+
+// ── Cloud Visualization ─────────────────────────────────────────────
+isBull = fastHMA > slowHMA
+
+// Inner cloud (between HMA lines)
+fillColor = isBull ? color.new(#00C878, 82) : color.new(#D21428, 82)
+p1 = plot(fastHMA, "Fast HMA", isBull ? #00C878 : #D21428, 2)
+p2 = plot(slowHMA, "Slow HMA", isBull ? color.new(#00C878, 45) : color.new(#D21428, 45), 1)
+fill(p1, p2, fillColor)
+
+// Outer cloud (ATR bands)
+pUpper = plot(upperBand, "Upper Band", color.new(#888888, 70), 1, plot.style_line)
+pLower = plot(lowerBand, "Lower Band", color.new(#888888, 70), 1, plot.style_line)
+fill(pUpper, p1, isBull ? color.new(#0F5A41, 88) : color.new(#5A0F14, 85))
+fill(p2, pLower, isBull ? color.new(#0F5A41, 88) : color.new(#5A0F14, 85))
+
+// ── Signal Labels ───────────────────────────────────────────────────
+if bullCross
+    label.new(bar_index, low - atrVal * 0.3, "BUY " + buyGrade,
+         color=#00695c, textcolor=color.white, style=label.style_label_up, size=size.small)
+
+if bearCross
+    label.new(bar_index, high + atrVal * 0.3, "SELL " + sellGrade,
+         color=#b71c1c, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+// ── Alerts ──────────────────────────────────────────────────────────
+// Webhook JSON payload for TradeWorks integration
+buyPayload = '{"symbol":"' + syminfo.ticker + '","action":"buy","price":' + str.tostring(close) + ',"confidence":' + str.tostring(buyConf) + ',"grade":"' + buyGrade + '","stop":' + str.tostring(slBuy) + ',"tp1":' + str.tostring(tp1Buy) + ',"tp2":' + str.tostring(tp2Buy) + ',"tp3":' + str.tostring(tp3Buy) + ',"rsi":' + str.tostring(rsiVal) + ',"macd":' + str.tostring(histLine) + ',"volume_ratio":' + str.tostring(volRatio) + ',"timeframe":"' + timeframe.period + '"}'
+
+sellPayload = '{"symbol":"' + syminfo.ticker + '","action":"sell","price":' + str.tostring(close) + ',"confidence":' + str.tostring(sellConf) + ',"grade":"' + sellGrade + '","stop":' + str.tostring(slSell) + ',"tp1":' + str.tostring(tp1Sell) + ',"tp2":' + str.tostring(tp2Sell) + ',"tp3":' + str.tostring(tp3Sell) + ',"rsi":' + str.tostring(rsiVal) + ',"macd":' + str.tostring(histLine) + ',"volume_ratio":' + str.tostring(volRatio) + ',"timeframe":"' + timeframe.period + '"}'
+
+if bullCross
+    alert(buyPayload, alert.freq_once_per_bar)
+
+if bearCross
+    alert(sellPayload, alert.freq_once_per_bar)
+
+// ── Info Table ──────────────────────────────────────────────────────
+var table infoTable = table.new(position.top_right, 2, 6, bgcolor=color.new(#1a1a2e, 10))
+if barstate.islast
+    table.cell(infoTable, 0, 0, "TRADEVISOR V2", text_color=#00C878, text_size=size.small)
+    table.cell(infoTable, 1, 0, isBull ? "BULLISH" : "BEARISH", text_color=isBull ? #00C878 : #D21428, text_size=size.small)
+    table.cell(infoTable, 0, 1, "RSI", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 1, str.tostring(rsiVal, "#.#"), text_color=rsiVal < 30 ? #00C878 : rsiVal > 70 ? #D21428 : color.white, text_size=size.tiny)
+    table.cell(infoTable, 0, 2, "MACD", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 2, str.tostring(histLine, "#.####"), text_color=histLine > 0 ? #00C878 : #D21428, text_size=size.tiny)
+    table.cell(infoTable, 0, 3, "Vol Ratio", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 3, str.tostring(volRatio, "#.##") + "x", text_color=volRatio > 1.5 ? #00C878 : color.white, text_size=size.tiny)
+    table.cell(infoTable, 0, 4, "ATR", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 4, str.tostring(atrVal, "#.####"), text_color=color.white, text_size=size.tiny)
+    table.cell(infoTable, 0, 5, "Fast HMA", text_color=color.gray, text_size=size.tiny)
+    table.cell(infoTable, 1, 5, str.tostring(fastHMA, "#.##"), text_color=isBull ? #00C878 : #D21428, text_size=size.tiny)
