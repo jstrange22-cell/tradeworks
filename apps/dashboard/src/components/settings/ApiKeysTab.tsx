@@ -5,7 +5,7 @@ import { SERVICE_INFO } from '@/types/settings';
 import { ApiKeyCard } from '@/components/settings/ApiKeyCard';
 import { AddKeyModal } from '@/components/settings/AddKeyModal';
 
-const SERVICES = ['coinbase', 'alpaca', 'robinhood', 'polymarket', 'solana'] as const;
+const SERVICES = ['coinbase', 'alpaca', 'robinhood', 'polymarket', 'solana', 'kalshi'] as const;
 
 interface ApiKeysTabProps {
   initialAddService?: string;

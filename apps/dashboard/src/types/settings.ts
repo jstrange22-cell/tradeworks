@@ -107,6 +107,7 @@ export const SERVICE_INFO: Record<string, { label: string; color: string; descri
   robinhood: { label: 'Robinhood', color: 'text-emerald-400', description: 'Crypto trading via Robinhood Crypto API (crypto only \u2014 use Alpaca for stocks)' },
   polymarket: { label: 'Polymarket', color: 'text-purple-400', description: 'Prediction market trading via Polymarket CLOB' },
   solana: { label: 'Solana', color: 'text-violet-400', description: 'Solana meme coin trading via bot wallet' },
+  kalshi: { label: 'Kalshi', color: 'text-orange-400', description: 'Prediction market trading via Kalshi exchange' },
 };
 
 export const EXCHANGE_SETUP_GUIDES: Record<string, { steps: { text: string; link?: string }[]; fields: string[] }> = {
@@ -159,5 +160,15 @@ export const EXCHANGE_SETUP_GUIDES: Record<string, { steps: { text: string; link
       { text: 'Optional: add a custom RPC URL (Helius, QuickNode) in "API Secret" field for faster transactions', link: 'https://www.helius.dev/' },
     ],
     fields: ['apiKey'],
+  },
+  kalshi: {
+    steps: [
+      { text: 'Create a Kalshi account', link: 'https://kalshi.com' },
+      { text: 'Go to Settings and generate API credentials' },
+      { text: 'Copy the API Key and paste below' },
+      { text: 'Download the Private Key (PEM file) and paste its contents in "API Secret"' },
+      { text: 'Currently running in paper mode \u{2014} no real funds needed' },
+    ],
+    fields: ['apiKey', 'apiSecret'],
   },
 };

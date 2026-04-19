@@ -37,10 +37,20 @@ export function SolanaPage() {
 
   // Sniper templates (for paper mode balance)
   const templatesQuery = useSniperTemplates(botConnected);
-  const defaultTemplate = (templatesQuery.data as { data?: Array<{ id: string; paperMode?: boolean; paperBalanceSol?: number; running?: boolean; stats?: { totalTrades?: number; wins?: number; losses?: number; totalPnlSol?: number } }> })?.data?.find(t => t.id === 'default');
-  const isPaperMode = defaultTemplate?.paperMode ?? false;
-  const paperBalanceSol = defaultTemplate?.paperBalanceSol ?? 0;
-  const paperStats = defaultTemplate?.stats;
+  const allTemplates = (templatesQuery.data as { data?: Array<{ id: string; name?: string; paperMode?: boolean; paperBalanceSol?: number; running?: boolean; openPositions?: number; stats?: { totalTrades?: number; wins?: number; losses?: number; totalPnlSol?: number } }> })?.data ?? [];
+
+  // Use active paper templates (not Default Sniper which is stopped)
+  const paperTemplates = allTemplates.filter(t => t.paperMode && t.running);
+  const isPaperMode = paperTemplates.length > 0;
+
+  // Aggregate paper balance and stats across all running paper templates
+  const paperBalanceSol = paperTemplates.reduce((sum, t) => sum + (t.paperBalanceSol ?? 0), 0);
+  const paperStats = isPaperMode ? {
+    totalTrades: paperTemplates.reduce((s, t) => s + (t.stats?.totalTrades ?? 0), 0),
+    wins: paperTemplates.reduce((s, t) => s + (t.stats?.wins ?? 0), 0),
+    losses: paperTemplates.reduce((s, t) => s + (t.stats?.losses ?? 0), 0),
+    totalPnlSol: paperTemplates.reduce((s, t) => s + (t.stats?.totalPnlSol ?? 0), 0),
+  } : undefined;
 
   const phantomDisplay = phantomConnected
     ? phantomLoading
@@ -55,15 +65,15 @@ export function SolanaPage() {
     : 'Click connect above';
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-4 p-3 md:space-y-6 md:p-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <Zap className="h-7 w-7 text-purple-600 dark:text-purple-400" />
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-slate-100">Solana Trading</h1>
+          <Zap className="h-6 w-6 md:h-7 md:w-7 text-purple-600 dark:text-purple-400" />
+          <h1 className="text-lg md:text-2xl font-bold text-gray-900 dark:text-slate-100">Solana Trading</h1>
         </div>
-        <div className="flex items-center gap-3">
-          <div className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium ${
+        <div className="flex items-center gap-2 overflow-x-auto">
+          <div className={`flex items-center gap-2 rounded-lg border px-2 py-1 md:px-3 md:py-1.5 text-[10px] md:text-xs font-medium whitespace-nowrap ${
             botConnected
               ? 'border-green-500/30 bg-green-50 text-green-700 dark:bg-green-500/10 dark:text-green-400'
               : 'border-gray-300 bg-gray-100 text-gray-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-500'
@@ -91,46 +101,65 @@ export function SolanaPage() {
 
       {/* Paper Mode Banner */}
       {isPaperMode && (
-        <div className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-500/20">
-            <Rocket className="h-5 w-5 text-amber-400" />
-          </div>
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-amber-300">PAPER TRADING</span>
-              <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-400">SIMULATED</span>
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-3 md:px-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-8 w-8 md:h-10 md:w-10 items-center justify-center rounded-full bg-amber-500/20 shrink-0">
+              <Rocket className="h-4 w-4 md:h-5 md:w-5 text-amber-400" />
             </div>
-            <span className="text-xs text-amber-400/70">No real money at risk — virtual balance only</span>
-          </div>
-          <div className="text-right">
-            <div className="text-lg font-bold text-amber-300">{paperBalanceSol.toFixed(4)} SOL</div>
-            <div className="text-xs text-amber-400/70">~${(paperBalanceSol * (balances?.solValueUsd && balances?.solBalance ? balances.solValueUsd / balances.solBalance : 81)).toFixed(2)}</div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-xs md:text-sm font-semibold text-amber-300">PAPER TRADING</span>
+                <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-400">SIMULATED</span>
+              </div>
+              <span className="text-[10px] md:text-xs text-amber-400/70">No real money at risk</span>
+            </div>
           </div>
           {paperStats && (
-            <div className="ml-4 flex gap-4 border-l border-amber-500/30 pl-4 text-xs">
-              <div className="text-center">
-                <div className="font-semibold text-slate-200">{paperStats.totalTrades ?? 0}</div>
-                <div className="text-amber-400/60">Trades</div>
+            <div className="mt-2 grid grid-cols-2 gap-2 text-center text-xs md:grid-cols-4">
+              <div>
+                <div className="text-sm font-bold text-amber-300">{paperBalanceSol.toFixed(2)}</div>
+                <div className="text-[10px] text-amber-400/60">SOL</div>
               </div>
-              <div className="text-center">
-                <div className={`font-semibold ${(paperStats.totalPnlSol ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  {(paperStats.totalPnlSol ?? 0) >= 0 ? '+' : ''}{(paperStats.totalPnlSol ?? 0).toFixed(4)}
+              <div>
+                <div className={`text-sm font-bold ${(paperStats.totalPnlSol ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {(paperStats.totalPnlSol ?? 0) >= 0 ? '+' : ''}{(paperStats.totalPnlSol ?? 0).toFixed(3)}
                 </div>
-                <div className="text-amber-400/60">P&L (SOL)</div>
+                <div className="text-[10px] text-amber-400/60">P&L</div>
               </div>
-              <div className="text-center">
-                <div className="font-semibold text-slate-200">
+              <div>
+                <div className="text-sm font-bold text-slate-200">{paperStats.totalTrades ?? 0}</div>
+                <div className="text-[10px] text-amber-400/60">Trades</div>
+              </div>
+              <div>
+                <div className="text-sm font-bold text-slate-200">
                   {paperStats.totalTrades ? Math.round(((paperStats.wins ?? 0) / paperStats.totalTrades) * 100) : 0}%
                 </div>
-                <div className="text-amber-400/60">Win Rate</div>
+                <div className="text-[10px] text-amber-400/60">Win</div>
               </div>
             </div>
           )}
         </div>
       )}
 
+      {/* Per-Template Balance Breakdown */}
+      {isPaperMode && paperTemplates.length > 1 && (
+        <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+          {paperTemplates.map(t => {
+            const bal = t.paperBalanceSol ?? 0;
+            const pnl = t.stats?.totalPnlSol ?? 0;
+            return (
+              <div key={t.id} className={`rounded-lg border px-3 py-2 ${bal <= 0 ? 'border-red-500/30 bg-red-500/10' : 'border-slate-700/50 bg-slate-800/50'}`}>
+                <div className="text-[10px] text-slate-500">{(t as { name?: string }).name ?? t.id}</div>
+                <div className={`text-sm font-bold ${bal <= 0 ? 'text-red-400' : 'text-slate-200'}`}>{bal.toFixed(3)} SOL</div>
+                <div className={`text-[10px] font-mono ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{pnl >= 0 ? '+' : ''}{pnl.toFixed(3)}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Stats row */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 md:gap-4 lg:grid-cols-4">
         <StatCard
           label="SOL Balance"
           value={balances ? `${balances.solBalance.toFixed(4)} SOL` : '--'}
@@ -161,12 +190,12 @@ export function SolanaPage() {
       <ActiveTradesPanel />
 
       {/* Tab Navigation */}
-      <div className="flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-slate-800/50">
+      <div className="flex gap-1 rounded-lg bg-gray-100 p-1 dark:bg-slate-800/50 overflow-x-auto">
         {TABS.map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
-            className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+            className={`flex items-center gap-1.5 rounded-md px-2 py-1.5 md:px-3 text-xs font-medium transition whitespace-nowrap ${
               activeTab === tab.key
                 ? 'bg-blue-600 text-white'
                 : 'text-gray-500 hover:text-gray-800 hover:bg-gray-200 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-700'

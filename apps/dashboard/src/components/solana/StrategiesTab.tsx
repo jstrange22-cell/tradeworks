@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Zap, Copy, Target, TrendingUp, AlertTriangle, Play, Square, Loader2 } from 'lucide-react';
+import { Zap, Copy, TrendingUp, AlertTriangle, Play, Square, Loader2 } from 'lucide-react';
 import { useSniperTemplates, useStartTemplate, useStopTemplate } from '@/hooks/useSolana';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -22,21 +22,21 @@ interface StrategyDef {
 const STRATEGIES: StrategyDef[] = [
   {
     id: 'graduation-hold',
-    name: 'Graduation Hold',
+    name: 'DEX Graduation Play',
     type: 'graduation_hold',
     icon: <TrendingUp className="h-5 w-5" />,
     color: 'text-emerald-400',
     bgColor: 'bg-emerald-500/10',
     borderColor: 'border-emerald-500/30',
-    description: 'Buy early on bonding curve, hold through graduation to DEX. Never sell on bonding curve — avoids the slippage problem entirely.',
+    description: 'Buy tokens AFTER they graduate to DEX. Real liquidity for sells, token has proven demand. No more bonding curve slippage.',
     howItWorks: [
-      'Buy tokens at $5-15K mcap on bonding curve',
-      'Hold until token graduates to Raydium ($69K mcap)',
-      'Sell on DEX with Jupiter split routing (good fills)',
+      'Wait for pump.fun token to graduate to Raydium ($69K+ mcap)',
+      'Buy on DEX with Jupiter routing (good fills)',
+      'Tiered exits + trailing stop — sells have real liquidity',
     ],
-    expectedWinRate: '15-25%',
-    riskLevel: 'High',
-    bestFor: 'Avoiding bonding curve sell slippage. Fewer trades, bigger wins.',
+    expectedWinRate: '20-35%',
+    riskLevel: 'Medium',
+    bestFor: 'Avoiding bonding curve slippage. Only buying proven tokens.',
     tradeSize: '0.05 SOL',
   },
   {
@@ -60,41 +60,41 @@ const STRATEGIES: StrategyDef[] = [
   },
   {
     id: 'copy-trade',
-    name: 'Copy Trading',
+    name: 'Whale Copy',
     type: 'copy_trade',
     icon: <Copy className="h-5 w-5" />,
     color: 'text-blue-400',
     bgColor: 'bg-blue-500/10',
     borderColor: 'border-blue-500/30',
-    description: 'Mirror whale wallets with >60% win rate. When they buy, you buy. When they sell, you sell.',
+    description: 'Mirror verified whale wallets via Helius WebSocket. When a tracked whale buys, you buy within 500ms.',
     howItWorks: [
-      'Track whale wallets with proven track records',
-      'Mirror their buys within 500ms',
-      'Mirror their sells or use trailing stop',
+      'Tracks 7+ verified profitable wallets (Nansen, GMGN, Axiom)',
+      'Helius WebSocket detects whale buys in real-time',
+      'Mirror their buys within 500ms, mirror sells or trail',
     ],
-    expectedWinRate: '40-60%',
+    expectedWinRate: '50-65%',
     riskLevel: 'Medium',
-    bestFor: 'Hands-off trading. Let smart money do the research.',
+    bestFor: 'Smart money following. Let proven traders do the research.',
     tradeSize: '0.05 SOL',
   },
   {
     id: 'graduation-snipe',
-    name: 'Graduation Snipe',
+    name: 'Volume Spike Sniper',
     type: 'graduation_snipe',
-    icon: <Target className="h-5 w-5" />,
-    color: 'text-purple-400',
-    bgColor: 'bg-purple-500/10',
-    borderColor: 'border-purple-500/30',
-    description: 'Buy AT the graduation moment when token moves to DEX. All sells happen with real liquidity — best fill quality.',
+    icon: <TrendingUp className="h-5 w-5" />,
+    color: 'text-orange-400',
+    bgColor: 'bg-orange-500/10',
+    borderColor: 'border-orange-500/30',
+    description: 'Find graduated tokens showing a second volume wave on DexScreener. Buy survivors with momentum — these tokens already proved they can live.',
     howItWorks: [
-      'Monitor tokens approaching 90% bonding curve completion',
-      'Buy the moment graduation happens (token hits Raydium)',
-      'Sell on DEX with Jupiter split routing',
+      'Scan DexScreener for graduated pump.fun tokens with volume spikes',
+      'Require 10+ unique buyers and 2.5x buy/sell ratio',
+      'Tight stops and fast exits — ride the second wave',
     ],
-    expectedWinRate: '30-40%',
-    riskLevel: 'Low',
-    bestFor: 'Best fill quality. Only trades tokens that proved demand.',
-    tradeSize: '0.10 SOL',
+    expectedWinRate: '25-40%',
+    riskLevel: 'Medium',
+    bestFor: 'Catching tokens on their second life. Higher conviction, better liquidity.',
+    tradeSize: '0.05 SOL',
   },
 ];
 
@@ -136,7 +136,39 @@ export function StrategiesTab() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      {/* Strategy Summary Bars */}
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+        {STRATEGIES.map(strategy => {
+          const tmpl = getTemplateStatus(strategy.id);
+          const stats = tmpl?.stats;
+          const pnl = stats?.totalPnlSol ?? 0;
+          const trades = stats?.totalTrades ?? 0;
+          const wins = stats?.wins ?? 0;
+          const winRate = trades > 0 ? Math.round((wins / trades) * 100) : 0;
+          const isRunning = tmpl?.running ?? false;
+          return (
+            <div key={`bar-${strategy.id}`} className={`rounded-xl border p-3 ${isRunning ? strategy.borderColor + ' ' + strategy.bgColor : 'border-slate-700/50 bg-slate-800/30'}`}>
+              <div className="flex items-center gap-2 mb-2">
+                <div className={`flex h-6 w-6 items-center justify-center rounded-md ${strategy.bgColor}`}>
+                  <span className={`${strategy.color} [&>svg]:h-3.5 [&>svg]:w-3.5`}>{strategy.icon}</span>
+                </div>
+                <span className="text-xs font-semibold text-slate-200 truncate">{strategy.name}</span>
+                <span className={`ml-auto h-2 w-2 rounded-full ${isRunning ? 'bg-green-400 animate-pulse' : 'bg-slate-600'}`} />
+              </div>
+              <div className={`text-lg font-bold font-mono ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {pnl >= 0 ? '+' : ''}{pnl.toFixed(3)} <span className="text-[10px] font-normal text-slate-500">SOL</span>
+              </div>
+              <div className="flex items-center gap-3 mt-1 text-[10px] text-slate-500">
+                <span>{trades} trades</span>
+                <span>{winRate}% win</span>
+                <span>{wins}W / {trades - wins}L</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="grid gap-3 md:gap-4 md:grid-cols-2">
         {STRATEGIES.map(strategy => {
           const tmpl = getTemplateStatus(strategy.id);
           const isRunning = tmpl?.running ?? false;
@@ -149,16 +181,16 @@ export function StrategiesTab() {
           return (
             <div
               key={strategy.id}
-              className={`rounded-xl border p-5 transition-all ${
+              className={`rounded-xl border p-3 md:p-5 transition-all ${
                 isRunning
                   ? `${strategy.borderColor} ${strategy.bgColor}`
                   : 'border-slate-700/50 bg-slate-800/30 hover:border-slate-600/50'
               }`}
             >
               {/* Header */}
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${strategy.bgColor}`}>
+              <div className="flex items-start justify-between mb-2 md:mb-3">
+                <div className="flex items-center gap-2 md:gap-3">
+                  <div className={`flex h-8 w-8 md:h-10 md:w-10 items-center justify-center rounded-lg ${strategy.bgColor}`}>
                     <span className={strategy.color}>{strategy.icon}</span>
                   </div>
                   <div>

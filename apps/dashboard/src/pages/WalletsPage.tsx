@@ -155,6 +155,21 @@ export function WalletsPage() {
             </WalletCard>
           ))}
 
+        {/* SafePal EVM Wallet */}
+        <WalletCard
+          name="SafePal (EVM)"
+          icon="🛡️"
+          total={0}
+          isLoading={false}
+          onRefresh={() => {}}
+          address="0x56802fdcc8C901a8666928a84882651171eF519B"
+        >
+          <div className="px-3 py-2 text-[10px] text-slate-500">
+            Multi-chain EVM wallet connected via WalletConnect.
+            <br />Balance shown on Crypto page when connected.
+          </div>
+        </WalletCard>
+
         {/* Disconnected exchanges */}
         {portfolioData?.data
           ?.filter(ex => !ex.connected)
@@ -199,7 +214,7 @@ function WalletCard({
   return (
     <div className="rounded-xl border border-slate-700/50 bg-slate-800/50 overflow-hidden">
       {/* Card header */}
-      <div className="flex items-center justify-between border-b border-slate-700/30 px-4 py-3">
+      <div className="flex items-center justify-between border-b border-slate-700/30 px-3 py-2">
         <div className="flex items-center gap-2">
           <span className="text-lg">{icon}</span>
           <div>
@@ -257,27 +272,25 @@ function AssetRow({
   const isPositive = valueUsd > 0;
 
   return (
-    <div className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-700/20 transition-colors">
-      <div className="flex items-center gap-2.5">
+    <div className="flex items-center justify-between px-3 py-1.5 hover:bg-slate-700/20 transition-colors">
+      <div className="flex items-center gap-2">
         {logoUri ? (
-          <img src={logoUri} alt={symbol} className="h-6 w-6 rounded-full" />
+          <img src={logoUri} alt={symbol} className="h-5 w-5 rounded-full" />
         ) : (
-          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-700 text-[10px] font-bold text-slate-300">
+          <div className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-700 text-[9px] font-bold text-slate-300">
             {symbol.slice(0, 2)}
           </div>
         )}
-        <div>
-          <p className="text-xs font-medium text-slate-200">{symbol}</p>
-          <p className="text-[10px] text-slate-500 truncate max-w-[120px]">{name}</p>
-        </div>
+        <span className="text-[11px] font-semibold text-slate-200">{symbol}</span>
+        <span className="text-[9px] text-slate-500 truncate max-w-[80px]">{name}</span>
       </div>
-      <div className="text-right">
-        <p className="text-xs font-mono text-slate-200">
+      <div className="flex items-center gap-3">
+        <span className="text-[10px] font-mono text-slate-400">
           {amount < 0.001 ? amount.toExponential(2) : amount.toLocaleString('en-US', { maximumFractionDigits: 4 })}
-        </p>
-        <p className={`text-[10px] font-mono ${isPositive ? 'text-green-400' : 'text-slate-500'}`}>
+        </span>
+        <span className={`text-[11px] font-mono font-semibold min-w-[60px] text-right ${isPositive ? 'text-green-400' : 'text-slate-500'}`}>
           ${valueUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-        </p>
+        </span>
       </div>
     </div>
   );
@@ -289,5 +302,7 @@ function exchangeIcon(name: string): string {
   if (lower.includes('robinhood')) return '🪶';
   if (lower.includes('phantom')) return '👻';
   if (lower.includes('alpaca')) return '🦙';
+  if (lower.includes('kalshi')) return '🎯';
+  if (lower.includes('polymarket')) return '🔮';
   return '💱';
 }

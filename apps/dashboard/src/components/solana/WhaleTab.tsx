@@ -41,7 +41,7 @@ export function WhaleTab() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Eye className="h-5 w-5 text-cyan-400" />
-          <h2 className="text-sm font-semibold text-slate-200">Copy Trading</h2>
+          <h2 className="text-sm font-semibold text-slate-200">Whale Copy Trading</h2>
           <span
             className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
               running

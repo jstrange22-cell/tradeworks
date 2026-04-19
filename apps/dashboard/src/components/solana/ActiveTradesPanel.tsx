@@ -180,7 +180,8 @@ export function ActiveTradesPanel() {
   // Deduplicate by mint in case of status endpoint duplicates
   const uniquePositions = positions.filter((p, i, arr) => arr.findIndex(x => x.mint === p.mint) === i);
 
-  const isRunning = status?.running ?? false;
+  // Check if ANY template is running (not just the default sniper which is retired)
+  const isRunning = (status as Record<string, unknown>)?.anyRunning ?? status?.running ?? false;
   const isLoading = sniperStatus.isLoading;
 
   return (
@@ -190,7 +191,7 @@ export function ActiveTradesPanel() {
       <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${
         isRunning
           ? 'border-emerald-500/30 bg-emerald-500/8 dark:bg-emerald-500/8'
-          : 'border-red-500/30 bg-red-500/8 dark:bg-red-500/8'
+          : 'border-slate-600/30 bg-slate-800/50 dark:bg-slate-800/50'
       }`}>
         {isRunning ? (
           <>
@@ -208,10 +209,10 @@ export function ActiveTradesPanel() {
           </>
         ) : (
           <>
-            <WifiOff className="h-4 w-4 text-red-500" />
+            <WifiOff className="h-4 w-4 text-slate-500" />
             <div>
-              <p className="text-sm font-bold text-red-600 dark:text-red-400">Bot is STOPPED</p>
-              <p className="text-[10px] text-red-500/70">Click Start to resume trading</p>
+              <p className="text-sm font-bold text-slate-400">No Strategies Running</p>
+              <p className="text-[10px] text-slate-500">Go to Strategies tab to start a strategy</p>
             </div>
           </>
         )}
