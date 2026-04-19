@@ -402,10 +402,14 @@ server.listen(PORT, HOST, () => {
       if (result.chain !== 'stock') {
         try {
           const { executeSignalTrade } = await import('./routes/crypto-agent.js');
+          // Map TradeVisor chain ('crypto' | 'solana') → TradeSignal chain ('coinbase' | 'solana')
+          // so the router doesn't fall into DexScreener lookup for major-cap CEX-listed coins.
+          const signalChain = result.chain === 'crypto' ? 'coinbase' : 'solana';
           executeSignalTrade({
             symbol: result.ticker, action: result.action, price: result.currentPrice,
             source: `tradevisor_${result.grade}`, confidence: result.confidence,
             reason: `Tradevisor ${result.action.toUpperCase()}: ${result.ticker} — ${result.confluenceScore}/6 (${result.grade})`,
+            chain: signalChain,
           });
         } catch { /* crypto agent not loaded */ }
       }

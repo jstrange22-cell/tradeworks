@@ -646,20 +646,35 @@ export async function executeSignalTrade(signal: TradeSignal): Promise<boolean> 
       return false;
     }
 
-    // ��─ CHAIN-AWARE EXECUTION ��─
-    // If we have a contract address, route to the appropriate DEX
+    // ── CHAIN-AWARE EXECUTION ──
+    // Signals carry an explicit `chain` hint. TradeVisor majors → 'coinbase' (CEX).
+    // Pump.fun / moonshot / whale copy → 'solana'. Twitter / manual may omit chain
+    // and require a DexScreener lookup with sanity guards against ghost pairs.
     let chain = signal.chain ?? (signal.contractAddress && signal.contractAddress.length >= 32 ? 'solana' : 'coinbase');
     let contractAddress = signal.contractAddress;
 
-    // For tokens without a known chain, search DexScreener for the best pair
-    // Priority: Solana (Jupiter) → EVM (SafePal/Uniswap) → Coinbase paper trade
-    if (chain !== 'solana' && !contractAddress) {
+    // TradeVisor / CEX-bound signals: skip DexScreener entirely.
+    // AAVE/TIA/SEI/WIF/etc. live on Coinbase — do NOT resolve to Solana ghost mints.
+    const isCexBound = chain === 'coinbase' || signal.source.startsWith('tradevisor_');
+
+    if (!isCexBound && chain !== 'solana' && !contractAddress) {
       try {
         const dexRes = await fetch(`https://api.dexscreener.com/latest/dex/search?q=${cleanSymbol}`, { signal: AbortSignal.timeout(5_000) });
         if (dexRes.ok) {
-          const dexData = await dexRes.json() as { pairs?: Array<{ chainId: string; baseToken: { symbol: string; address: string }; liquidity?: { usd: number } }> };
+          const dexData = await dexRes.json() as { pairs?: Array<{ chainId: string; baseToken: { symbol: string; address: string }; liquidity?: { usd: number }; volume?: { h24?: number }; marketCap?: number }> };
+          // Liquidity/volume sanity guard: reject ghost pairs with fake liquidity metrics.
+          // Spoofed pairs commonly show liquidity > marketCap and h24 volume under $10k.
+          const isLegitPair = (p: { liquidity?: { usd: number }; volume?: { h24?: number }; marketCap?: number }) => {
+            const liq = p.liquidity?.usd ?? 0;
+            const vol24 = p.volume?.h24 ?? 0;
+            const mcap = p.marketCap ?? 0;
+            if (vol24 < 10_000) return false;
+            if (mcap > 0 && liq > mcap) return false; // liquidity shouldn't exceed full market cap
+            return true;
+          };
           const matchingPairs = (dexData.pairs ?? [])
             .filter(p => p.baseToken.symbol.toUpperCase() === cleanSymbol)
+            .filter(isLegitPair)
             .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
 
           // Try Solana first (cheapest gas)
@@ -667,7 +682,7 @@ export async function executeSignalTrade(signal: TradeSignal): Promise<boolean> 
           if (solanaPair) {
             chain = 'solana';
             contractAddress = solanaPair.baseToken.address;
-            logger.info({ symbol: cleanSymbol, mint: contractAddress.slice(0, 8) }, `[CryptoAgent] Found Solana pair for ${cleanSymbol}`);
+            logger.info({ symbol: cleanSymbol, mint: contractAddress.slice(0, 8), liq: solanaPair.liquidity?.usd, vol24: solanaPair.volume?.h24 }, `[CryptoAgent] Found Solana pair for ${cleanSymbol}`);
           } else {
             // Try EVM chains (ethereum, base, bsc, polygon, arbitrum)
             const evmChainMap: Record<string, string> = { ethereum: 'ethereum', base: 'base', bsc: 'bsc', polygon: 'polygon', arbitrum: 'arbitrum' };
@@ -675,11 +690,13 @@ export async function executeSignalTrade(signal: TradeSignal): Promise<boolean> 
             if (evmPair) {
               chain = evmChainMap[evmPair.chainId];
               contractAddress = evmPair.baseToken.address;
-              logger.info({ symbol: cleanSymbol, chain, addr: contractAddress.slice(0, 10) }, `[CryptoAgent] Found EVM pair for ${cleanSymbol} on ${chain}`);
+              logger.info({ symbol: cleanSymbol, chain, addr: contractAddress.slice(0, 10), liq: evmPair.liquidity?.usd, vol24: evmPair.volume?.h24 }, `[CryptoAgent] Found EVM pair for ${cleanSymbol} on ${chain}`);
+            } else {
+              logger.info({ symbol: cleanSymbol, candidates: (dexData.pairs ?? []).length }, `[CryptoAgent] No legit DEX pair for ${cleanSymbol} — falling back to CEX`);
             }
           }
         }
-      } catch { /* DexScreener unavailable, fall through to paper trade */ }
+      } catch { /* DexScreener unavailable, fall through to CEX paper trade */ }
     }
 
     if (chain === 'solana' && contractAddress) {
