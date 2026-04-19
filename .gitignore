@@ -38,3 +38,15 @@ npm-debug.log*
 # Testing
 test-results/
 playwright-report/
+
+# Personal VPS ops scripts (contain secrets, reference /opt/tradeworks paths)
+/adjust-templates.js
+/analyze-cex-pnl.js
+/check-whales.js
+/find-active-whales.js
+/find-whales-v2.js
+/find-whales-v3.js
+/monitor-hourly.sh
+/monitor-positions.js
+/size-test.js
+/update-strategies.js
