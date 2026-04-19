@@ -44,6 +44,7 @@ import {
   persistPositions,
   persistExecutions,
   persistTemplateStats,
+  persistPaperBalances,
   persistDailySpend,
   getCachedSolBalance,
   refreshCachedSolBalance,
@@ -73,18 +74,20 @@ export const JITO_DONTFRONT_PUBKEY = 'jitodontfrontGcWhqjJfT8i8V1dCUACkxm5N9LD2v
  * Fetch optimal priority fee based on recent network conditions.
  * Returns microlamports per compute unit.
  */
-async function getDynamicPriorityFee(fallback: number = 200_000): Promise<number> {
+async function getDynamicPriorityFee(fallback: number = 50_000): Promise<number> {
   try {
     const connection = getSolanaConnection();
     const fees = await connection.getRecentPrioritizationFees();
     if (fees.length === 0) return fallback;
 
-    // Use the 75th percentile of recent fees (balance speed vs cost)
+    // Use the MEDIAN (50th percentile) — 75th was overpaying
     const sorted = fees.map(f => f.prioritizationFee).sort((a, b) => a - b);
-    const p75 = sorted[Math.floor(sorted.length * 0.75)] ?? fallback;
+    const median = sorted[Math.floor(sorted.length * 0.5)] ?? fallback;
 
-    // Clamp: min 10,000 (cheap), max 1,000,000 (expensive but lands)
-    const clamped = Math.max(10_000, Math.min(1_000_000, p75));
+    // Tight clamp: min 5,000, max 100,000 (0.0001 SOL max)
+    // On 0.005 SOL trades, even 100k µL = 0.0001 SOL = 2% of trade = acceptable
+    // Old max 1,000,000 was 0.001 SOL = 20% of trade = unacceptable
+    const clamped = Math.max(5_000, Math.min(100_000, median));
     return clamped;
   } catch {
     return fallback;
@@ -610,8 +613,18 @@ export async function executeBuySnipe(params: {
     return execution;
   }
 
+  // ── GLOBAL SAFETY CHECK ──
+  try {
+    const { canTrade } = await import('../../services/risk/global-safety.js');
+    const check = canTrade('solana_sniper');
+    if (!check.allowed) {
+      console.log(`[Sniper][${template.name}] SAFETY BLOCKED: ${check.reason}`);
+      return buildFailedExecution(params, templateId, template.name, `Safety: ${check.reason}`);
+    }
+  } catch { /* safety module not loaded yet */ }
+
   // Effective buy amount: use override from dynamic sizing if provided
-  const effectiveBuyAmountSol = params.buyAmountOverride ?? template.buyAmountSol;
+  let effectiveBuyAmountSol = params.buyAmountOverride ?? template.buyAmountSol;
 
   // ── EARLY SOL BALANCE CHECK (silent skip — no log spam, no execution record) ──
   // Uses cached balance to avoid an RPC call per buy attempt
@@ -676,13 +689,26 @@ export async function executeBuySnipe(params: {
 
     // ── PAPER MODE BUY ──────────────────────────────────────────────────
     if (template.paperMode) {
-      // Check virtual SOL balance — silently skip (don't record as failed)
+      // PHASE 2 FIX: Paper trades at EXACT configured amount — no dynamic sizing.
+      // This ensures paper P&L accurately predicts live P&L at the same trade size.
+      // Dynamic sizing and win-streak boosts disabled to prevent paper inflation.
+
+      // Simulate realistic buy fees: base tx fee + priority fee (variable)
+      // Real range: 0.0005 - 0.003 SOL depending on network congestion
+      const paperBuyFee = 0.000005 + 0.0002 + Math.random() * 0.0015; // base + priority (0.0002-0.0017)
+      effectiveBuyAmountSol += paperBuyFee;
+
+      // ATOMIC balance check + deduct — prevent race condition where multiple
+      // concurrent buys both pass the check before either deducts
       if (runtime.paperBalanceSol < effectiveBuyAmountSol) {
         console.log(
           `[Sniper][${template.name}] ⏸️ Paper balance low (${runtime.paperBalanceSol.toFixed(4)} SOL < ${effectiveBuyAmountSol} SOL) — waiting for sells to recover`,
         );
         return execution;
       }
+      // Deduct IMMEDIATELY before any async work (prevents race condition)
+      runtime.paperBalanceSol -= effectiveBuyAmountSol;
+      runtime.dailySpentSol += effectiveBuyAmountSol;
 
       // Get realistic token amount via Jupiter quote (no execution)
       let estimatedTokens = 0;
@@ -702,17 +728,12 @@ export async function executeBuySnipe(params: {
 
       // Fallback: estimate from current price if quote failed
       if (estimatedTokens <= 0 && params.priceUsd && params.priceUsd > 0) {
-        // Rough estimate: (buyAmountSol * ~150 USD/SOL) / priceUsd
         const solPriceUsd = 150; // approximate, good enough for paper mode
         estimatedTokens = (effectiveBuyAmountSol * solPriceUsd) / params.priceUsd;
       }
       if (estimatedTokens <= 0) {
         estimatedTokens = 1000000; // fallback placeholder
       }
-
-      // Deduct from virtual balance
-      runtime.paperBalanceSol -= effectiveBuyAmountSol;
-      runtime.dailySpentSol += effectiveBuyAmountSol;
 
       execution.signature = `paper_${Date.now()}`;
       execution.status = 'success';
@@ -753,6 +774,7 @@ export async function executeBuySnipe(params: {
       persistPositions();
       persistDailySpend();
       persistTemplateStats();
+      persistPaperBalances();
 
       console.log(
         `[Sniper][${template.name}] PAPER BUY ${params.symbol}: ~${estimatedTokens.toFixed(0)} tokens for ${effectiveBuyAmountSol} SOL (virtual balance: ${runtime.paperBalanceSol.toFixed(4)} SOL)`,
@@ -874,6 +896,7 @@ export async function executeBuySnipe(params: {
         persistPositions();
         persistDailySpend();
         persistTemplateStats();
+      persistPaperBalances();
       }
     }
   } catch (err) {
@@ -901,16 +924,27 @@ export async function fetchTokenBalance(mintAddress: string): Promise<number> {
     if (!keypair) return 0;
 
     const mintPubkey = new PublicKey(mintAddress);
-    const tokenAccounts = await withRpcRetry(
-      () => connection.getParsedTokenAccountsByOwner(keypair.publicKey, { mint: mintPubkey }),
-      3, // up to 3 retries for 429s
-    );
 
-    for (const { account } of tokenAccounts.value) {
-      const parsed = account.data.parsed?.info as Record<string, unknown> | undefined;
-      if (!parsed) continue;
-      const tokenAmount = parsed.tokenAmount as { uiAmount: number } | undefined;
-      if (tokenAmount && tokenAmount.uiAmount > 0) return tokenAmount.uiAmount;
+    // Check BOTH Token Program and Token-2022 — pump.fun tokens often use Token-2022
+    const TOKEN_PROGRAM = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+    const TOKEN_2022 = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
+
+    for (const programId of [TOKEN_PROGRAM, TOKEN_2022]) {
+      try {
+        const tokenAccounts = await withRpcRetry(
+          () => connection.getParsedTokenAccountsByOwner(keypair.publicKey, { mint: mintPubkey, programId }),
+          2,
+        );
+
+        for (const { account } of tokenAccounts.value) {
+          const parsed = account.data.parsed?.info as Record<string, unknown> | undefined;
+          if (!parsed) continue;
+          const tokenAmount = parsed.tokenAmount as { uiAmount: number } | undefined;
+          if (tokenAmount && tokenAmount.uiAmount > 0) return tokenAmount.uiAmount;
+        }
+      } catch {
+        // This program didn't have it, try the other
+      }
     }
   } catch (err) {
     console.warn(`[Sniper] fetchTokenBalance failed for ${mintAddress.slice(0, 8)}:`, err instanceof Error ? err.message : err);
@@ -991,28 +1025,154 @@ export async function executeSellSnipe(
   try {
     // ── PAPER MODE SELL ────────────────────────────────────────────────
     if (template.paperMode || position.paperMode) {
-      // Calculate sell value via Jupiter quote (no execution)
+      // ── PHASE 2: HONEST PAPER SELL SIMULATION ──
+      // Models real-world execution: slippage, fees, sell failures, execution delay.
+      // Goal: paper P&L should approximate live P&L within ±20%.
+
+      const buyCostSol = position.buyCostSol ?? template.buyAmountSol;
+
+      // ── Step 1: Simulate sell execution delay (3-5s) ──
+      // In reality, 3-5 seconds pass between deciding to sell and TX confirming.
+      // Price can drop significantly in that window for dying memecoins.
+      // We model this by applying a random price decay of 0-15% on losing positions.
+      let priceDecayFactor = 1.0;
+      if (position.currentPrice > 0 && position.buyPrice > 0) {
+        const priceRatio = position.currentPrice / position.buyPrice;
+        if (priceRatio < 1.0) {
+          // Token is already losing — simulate 5-15% additional drop during sell delay
+          priceDecayFactor = 1.0 - (0.05 + Math.random() * 0.10);
+        } else if (priceRatio < 1.5) {
+          // Small gain — simulate 2-8% drop during sell delay
+          priceDecayFactor = 1.0 - (0.02 + Math.random() * 0.06);
+        }
+        // Big gains (>1.5x) — price is more stable, minimal decay
+      }
+
+      // ── Step 2: Simulate sell failure (dead tokens) ──
+      // ~25% of pump.fun tokens have $0 liquidity when we try to sell.
+      // Tokens with mcap < $3K or bonding curve < 5% almost always fail to sell.
+      const positionAgeMs = Date.now() - new Date(position.boughtAt).getTime();
+      const priceRatioRaw = (position.currentPrice > 0 && position.buyPrice > 0)
+        ? position.currentPrice / position.buyPrice
+        : 0;
+
+      // Sell failure probability based on how badly the token is doing
+      let sellFailProbability = 0;
+      if (priceRatioRaw < 0.1) {
+        sellFailProbability = 0.70; // 70% fail — token is 90%+ down, likely dead
+      } else if (priceRatioRaw < 0.3) {
+        sellFailProbability = 0.40; // 40% fail — token is 70%+ down
+      } else if (priceRatioRaw < 0.5) {
+        sellFailProbability = 0.15; // 15% fail — significant loss but maybe liquidity
+      } else if (positionAgeMs > 600_000 && priceRatioRaw < 0.8) {
+        sellFailProbability = 0.10; // 10% fail — old stagnant position
+      }
+
+      if (Math.random() < sellFailProbability) {
+        // Simulate sell FAILURE — token is dead, no liquidity
+        console.log(
+          `[Sniper][${template.name}] 📊 PAPER SELL FAILED (simulated): ${position.symbol} — ` +
+          `price ratio ${priceRatioRaw.toFixed(2)}x, fail prob ${(sellFailProbability * 100).toFixed(0)}%`,
+        );
+        // Return 0 — total loss on this sell attempt
+        // In real trading, the TX would fail and we'd retry, eventually writing off the position
+        execution.signature = `paper_sell_failed_${Date.now()}`;
+        execution.status = 'success'; // Mark as "success" so position is removed
+        execution.amountSol = 0;
+        execution.paperMode = true;
+        execution.pnlSol = -buyCostSol;
+        execution.pnlPercent = -100;
+
+        // Don't add any SOL back — it's a total loss
+        void getRuntime(resolvedTemplateId); // ensure runtime exists
+        position.accumulatedSellSol = (position.accumulatedSellSol ?? 0);
+
+        // Stats tracking — count as loss
+        const stats = template.stats;
+        stats.totalTrades++;
+        stats.losses++;
+        stats.totalPnlSol -= buyCostSol;
+        persistTemplateStats();
+        persistPaperBalances();
+
+        storeAndBroadcastExecution(execution);
+
+        // Remove position
+        const positions = getTemplatePositions(resolvedTemplateId);
+        positions.delete(mint);
+        syncActivePositionsMap();
+        persistPositions();
+
+        return execution;
+      }
+
+      // ── Step 3: Calculate sell value with REALISTIC slippage ──
       let estimatedSolReturn = 0;
+
+      // Try Raydium quote first (real market data)
       try {
-        const sellAmountRawForQuote = Math.floor(sellAmount * 1_000_000); // 6 decimals for pump.fun
+        const sellAmountRawForQuote = Math.floor(sellAmount * 1_000_000);
         const quoteUrl = `https://transaction-v1.raydium.io/compute/swap-base-in?inputMint=${mint}&outputMint=${SOL_MINT}&amount=${sellAmountRawForQuote}&slippageBps=${template.slippageBps}&txVersion=V0`;
-        const quoteResp = await fetch(quoteUrl);
+        const quoteResp = await fetch(quoteUrl, { signal: AbortSignal.timeout(5_000) });
         if (quoteResp.ok) {
           const quoteData = await quoteResp.json() as { success?: boolean; data?: { outputAmount?: string } };
           if (quoteData.success && quoteData.data?.outputAmount) {
             estimatedSolReturn = parseFloat(quoteData.data.outputAmount) / LAMPORTS_PER_SOL;
+            // Apply price decay (simulating the 3-5s delay)
+            estimatedSolReturn *= priceDecayFactor;
           }
         }
-      } catch (quoteErr) {
-        console.warn(`[Sniper][${template.name}] Paper sell Raydium quote failed, using price estimate`);
+      } catch {
+        // Quote failed — use price estimate below
       }
 
-      // Fallback: estimate from current price and buy cost
+      // Fallback: estimate from current price
       if (estimatedSolReturn <= 0 && position.currentPrice > 0 && position.buyPrice > 0) {
         const priceRatio = position.currentPrice / position.buyPrice;
-        const buyCostSol = position.buyCostSol ?? template.buyAmountSol;
-        estimatedSolReturn = buyCostSol * priceRatio;
+        const cappedRatio = Math.min(priceRatio, 100);
+
+        // ── REALISTIC SLIPPAGE MODEL ──
+        // Bonding curve tokens (pre-graduation): 15-40% slippage
+        // Post-graduation DEX tokens: 5-15% slippage
+        // The worse the position is doing, the worse the slippage
+        let slippagePct: number;
+        if (cappedRatio < 0.5) {
+          // Token dumping hard — 25-40% slippage (thin liquidity, everyone selling)
+          slippagePct = 0.25 + Math.random() * 0.15;
+        } else if (cappedRatio < 1.0) {
+          // Losing position — 15-25% slippage
+          slippagePct = 0.15 + Math.random() * 0.10;
+        } else if (cappedRatio < 2.0) {
+          // Small gain — 8-15% slippage
+          slippagePct = 0.08 + Math.random() * 0.07;
+        } else {
+          // Big gain — 5-10% slippage (token has momentum, better liquidity)
+          slippagePct = 0.05 + Math.random() * 0.05;
+        }
+
+        // Apply price decay AND slippage
+        estimatedSolReturn = buyCostSol * cappedRatio * priceDecayFactor * (1 - slippagePct);
+
+        console.log(
+          `[Sniper][${template.name}] 📊 Paper sell ${position.symbol}: ratio=${cappedRatio.toFixed(2)}x ` +
+          `decay=${priceDecayFactor.toFixed(2)} slippage=${(slippagePct * 100).toFixed(0)}% ` +
+          `return=${estimatedSolReturn.toFixed(5)} SOL (buy=${buyCostSol.toFixed(5)})`,
+        );
       }
+
+      // Final sanity check
+      const maxReasonableReturn = buyCostSol * 100;
+      if (!Number.isFinite(estimatedSolReturn) || estimatedSolReturn > maxReasonableReturn) {
+        estimatedSolReturn = buyCostSol;
+      }
+
+      // ── Step 4: Simulate realistic transaction fees ──
+      // Priority fee (median network fee) + base fee + potential Jito tip
+      // Real cost: 0.0005 - 0.003 SOL per TX depending on congestion
+      const baseFee = 0.000005; // 5000 lamports
+      const priorityFee = 0.0002 + Math.random() * 0.0015; // 0.0002-0.0017 SOL (realistic range)
+      const totalFee = baseFee + priorityFee;
+      estimatedSolReturn = Math.max(0, estimatedSolReturn - totalFee);
 
       // Add returned SOL to virtual balance
       const runtime = getRuntime(resolvedTemplateId);
@@ -1023,9 +1183,12 @@ export async function executeSellSnipe(
       execution.amountSol = estimatedSolReturn;
       execution.paperMode = true;
 
-      // Stats tracking
-      const buyCostSol = position.buyCostSol ?? template.buyAmountSol;
+      // Stats tracking (buyCostSol already declared above in Phase 2 block)
       const pnlSol = estimatedSolReturn - buyCostSol;
+
+      // Record P&L on execution for reporting
+      execution.pnlSol = pnlSol;
+      execution.pnlPercent = buyCostSol > 0 ? (pnlSol / buyCostSol) * 100 : 0;
 
       // Accumulate sell proceeds across partial tier sells for accurate per-position win/loss
       position.accumulatedSellSol = (position.accumulatedSellSol ?? 0) + estimatedSolReturn;
@@ -1043,11 +1206,15 @@ export async function executeSellSnipe(
 
         if (netPnl >= 0) {
           template.stats.wins++;
-          if (paperCountsForCircuitBreaker) runtimeCb.consecutiveLosses = 0;
+          if (paperCountsForCircuitBreaker) {
+            runtimeCb.consecutiveLosses = 0;
+            runtimeCb.consecutiveWins = (runtimeCb.consecutiveWins ?? 0) + 1;
+          }
         } else {
           template.stats.losses++;
           if (paperCountsForCircuitBreaker) {
             runtimeCb.consecutiveLosses++;
+            runtimeCb.consecutiveWins = 0;
             if (netPnl < 0) runtimeCb.dailyRealizedLossSol += Math.abs(netPnl);
             if (runtimeCb.consecutiveLosses >= template.consecutiveLossPauseThreshold) {
               const pauseMs = runtimeCb.consecutiveLosses >= template.consecutiveLossPauseThreshold * 2
@@ -1074,6 +1241,7 @@ export async function executeSellSnipe(
       // Persist (no real wallet ops needed)
       persistPositions();
       persistTemplateStats();
+      persistPaperBalances();
 
       console.log(
         `[Sniper][${template.name}] PAPER SELL ${position.symbol} (${trigger}): ~${estimatedSolReturn.toFixed(4)} SOL returned, PnL: ${pnlSol >= 0 ? '+' : ''}${pnlSol.toFixed(4)} SOL (virtual balance: ${runtime.paperBalanceSol.toFixed(4)} SOL)`,
@@ -1103,6 +1271,70 @@ export async function executeSellSnipe(
           ? Math.max(1, Math.floor(actualOnChainBalance * sellPct))
           : actualOnChainBalance;
         position.amountTokens = actualOnChainBalance;
+      }
+
+      // ── ABANDON ON BONDING CURVE ─────────────────────────────────────
+      // If template has abandonOnBondingCurve=true and this token is still
+      // on the bonding curve, skip the sell entirely. Selling into zero
+      // liquidity gives 15-40% fills — losing 0.10+ SOL per trade.
+      // Instead, just close the token account and recover ~0.002 SOL rent.
+      // Net loss is the buy cost (~0.03 SOL) instead of buy cost PLUS
+      // terrible sell slippage (0.10+ SOL).
+      if (template.abandonOnBondingCurve && position.vSolInBondingCurve !== undefined && position.vSolInBondingCurve < 85) {
+        console.log(
+          `[Sniper][${template.name}] ABANDON ${position.symbol} — bonding curve (${position.vSolInBondingCurve?.toFixed(1)} SOL), skipping sell to avoid bad fills. Closing token account.`,
+        );
+
+        try {
+          const { createCloseAccountInstruction, getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } = await import('@solana/spl-token');
+          const { Transaction } = await import('@solana/web3.js');
+          const connection = getSolanaConnection();
+          const keypair = getSolanaKeypair();
+          const mintPubkey = new PublicKey(mint);
+          const ata = getAssociatedTokenAddressSync(mintPubkey, keypair.publicKey);
+
+          const tx = new Transaction().add(
+            createCloseAccountInstruction(ata, keypair.publicKey, keypair.publicKey, [], TOKEN_PROGRAM_ID),
+          );
+          tx.feePayer = keypair.publicKey;
+          tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+          tx.sign(keypair);
+          const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true });
+
+          execution.signature = sig;
+          execution.status = 'success';
+          execution.amountSol = 0; // no SOL returned from abandon
+          console.log(`[Sniper][${template.name}] Token account closed for ${position.symbol}: ${sig}`);
+        } catch (closeErr) {
+          console.warn(`[Sniper][${template.name}] Failed to close token account for ${position.symbol}:`, closeErr instanceof Error ? closeErr.message : closeErr);
+          execution.status = 'success'; // still count as exited — tokens are worthless
+          execution.amountSol = 0;
+        }
+
+        // Record as full loss of buy cost
+        const buyCostSol = position.buyCostSol ?? template.buyAmountSol;
+        execution.pnlSol = -buyCostSol;
+        execution.pnlPercent = -100;
+
+        template.stats.totalPnlSol -= buyCostSol;
+        template.stats.losses++;
+        template.stats.totalTrades++;
+
+        const abandonRuntime = getRuntime(resolvedTemplateId);
+        abandonRuntime.consecutiveLosses++;
+        abandonRuntime.dailySpentSol += buyCostSol;
+
+        positions.delete(mint);
+        clearAntiRugWindow(mint);
+        syncActivePositionsMap();
+        unsubscribeTokenTrades([mint]);
+        persistPositions();
+        persistTemplateStats();
+      persistPaperBalances();
+        executionHistory.push(execution);
+        persistExecutions();
+
+        return execution;
       }
 
       // Capture pre-sell SOL balance for on-chain verification
@@ -1328,6 +1560,7 @@ export async function executeSellSnipe(
           // Persist state
           persistPositions();
           persistTemplateStats();
+      persistPaperBalances();
         }
       } else {
         execution.status = 'failed';

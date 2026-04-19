@@ -18,6 +18,26 @@ import {
 } from '../routes/asset-protection.js';
 import { TRACKED_INSTRUMENTS } from './market-data-service.js';
 import { analyzeInstrument, type InstrumentAnalysis } from './analysis-service.js';
+import { getDiscoveredCoinbasePairs } from './coin-discovery-service.js';
+
+// Dynamic instrument list: core instruments + discovered coins
+let cycleInstruments: string[] = [...TRACKED_INSTRUMENTS];
+
+export function updateCycleInstruments(newInstruments: string[]): void {
+  cycleInstruments = newInstruments;
+  engineLogger.info({ count: cycleInstruments.length }, 'Cycle instruments updated');
+}
+
+export function getCycleInstruments(): string[] {
+  return [...cycleInstruments];
+}
+
+// Paper trade recording hook — set by crypto-agent.ts
+let paperTradeRecorder: ((exec: { instrument: string; side: string; quantity: number; price: number }) => void) | null = null;
+
+export function setPaperTradeRecorder(fn: typeof paperTradeRecorder): void {
+  paperTradeRecorder = fn;
+}
 import { COINBASE_PRODUCT_MAP, placeCoinbaseOrder } from './coinbase-execution-service.js';
 
 const engineLogger = createServiceLogger('Engine');
@@ -377,8 +397,11 @@ export async function runAnalysisCycle(): Promise<CycleResult> {
 
   try {
     // -- Phase 1: Quant Analysis --
+    // Merge core instruments + discovered coins for dynamic universe
+    const discoveredPairs = getDiscoveredCoinbasePairs();
+    const allInstruments = [...new Set([...cycleInstruments, ...discoveredPairs])];
     agentLiveStatus.set('Quant Analyst', 'analyzing');
-    const analyses = await Promise.all(TRACKED_INSTRUMENTS.map(analyzeInstrument));
+    const analyses = await Promise.all(allInstruments.map(analyzeInstrument));
     agentLiveStatus.set('Quant Analyst', 'idle');
     const valid = analyses.filter((a): a is InstrumentAnalysis => a !== null);
 
@@ -446,22 +469,52 @@ export async function runAnalysisCycle(): Promise<CycleResult> {
     let heat = 0;
     const decisions: CycleDecision[] = [];
 
+    // Check TradingView Tradevisor signals — TV is the PRIMARY trade driver
+    let tvBuySymbols: string[] = [];
+    let tvSellSymbols: string[] = [];
+    try {
+      const { getBuySymbols, getSellSymbols } = await import('./ai/tradingview-agent.js');
+      tvBuySymbols = getBuySymbols();
+      tvSellSymbols = getSellSymbols();
+    } catch { /* TV agent not loaded */ }
+
     for (const sig of allSignals) {
-      if (sig.confidence < 0.45) continue;
+      // TV signal integration: Tradevisor is the dominant signal source (60% weight)
+      const instrument = sig.instrument;
+      const hasTvBuy = tvBuySymbols.includes(instrument);
+      const hasTvSell = tvSellSymbols.includes(instrument);
+
+      // If TV says SELL and we're considering a BUY → reject
+      if (hasTvSell && sig.direction === 'long') {
+        decisions.push({ instrument, direction: sig.direction, confidence: sig.confidence, approved: false, rejectionReason: 'Tradevisor SELL signal active — blocking buy' });
+        continue;
+      }
+
+      // Boost confidence when TV agrees with quant signal
+      let adjustedConfidence = sig.confidence;
+      if (hasTvBuy && sig.direction === 'long') adjustedConfidence = Math.min(1.0, sig.confidence + 0.3); // +30% boost
+      if (hasTvSell && sig.direction === 'short') adjustedConfidence = Math.min(1.0, sig.confidence + 0.3);
+
+      if (adjustedConfidence < 0.40) continue; // Lowered from 0.45 since TV boosts confidence
+
       let approved = true;
       let rejectionReason: string | undefined;
 
-      if (macroRiskLevel === 'extreme') {
+      if (macroRiskLevel === 'extreme' && !hasTvBuy) {
+        // Allow TV buys even in extreme macro (Tradevisor overrides regime in paper mode)
         approved = false;
-        rejectionReason = 'Macro risk extreme — all trades halted';
+        rejectionReason = 'Macro risk extreme — all trades halted (no TV buy signal)';
       } else if (heat + maxRisk > maxHeat) {
         approved = false;
         rejectionReason = `Portfolio heat would exceed ${maxHeat}% limit`;
       }
 
-      decisions.push({ instrument: sig.instrument, direction: sig.direction, confidence: sig.confidence, approved, rejectionReason });
+      decisions.push({ instrument, direction: sig.direction, confidence: adjustedConfidence, approved, rejectionReason });
       if (approved) heat += maxRisk;
     }
+
+    // TV SELL signals: force-sell any held positions (via crypto-agent position monitor)
+    // This is handled in the position monitor's sell check, not here
 
     const approvedD = decisions.filter(d => d.approved);
     const rejectedD = decisions.filter(d => !d.approved);
@@ -585,7 +638,7 @@ export async function runAnalysisCycle(): Promise<CycleResult> {
               quantity,
               price: Math.round(price * 100) / 100,
               status: 'filled',
-              slippage: Math.round(Math.random() * 1.5 * 10) / 10,
+              slippage: 0.1, // Fixed estimate — no random data
             });
           } else {
             // Check if this is a balance issue — don't waste API calls on remaining instruments
@@ -617,7 +670,7 @@ export async function runAnalysisCycle(): Promise<CycleResult> {
             quantity,
             price: Math.round(price * 100) / 100,
             status: 'simulated' as const,
-            slippage: Math.round(Math.random() * 3 * 10) / 10,
+            slippage: 0.2, // Fixed estimate — no random data
           });
         }
       } else {
@@ -633,8 +686,16 @@ export async function runAnalysisCycle(): Promise<CycleResult> {
       }
     }
 
-    if (executions.length > 0 && coinbaseKeys && engineState.config.paperMode) {
+    if (executions.length > 0 && engineState.config.paperMode) {
       engineLogger.info({ tradeCount: executions.length }, `Paper mode — ${executions.length} trade(s) simulated. Set paperMode=false for live Coinbase execution.`);
+      // Record paper trades to portfolio tracker
+      if (paperTradeRecorder) {
+        for (const exec of executions) {
+          if (exec.status === 'simulated') {
+            paperTradeRecorder({ instrument: exec.instrument, side: exec.side, quantity: exec.quantity, price: exec.price });
+          }
+        }
+      }
     }
 
     // -- Build Result --

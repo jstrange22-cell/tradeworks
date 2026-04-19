@@ -48,7 +48,7 @@ function detectMarket(instrument: string): 'crypto' | 'equities' | 'prediction' 
  */
 function simulatePaperFill(order: OrderRequest, market: string): { fillPrice: number; slippage: number } {
   const basePrice = order.price ?? 100; // Will be replaced with real market price
-  const slippageBps = market === 'crypto' ? Math.random() * 5 : Math.random() * 3;
+  const slippageBps = market === 'crypto' ? 3 : 1; // Fixed slippage estimate — no random
   const slippageMultiplier = order.side === 'buy' ? (1 + slippageBps / 10000) : (1 - slippageBps / 10000);
   return {
     fillPrice: Math.round(basePrice * slippageMultiplier * 100) / 100,

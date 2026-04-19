@@ -77,6 +77,7 @@ import {
   MAX_SELL_RETRIES,
   SELL_RETRY_DELAY_MS,
   DEFAULT_TEMPLATE_ID,
+  persistTemplateConfigs,
 } from './state.js';
 
 import {
@@ -91,8 +92,67 @@ import { generateTradePlan } from '../../services/ai/trade-planner.js';
 import { checkLiquidity, clearLiquidityData } from '../../services/ai/liquidity-monitor.js';
 import { calculatePositionSize } from '../../services/risk/kelly-criterion.js';
 import { calculatePortfolioHeat } from '../../services/risk/portfolio-heat.js';
+import { getMacroRegime } from '../../services/ai/macro-regime.js';
+import { generateLearningReport } from '../../services/ai/self-learning.js';
 import * as fs from 'fs';
 import * as path from 'path';
+
+// ── Macro Regime Cache (avoid hitting API on every token) ───────────────
+let cachedRegime: { regime: string; multiplier: number; cachedAt: number } = {
+  regime: 'transitioning', multiplier: 1.0, cachedAt: 0,
+};
+const REGIME_CACHE_TTL = 300_000; // 5 min
+
+async function getCachedRegime(): Promise<{ regime: string; multiplier: number }> {
+  if (Date.now() - cachedRegime.cachedAt < REGIME_CACHE_TTL) {
+    return cachedRegime;
+  }
+  try {
+    const r = await getMacroRegime();
+    cachedRegime = { regime: r.regime, multiplier: r.positionSizeMultiplier, cachedAt: Date.now() };
+  } catch { /* keep stale cache */ }
+  return cachedRegime;
+}
+
+// ── Composite Signal Scoring ────────────────────────────────────────────
+
+export interface CompositeSignalInput {
+  momentum: { uniqueBuyers: number; buySellRatio: number; buyVolumeSol: number };
+  whale?: { address: string; winRate: number; amount: number };
+  tradingView?: { direction: string; confidence: number };
+  regime: { regime: string; multiplier: number };
+}
+
+export function computeCompositeScore(signals: CompositeSignalInput): number {
+  let score = 0;
+
+  // Momentum (max 30 points)
+  if (signals.momentum.uniqueBuyers >= 10) score += 20;
+  else if (signals.momentum.uniqueBuyers >= 7) score += 15;
+  else if (signals.momentum.uniqueBuyers >= 5) score += 10;
+  if (signals.momentum.buySellRatio >= 3.0) score += 10;
+  else if (signals.momentum.buySellRatio >= 2.0) score += 5;
+
+  // Whale confirmation (max 30 points)
+  if (signals.whale) {
+    score += 20;
+    if (signals.whale.winRate >= 75) score += 10;
+    else if (signals.whale.winRate >= 65) score += 5;
+  }
+
+  // TradingView (max 20 points)
+  if (signals.tradingView?.direction === 'buy') {
+    score += signals.tradingView.confidence >= 80 ? 20 : 10;
+  }
+
+  // Regime bonus/penalty (max ±20 points)
+  if (signals.regime.regime === 'risk_on') score += 20;
+  else if (signals.regime.regime === 'transitioning') score += 10;
+  else if (signals.regime.regime === 'risk_off') score -= 10;
+  else if (signals.regime.regime === 'crisis') score -= 20;
+
+  return Math.max(0, Math.min(100, score));
+}
 
 // ── Anti-Rug Tracking (Phase 9) ──────────────────────────────────────
 // In-memory sliding window of recent trades per held position for rug detection
@@ -270,8 +330,34 @@ export function evaluatePendingToken(pending: PendingToken): void {
 
   // Zero-sell detection: if NO selling at all during observation, it's likely coordinated buying.
   // Require 50% more unique buyers to compensate for the suspicion.
-  if (pending.totalSellSol === 0 && uniqueBuyers < Math.ceil(template.minUniqueBuyers * 1.5)) {
-    console.log(`[Sniper][${template.name}] REJECTED ${pending.symbol} — zero sells + only ${uniqueBuyers} buyers (need ${Math.ceil(template.minUniqueBuyers * 1.5)} when no sells)`);
+  if (pending.totalSellSol === 0 && uniqueBuyers < Math.ceil(template.minUniqueBuyers * 1.2)) {
+    console.log(`[Sniper][${template.name}] REJECTED ${pending.symbol} — zero sells + only ${uniqueBuyers} buyers (need ${Math.ceil(template.minUniqueBuyers * 1.2)} when no sells)`);
+    pendingTokens.delete(pending.mint);
+    unsubscribeTokenTrades([pending.mint]);
+    return;
+  }
+
+  // ── Composite Signal Scoring ──────────────────────────────────────
+  const regime = cachedRegime; // Use cached regime (refreshed every 5 min)
+  const compositeScore = computeCompositeScore({
+    momentum: { uniqueBuyers, buySellRatio: Number.isFinite(buySellRatio) ? buySellRatio : 0, buyVolumeSol: pending.totalBuySol },
+    regime: { regime: regime.regime, multiplier: regime.multiplier },
+    // whale and tradingView signals will be populated when those sources trigger
+  });
+
+  // ── Regime Gating ──────────────────────────────────────────────────
+  // Only block in TRUE crisis (multiplier near 0) — risk_off still trades with reduced size
+  // (Copy trades bypass this function entirely — they go straight to executeBuySnipe)
+  if (regime.regime === 'crisis' && regime.multiplier < 0.15) {
+    console.log(`[Sniper][${template.name}] REGIME BLOCKED ${pending.symbol} — crisis mode, only copy trades allowed (score: ${compositeScore})`);
+    pendingTokens.delete(pending.mint);
+    unsubscribeTokenTrades([pending.mint]);
+    return;
+  }
+
+  // Score threshold — require minimum composite score
+  if (compositeScore < 30) {
+    console.log(`[Sniper][${template.name}] REJECTED ${pending.symbol} — composite score ${compositeScore} < 30 minimum`);
     pendingTokens.delete(pending.mint);
     unsubscribeTokenTrades([pending.mint]);
     return;
@@ -279,7 +365,7 @@ export function evaluatePendingToken(pending: PendingToken): void {
 
   // PASSED all checks — execute buy
   console.log(
-    `[Sniper][${template.name}] MOMENTUM CONFIRMED ${pending.symbol}: ${uniqueBuyers} buyers, ${buySellRatio.toFixed(1)}x ratio, ${pending.totalBuySol.toFixed(4)} SOL volume (${(elapsed / 1000).toFixed(1)}s window)`,
+    `[Sniper][${template.name}] CONFIRMED ${pending.symbol}: score=${compositeScore}, ${uniqueBuyers} buyers, ${buySellRatio.toFixed(1)}x ratio, ${pending.totalBuySol.toFixed(4)} SOL vol, regime=${regime.regime} (${(elapsed / 1000).toFixed(1)}s)`,
   );
 
   pendingTokens.delete(pending.mint);
@@ -394,6 +480,15 @@ export function evaluatePendingToken(pending: PendingToken): void {
           `[Risk][${template.name}] ${pending.symbol} sizing: ${sizing.recommendedSol.toFixed(4)} SOL ` +
           `(kelly=${(sizing.kellyFraction * 100).toFixed(1)}%, adj=${(sizing.adjustedFraction * 100).toFixed(1)}%, heat=${heat.score}) — ${sizing.reasoning}`,
         );
+      }
+
+      // Regime-adjust position size
+      const regimeMultiplier = regime.multiplier;
+      if (regimeMultiplier < 1.0 && buyAmountOverride === undefined) {
+        buyAmountOverride = template.buyAmountSol * regimeMultiplier;
+        console.log(`[Sniper][${template.name}] Regime-adjusted buy: ${template.buyAmountSol} × ${regimeMultiplier} = ${buyAmountOverride.toFixed(4)} SOL`);
+      } else if (regimeMultiplier < 1.0 && buyAmountOverride !== undefined) {
+        buyAmountOverride *= regimeMultiplier;
       }
 
       await executeBuySnipe({
@@ -584,6 +679,28 @@ export function handlePositionTradeEvent(event: PumpPortalTradeEvent): void {
     }
 
     position.pnlPercent = ((priceUsd - position.buyPrice) / position.buyPrice) * 100;
+
+    // Track bonding curve state for abandon logic
+    const prevBondingCurve = position.vSolInBondingCurve;
+    if (event.vSolInBondingCurve !== undefined) {
+      position.vSolInBondingCurve = event.vSolInBondingCurve;
+    }
+
+    // ── Graduation Detection ────────────────────────────────────────
+    // Token graduates from bonding curve to DEX when vSolInBondingCurve hits ~85 SOL
+    if (!position.graduated && prevBondingCurve !== undefined && prevBondingCurve > 0 && prevBondingCurve < 85) {
+      const isGraduated = event.vSolInBondingCurve === 0 || event.vSolInBondingCurve >= 85;
+      if (isGraduated) {
+        position.graduated = true;
+        console.log(`[Sniper][${template.name}] 🎓 ${position.symbol} GRADUATED to DEX — real liquidity now available`);
+        broadcast('solana:sniper', {
+          event: 'graduation',
+          mint: event.mint,
+          symbol: position.symbol,
+          templateId,
+        });
+      }
+    }
 
     // Broadcast live P&L to dashboard
     broadcast('solana:sniper', {
@@ -1103,6 +1220,15 @@ export async function checkPositions(): Promise<void> {
         position.priceFetchFailCount = 0;
         pricedCount++;
 
+        // SANITY CHECK: reject obviously wrong prices from DexScreener/Jupiter
+        // If price implies >500x gain, it's almost certainly a wrong token match
+        if (position.buyPrice > 0 && currentPrice / position.buyPrice > 500) {
+          console.warn(
+            `[Sniper][${template.name}] REJECTED bad price for ${position.symbol}: $${currentPrice.toFixed(10)} is ${(currentPrice / position.buyPrice).toFixed(0)}x buy price $${position.buyPrice.toFixed(10)} — likely wrong token from DexScreener`,
+          );
+          continue; // Skip this price update entirely
+        }
+
         // Lazy buyPrice initialization: if unknown at buy time, use first successful price
         if (position.buyPrice === 0) {
           position.buyPrice = currentPrice;
@@ -1453,9 +1579,18 @@ export function onNewTokenDetected(token: {
     }
   }
 
-  for (const [templateId, template] of sniperTemplates) {
+  // Shuffle template order so each strategy gets fair chance at tokens
+  // Without this, the first template in the map always wins the cross-dedup race
+  const shuffledTemplates = [...sniperTemplates.entries()].sort(() => Math.random() - 0.5);
+
+  for (const [templateId, template] of shuffledTemplates) {
     const runtime = getRuntime(templateId);
     if (!runtime.running || !template.enabled) continue;
+
+    // ── COPY TRADE GATE: copy_trade templates ONLY buy on whale signals ──
+    // The copy-trade.ts engine calls executeBuySnipe() directly when a whale buys.
+    // General pump.fun momentum feed should NOT trigger buys for copy_trade templates.
+    if (template.strategyType === 'copy_trade') continue;
 
     // Source check — each launchpad respects its own auto-buy toggle
     if (token.source === 'pumpfun' && !template.autoBuyPumpFun) continue;
@@ -1466,28 +1601,61 @@ export function onNewTokenDetected(token: {
     if (token.source === 'meteora_dbc' && !template.autoBuyMeteoraDbc) continue;
 
     // Market cap ceiling (use higher cap for trending tokens)
-    const effectiveMaxCap = token.source === 'trending'
-      ? (template.maxTrendingMarketCapUsd ?? template.maxMarketCapUsd)
-      : template.maxMarketCapUsd;
-    if (token.usdMarketCap > effectiveMaxCap) continue;
+    {
+      const effectiveMaxCap = token.source === 'trending'
+        ? (template.maxTrendingMarketCapUsd ?? template.maxMarketCapUsd)
+        : template.maxMarketCapUsd;
+      if (token.usdMarketCap > effectiveMaxCap) continue;
+    }
 
     // ── MARKET CAP FLOOR: skip tokens with near-zero liquidity ──
     if (token.usdMarketCap > 0 && token.usdMarketCap < template.minMarketCapUsd) {
       continue;
     }
 
-    // AI filter — skip tokens with low moonshot score (if scored)
-    const moonshotScore = getMoonshotScore(token.mint);
-    if (moonshotScore !== null && moonshotScore < (template.minMoonshotScore ?? 0)) {
-      console.log(
-        `[Sniper][${template.name}] Skipping ${token.symbol} — moonshot score ${moonshotScore} < ${template.minMoonshotScore ?? 0}`,
-      );
-      continue;
+    // ── TOKEN AGE FILTER: skip tokens less than 2 minutes old ──
+    {
+      const tokenAny = token as Record<string, unknown>;
+      if (typeof tokenAny.detectedAt === 'number') {
+        const ageMs = Date.now() - (tokenAny.detectedAt as number);
+        if (ageMs < 120_000) continue;
+      }
+    }
+
+    // ── VOLUME ACCELERATION ──
+    {
+      const tokenAny = token as Record<string, unknown>;
+      if (typeof tokenAny.totalBuySol === 'number' && (tokenAny.totalBuySol as number) < 0.5) {
+        continue;
+      }
+    }
+
+    // AI filter
+    {
+      const moonshotScore = getMoonshotScore(token.mint);
+      if (moonshotScore !== null && moonshotScore < (template.minMoonshotScore ?? 0)) {
+        console.log(`[Sniper][${template.name}] Skipping ${token.symbol} — moonshot score ${moonshotScore} < ${template.minMoonshotScore ?? 0}`);
+        continue;
+      }
     }
 
     // Don't double-buy within the same template (by mint)
     const positions = getTemplatePositions(templateId);
     if (positions.has(token.mint)) continue;
+
+    // CROSS-TEMPLATE DEDUP
+    {
+      let crossTemplateCount = 0;
+      for (const [otherId] of sniperTemplates) {
+        if (otherId === templateId) continue;
+        const otherPos = getTemplatePositions(otherId);
+        if (otherPos.has(token.mint)) crossTemplateCount++;
+        if (pendingBuys.has(otherId + ':' + token.mint)) crossTemplateCount++;
+      }
+      if (crossTemplateCount >= 1) {
+        continue; // Only 1 template per token — checks both positions AND pending buys
+      }
+    }
 
     // Race-condition guard: skip if a buy is already in-flight for this template+mint
     const pendingKey = templateId + ':' + token.mint;
@@ -1521,6 +1689,7 @@ export function onNewTokenDetected(token: {
     // Capture template vars for async closures
     const tplName = template.name;
     const tplId = templateId;
+    const tplIsCopyTrade = false; // copy_trade templates are skipped above
     const requireMint = template.requireMintRevoked;
     const requireFreeze = template.requireFreezeRevoked;
 
@@ -1530,10 +1699,39 @@ export function onNewTokenDetected(token: {
     const NON_PUMPFUN_SOURCES: LaunchpadSource[] = ['trending', 'raydium_launchlab', 'moonshot', 'boop', 'meteora_dbc'];
     if (NON_PUMPFUN_SOURCES.includes(token.source)) {
       // Trending tokens already have proven momentum — buy directly
+      // BUT: skip Raydium LaunchLab tokens with no price data (causes -100% phantom losses)
+      if (token.source === 'raydium_launchlab' && (!token.usdMarketCap || token.usdMarketCap <= 0)) {
+        console.log(`[Sniper][${tplName}] Skipping ${token.symbol} — LaunchLab token with no price data`);
+        continue;
+      }
       pendingBuys.add(pendingKey);
       const tplNameLocal = tplName;
       void (async () => {
         try {
+          // ── HOLDER COUNT CHECK via DexScreener ──
+          if (!tplIsCopyTrade) try {
+            const dexRes = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${token.mint}`, {
+              signal: AbortSignal.timeout(5_000),
+            });
+            if (dexRes.ok) {
+              const dexData = await dexRes.json() as { pairs?: Array<{ txns?: { h24?: { buys?: number } }; liquidity?: { usd?: number } }> };
+              const pair = dexData.pairs?.[0];
+              if (pair) {
+                const h24Buys = pair.txns?.h24?.buys ?? 0;
+                const liquidity = pair.liquidity?.usd ?? 0;
+                // Require 20+ unique buyers (proxy for holder count) and $2K+ liquidity
+                if (h24Buys < 20) {
+                  console.log(`[Sniper][${tplNameLocal}] Skipping ${token.symbol} — only ${h24Buys} buyers in 24h (need 20+)`);
+                  return;
+                }
+                if (liquidity < 2000) {
+                  console.log(`[Sniper][${tplNameLocal}] Skipping ${token.symbol} — liquidity $${liquidity.toFixed(0)} < $2000`);
+                  return;
+                }
+              }
+            }
+          } catch { /* DexScreener check optional */ }
+
           if (requireMint || requireFreeze) {
             const connection = getSecondaryConnection();
             const mintPubkey = new PublicKey(token.mint);
@@ -1858,14 +2056,34 @@ export async function syncWalletPositions(): Promise<void> {
  * Called from index.ts after PumpFun monitor is initialised so
  * onNewTokenDetected() actually processes incoming tokens.
  */
-export function autoStartSniper(): void {
+export async function autoStartSniper(): Promise<void> {
   const template = sniperTemplates.get(DEFAULT_TEMPLATE_ID);
   if (!template) return;
 
-  template.enabled = true;
+  // Respect persisted enabled state — if user explicitly stopped a template,
+  // don't force it back on. Only auto-start templates that are enabled.
+  // On first boot (no persisted state), template.enabled defaults to true.
   const runtime = getRuntime(DEFAULT_TEMPLATE_ID);
-  runtime.running = true;
-  runtime.startedAt = new Date();
+  if (template.enabled === false) {
+    console.log(`[Sniper] Default template is disabled — skipping auto-start. Start it manually via API.`);
+    // Still register trade event handlers for OTHER templates that may be enabled
+  } else {
+    template.enabled = true;
+    runtime.running = true;
+    runtime.startedAt = new Date();
+    console.log('[Sniper] Default template auto-started');
+  }
+
+  // Also auto-start any other templates that were left enabled
+  for (const [id, tpl] of sniperTemplates) {
+    if (id === DEFAULT_TEMPLATE_ID) continue;
+    if (tpl.enabled) {
+      const tplRuntime = getRuntime(id);
+      tplRuntime.running = true;
+      tplRuntime.startedAt = new Date();
+      console.log(`[Sniper] Template "${tpl.name}" auto-started (was enabled)`);
+    }
+  }
 
   // Register the real-time trade event handler (must be after pumpfun module is initialized)
   onTradeEvent(handlePositionTradeEvent);
@@ -1915,4 +2133,87 @@ export function autoStartSniper(): void {
     console.log(`[Sniper] Cached SOL balance: ${(balance / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
   });
   setInterval(() => { void refreshCachedSolBalance(); }, SOL_BALANCE_CACHE_TTL_MS);
+
+  // Auto-cleanup: reconcile wallet every 30 minutes to catch orphaned tokens
+  // Sells untracked tokens back to SOL, closes empty accounts for rent recovery
+  setInterval(async () => {
+    try {
+      const { reconcileWalletPositions } = await import('./execution.js');
+      const result = await reconcileWalletPositions();
+      if (result.recovered > 0 || result.closed > 0) {
+        console.log(`[Sniper] Auto-cleanup: sold ${result.recovered} tokens (~${result.soldSol.toFixed(4)} SOL), closed ${result.closed} empty accounts`);
+      }
+    } catch (err) {
+      console.warn('[Sniper] Auto-cleanup failed:', err instanceof Error ? err.message : err);
+    }
+  }, 30 * 60_000); // every 30 minutes
+  console.log('[Sniper] Auto-cleanup scheduled (every 30 min)');
+
+  // Refresh macro regime cache every 5 minutes
+  setInterval(() => { void getCachedRegime(); }, REGIME_CACHE_TTL);
+  void getCachedRegime(); // Initial fetch
+  console.log('[Sniper] Macro regime monitoring started (5 min refresh)');
+
+  // Self-learning: auto-tune strategy parameters every 30 minutes
+  setInterval(() => {
+    for (const [templateId, template] of sniperTemplates) {
+      if (!template.enabled || template.stats.totalTrades < 50) continue;
+
+      try {
+        const outcomes = executionHistory
+          .filter(e => e.templateId === templateId && e.action === 'sell' && e.pnlSol !== undefined)
+          .map(e => ({
+            id: e.id,
+            symbol: e.symbol,
+            trigger: e.trigger ?? 'unknown',
+            pnlSol: e.pnlSol ?? 0,
+            pnlPercent: e.pnlPercent ?? 0,
+            holdTimeMs: 0,
+            buyAmountSol: e.amountSol ?? 0.03,
+            templateId: e.templateId,
+            templateName: e.templateName,
+            timestamp: e.timestamp,
+          }));
+
+        if (outcomes.length < 20) continue;
+
+        const report = generateLearningReport(outcomes);
+        let adjustments = 0;
+
+        for (const insight of report.insights) {
+          if (insight.confidence < 80) continue;
+          if (insight.suggestedValue === insight.currentValue) continue;
+
+          const key = insight.parameter as keyof typeof template;
+          const tplAny = template as unknown as Record<string, number>;
+          if (key in template && typeof tplAny[key] === 'number') {
+            const oldVal = tplAny[key];
+            // Cap adjustment at 30% change per cycle
+            const maxDelta = oldVal * 0.3;
+            const delta = insight.suggestedValue - oldVal;
+            const boundedDelta = Math.sign(delta) * Math.min(Math.abs(delta), Math.abs(maxDelta));
+            tplAny[key] = Math.round((oldVal + boundedDelta) * 100) / 100;
+            adjustments++;
+            console.log(`[Learning][${template.name}] Auto-tuned ${key}: ${oldVal} → ${tplAny[key]} (confidence: ${insight.confidence}%)`);
+          }
+        }
+
+        if (adjustments > 0) {
+          persistTemplateConfigs();
+          console.log(`[Learning][${template.name}] Applied ${adjustments} parameter adjustments`);
+        }
+      } catch (err) {
+        console.warn(`[Learning] Auto-tune failed for ${template.name}:`, err instanceof Error ? err.message : err);
+      }
+    }
+  }, 30 * 60_000); // every 30 minutes
+  console.log('[Sniper] Self-learning auto-tune scheduled (30 min)');
+
+  // Start copy trade monitor
+  try {
+    const { startCopyTradeMonitor } = await import('./copy-trade.js');
+    startCopyTradeMonitor();
+  } catch (err) {
+    console.warn('[Sniper] Copy trade monitor failed to start:', err instanceof Error ? err.message : err);
+  }
 }

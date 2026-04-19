@@ -483,7 +483,7 @@ function generateEquityCurve(currentEquity: number, initialCapital?: number): Ar
     const date = new Date(now - i * dayMs).toISOString().split('T')[0];
     const dayIndex = 30 - i;
     const trend = dayIndex * ((currentEquity - base) / 30);
-    const noise = Math.sin(dayIndex * 0.3) * 2000 + (Math.random() - 0.5) * 1500;
+    const noise = Math.sin(dayIndex * 0.3) * 50; // Small sine wave — no random noise
     points.push({ date, equity: Math.round((base + trend + noise) * 100) / 100 });
   }
   // Ensure last point matches current equity

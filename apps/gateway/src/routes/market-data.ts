@@ -1,4 +1,5 @@
 import { Router, type Router as RouterType } from 'express';
+import { getMacroRegime } from '../services/ai/macro-regime.js';
 
 /**
  * Market data proxy routes.
@@ -90,5 +91,25 @@ marketDataRouter.get('/trades', async (req, res) => {
     res.json(data);
   } catch (err) {
     res.status(502).json({ error: 'Failed to fetch trades', message: String(err) });
+  }
+});
+
+// ── Macro Regime ──────────────────────────────────────────────────────────
+
+/**
+ * GET /api/v1/market/regime
+ * Returns the current macro market regime (risk_on, risk_off, transitioning, crisis)
+ * with signals breakdown, confidence score, and position size multiplier.
+ * Cached for 5 minutes to avoid excessive API calls.
+ */
+marketDataRouter.get('/regime', async (_req, res) => {
+  try {
+    const regime = await getMacroRegime();
+    res.json({ data: regime });
+  } catch (err) {
+    res.status(500).json({
+      error: 'Failed to classify macro regime',
+      message: err instanceof Error ? err.message : 'Unknown error',
+    });
   }
 });

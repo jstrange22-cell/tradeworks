@@ -3,6 +3,13 @@ import WebSocket from 'ws';
 import { broadcast } from '../websocket/server.js';
 import { onNewTokenDetected } from './solana-sniper/index.js';
 
+// Wallet discovery callback — set by index.ts after wallet-discovery module loads
+type WalletDiscoveryCallback = (wallet: string, mint: string, symbol: string, solSpent: number, tokens: number) => void;
+let walletDiscoveryCallback: WalletDiscoveryCallback | null = null;
+export function setWalletDiscoveryCallback(cb: WalletDiscoveryCallback): void {
+  walletDiscoveryCallback = cb;
+}
+
 /**
  * pump.fun Real-Time Monitor — Sprint 12.4
  *
@@ -271,6 +278,19 @@ function handleTradeEvent(data: Record<string, unknown>): void {
       cb(event);
     } catch (err) {
       console.error('[PumpFun] Trade callback error:', err instanceof Error ? err.message : err);
+    }
+  }
+
+  // Feed buys into wallet discovery engine for real-time trader tracking
+  if (event.txType === 'buy' && event.traderPublicKey && event.solAmount > 0) {
+    try {
+      if (walletDiscoveryCallback) {
+        const solSpent = event.solAmount / 1e9; // Convert lamports to SOL
+        const symbol = (data.symbol as string) ?? event.mint.slice(0, 8);
+        walletDiscoveryCallback(event.traderPublicKey, event.mint, symbol, solSpent, event.tokenAmount);
+      }
+    } catch {
+      // wallet-discovery not loaded yet — ignore
     }
   }
 }

@@ -79,9 +79,9 @@ const BASE_PRICES: Record<string, number> = {
   'XRP-USD': 0.62,
 };
 
-function jitter(base: number, maxPct: number): number {
-  const pct = (Math.random() - 0.5) * 2 * maxPct;
-  return base * (1 + pct / 100);
+function jitter(base: number, _maxPct: number): number {
+  // No random jitter — return real price
+  return base;
 }
 
 async function fetchExchangePrices(

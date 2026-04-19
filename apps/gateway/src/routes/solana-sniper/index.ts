@@ -73,6 +73,15 @@ import {
 // ── Signal imports ────────────────────────────────────────────────────────
 import { recentSignals } from './monitoring.js';
 
+// ── Copy Trade imports ──────────────────────────────────────────────────
+import {
+  getWhaleRegistry,
+  addWhale,
+  removeWhale,
+  getCopyTradeStatus,
+  type TrackedWhale,
+} from './copy-trade.js';
+
 // ── AI Intelligence imports ──────────────────────────────────────────────
 import { generateBriefing } from '../../services/ai/market-briefing.js';
 
@@ -89,6 +98,10 @@ export {
   getAllActivePositions,
 } from './state.js';
 
+// ── Constants ────────────────────────────────────────────────────────────
+
+// P&L is tracked cumulatively in stats.totalPnlSol (persisted to template-stats.json)
+
 // ── Router ───────────────────────────────────────────────────────────────
 
 export const sniperRouter: RouterType = Router();
@@ -102,8 +115,13 @@ sniperRouter.get('/sniper/templates', (_req, res) => {
     const positions = getTemplatePositions(template.id);
     resetDailyBudgetIfNeeded(runtime);
 
+    // Use persisted stats.totalPnlSol — it accumulates correctly on every trade
+    // and survives restarts via template-stats.json persistence
+    const stats = template.stats;
+
     return {
       ...template,
+      stats,
       running: runtime.running,
       startedAt: runtime.startedAt?.toISOString() ?? null,
       dailySpentSol: runtime.dailySpentSol,
@@ -289,6 +307,8 @@ sniperRouter.post('/sniper/templates/:id/start', (req, res) => {
   runtime.startedAt = new Date();
   template.enabled = true;
 
+  // Persist enabled state so it survives restarts
+  persistTemplateConfigs();
   ensurePositionCheckRunning();
 
   res.json({
@@ -314,12 +334,15 @@ sniperRouter.post('/sniper/templates/:id/stop', (req, res) => {
   runtime.running = false;
   template.enabled = false;
 
+  // Persist so this survives restarts — user said stop, it stays stopped
+  persistTemplateConfigs();
+
   stopPositionCheckIfIdle();
 
   const positions = getTemplatePositions(id);
 
   res.json({
-    message: `Template "${template.name}" stopped`,
+    message: `Template "${template.name}" stopped — will stay stopped across restarts`,
     status: 'stopped',
     openPositions: positions.size,
   });
@@ -457,16 +480,23 @@ sniperRouter.get('/sniper/status', (_req, res) => {
   const openPositionsWithUsd = allPositions.map((pos) => {
     const costSol = pos.buyCostSol ?? (defaultTemplate?.buyAmountSol ?? 0.005);
     const hasBuyPrice = pos.buyPrice > 0;
+    // Calculate value with sanity cap — DexScreener sometimes returns wrong token prices
+    const rawValueUsd = pos.currentPrice * pos.amountTokens;
+    const costUsd = costSol * cachedSolPriceUsd;
+    const maxReasonableValue = costUsd * 100; // Cap at 100x buy cost — no memecoin realistically does more in minutes
+    const valueUsd = (maxReasonableValue > 0 && rawValueUsd > maxReasonableValue) ? maxReasonableValue : rawValueUsd;
+
+    const rawPnlUsd = hasBuyPrice ? pos.amountTokens * (pos.currentPrice - pos.buyPrice) : 0;
+    const maxReasonablePnl = costUsd * 99; // Max 99x gain
+    const unrealizedPnlUsd = (maxReasonablePnl > 0 && rawPnlUsd > maxReasonablePnl) ? maxReasonablePnl : rawPnlUsd;
+
     return {
       ...pos,
       buyCostSol: costSol,
-      costUsd: costSol * cachedSolPriceUsd,
-      valueUsd: pos.currentPrice * pos.amountTokens,
-      // Guard against buyPrice=0 (position created before price confirmed)
+      costUsd,
+      valueUsd,
       pnlPercent: hasBuyPrice ? pos.pnlPercent : 0,
-      unrealizedPnlUsd: hasBuyPrice
-        ? pos.amountTokens * (pos.currentPrice - pos.buyPrice)
-        : 0,
+      unrealizedPnlUsd,
     };
   });
 
@@ -474,11 +504,15 @@ sniperRouter.get('/sniper/status', (_req, res) => {
   const totalInvestedUsd = totalInvestedSol * cachedSolPriceUsd;
 
   // Aggregate stats across all templates for top-level analytics
+  // CRITICAL: For paper templates, derive P&L from paper balance (ground truth)
+  // instead of the stats accumulator which drifts over thousands of trades.
   const aggStats = { totalTrades: 0, wins: 0, losses: 0, totalPnlSol: 0 };
-  for (const [, tpl] of sniperTemplates) {
+  for (const [_id, tpl] of sniperTemplates) {
     aggStats.totalTrades += tpl.stats.totalTrades;
     aggStats.wins += tpl.stats.wins;
     aggStats.losses += tpl.stats.losses;
+
+    // Use persisted cumulative P&L — survives restarts
     aggStats.totalPnlSol += tpl.stats.totalPnlSol;
   }
   const winRate = aggStats.totalTrades > 0
@@ -742,6 +776,8 @@ sniperRouter.get('/sniper/pnl', (_req, res) => {
       dailySpentSol: runtime.dailySpentSol,
       dailyBudgetSol: template.dailyBudgetSol,
       running: runtime.running,
+      paperMode: template.paperMode,
+      paperBalanceSol: template.paperMode ? runtime.paperBalanceSol : undefined,
     };
   });
 
@@ -904,6 +940,56 @@ sniperRouter.post('/sniper/reconcile-wallet', async (_req, res) => {
   }
 });
 
+// POST /sniper/force-sell/:mint — Force sell a token by mint address (sells untracked tokens)
+sniperRouter.post('/sniper/force-sell/:mint', async (req, res) => {
+  try {
+    const { mint } = req.params;
+    const { executeSellSnipe } = await import('./execution.js');
+    const { fetchTokenBalance } = await import('./execution.js');
+
+    // Check if there's a real balance
+    const balance = await fetchTokenBalance(mint);
+    if (balance <= 0) {
+      res.json({ message: `No tokens found for ${mint.slice(0, 12)}...`, balance: 0 });
+      return;
+    }
+
+    // Create a temporary position so executeSellSnipe can find it
+    const templateId = DEFAULT_TEMPLATE_ID;
+    const positions = getTemplatePositions(templateId);
+    if (!positions.has(mint)) {
+      positions.set(mint, {
+        mint,
+        symbol: req.body?.symbol ?? mint.slice(0, 8),
+        name: req.body?.name ?? 'Force Sell',
+        buyPrice: 0,
+        currentPrice: 0,
+        amountTokens: balance,
+        pnlPercent: 0,
+        buySignature: 'force-sell',
+        boughtAt: new Date().toISOString(),
+        templateId,
+        templateName: 'Default Sniper',
+        priceFetchFailCount: 0,
+        lastPriceChangeAt: new Date().toISOString(),
+        highWaterMarkPrice: 0,
+        buyCostSol: 0.03,
+      });
+      syncActivePositionsMap();
+    }
+
+    const result = await executeSellSnipe(mint, 'manual', templateId, true);
+    res.json({
+      message: result?.status === 'success'
+        ? `Sold ${mint.slice(0, 12)}... — ${result.amountSol?.toFixed(6)} SOL received`
+        : `Sell attempted — ${result?.status ?? 'unknown'}`,
+      execution: result ? { status: result.status, amountSol: result.amountSol, signature: result.signature } : null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Force sell failed' });
+  }
+});
+
 // POST /sniper/clear-paper-positions — Remove all paper positions (for switching to live mode)
 sniperRouter.post('/sniper/clear-paper-positions', (_req, res) => {
   let cleared = 0;
@@ -916,6 +1002,51 @@ sniperRouter.post('/sniper/clear-paper-positions', (_req, res) => {
     }
   }
   res.json({ message: `Cleared ${cleared} paper position(s)`, cleared });
+});
+
+// ── Copy Trade API ──────────────────────────────────────────────────
+
+// GET /sniper/copy-trade/status — Copy trade monitor status
+sniperRouter.get('/sniper/copy-trade/status', (_req, res) => {
+  const status = getCopyTradeStatus();
+  res.json({ data: status });
+});
+
+// GET /sniper/copy-trade/whales — List tracked whale wallets
+sniperRouter.get('/sniper/copy-trade/whales', (_req, res) => {
+  const registry = getWhaleRegistry();
+  res.json({ data: [...registry.values()], count: registry.size });
+});
+
+// POST /sniper/copy-trade/whales — Add a whale to the registry
+sniperRouter.post('/sniper/copy-trade/whales', (req, res) => {
+  const { address, label, winRate, avgRoiPercent, totalTrades90d, portfolioValueUsd, source } = req.body as Partial<TrackedWhale>;
+  if (!address || address.length < 32) {
+    res.status(400).json({ error: 'Valid Solana address required' });
+    return;
+  }
+  const whale: TrackedWhale = {
+    address,
+    label: label ?? address.slice(0, 8),
+    winRate: winRate ?? 0,
+    avgRoiPercent: avgRoiPercent ?? 0,
+    totalTrades90d: totalTrades90d ?? 0,
+    portfolioValueUsd: portfolioValueUsd ?? 0,
+    addedAt: new Date().toISOString(),
+    source: (source as TrackedWhale['source']) ?? 'manual',
+  };
+  addWhale(whale);
+  res.json({ message: `Whale ${whale.label} added`, data: whale });
+});
+
+// DELETE /sniper/copy-trade/whales/:address — Remove a whale
+sniperRouter.delete('/sniper/copy-trade/whales/:address', (req, res) => {
+  const removed = removeWhale(req.params.address);
+  if (!removed) {
+    res.status(404).json({ error: 'Whale not found in registry' });
+    return;
+  }
+  res.json({ message: 'Whale removed' });
 });
 
 // ── Protected Mints API ─────────────────────────────────────────────

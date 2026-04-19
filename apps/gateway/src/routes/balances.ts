@@ -373,6 +373,7 @@ export async function fetchAllExchangeBalances(): Promise<{
     { service: 'coinbase', label: 'Coinbase' },
     { service: 'alpaca', label: 'Alpaca' },
     { service: 'polymarket', label: 'Polymarket' },
+    { service: 'kalshi', label: 'Kalshi' },
   ];
 
   for (const config of exchangeConfigs) {

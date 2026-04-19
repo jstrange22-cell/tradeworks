@@ -274,3 +274,149 @@ polymarketRouter.delete('/order/:orderId', async (req, res) => {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Cancel failed' });
   }
 });
+
+// ── Prediction Market Intelligence ─────────────────────────────────────
+
+import {
+  scanPredictionArbitrage,
+  getTrendingMarkets,
+  analyzeMarket,
+} from '../services/predictions/polymarket-arb.js';
+
+// GET /arb — Scan for prediction market arbitrage opportunities
+polymarketRouter.get('/arb', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit as string || '200', 10);
+    const result = await scanPredictionArbitrage(limit);
+    res.json({
+      data: result.opportunities,
+      count: result.opportunities.length,
+      marketsScanned: result.marketsScanned,
+      timestamp: result.timestamp,
+    });
+  } catch (err) {
+    res.status(502).json({ error: 'Arbitrage scan failed', message: err instanceof Error ? err.message : 'Unknown' });
+  }
+});
+
+// GET /trending — Top markets by volume
+polymarketRouter.get('/trending', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit as string || '20', 10);
+    const markets = await getTrendingMarkets(limit);
+    res.json({ data: markets, count: markets.length });
+  } catch (err) {
+    res.status(502).json({ error: 'Failed to fetch trending markets', message: err instanceof Error ? err.message : 'Unknown' });
+  }
+});
+
+// GET /analyze/:slug — Deep analysis of a specific market
+polymarketRouter.get('/analyze/:slug', async (req, res) => {
+  try {
+    const result = await analyzeMarket(req.params.slug);
+    if (!result.market) {
+      res.status(404).json({ error: 'Market not found' });
+      return;
+    }
+    res.json({ data: result });
+  } catch (err) {
+    res.status(502).json({ error: 'Analysis failed', message: err instanceof Error ? err.message : 'Unknown' });
+  }
+});
+
+// ── Kalshi Intelligence (APEX Predator) ─────────────────────────────────
+
+import {
+  scanPredictionMarkets,
+  getWeatherForecasts,
+  getCrypto15MinSignals,
+  getAllCategoryScores,
+} from '../services/predictions/kalshi-intelligence.js';
+
+// GET /intelligence — Full APEX Predator scan (all 5 engines)
+polymarketRouter.get('/intelligence', async (_req, res) => {
+  try {
+    const intel = await scanPredictionMarkets();
+    res.json({ data: intel });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Intelligence scan failed' });
+  }
+});
+
+// GET /weather — Weather forecasts from GFS ensemble
+polymarketRouter.get('/weather', async (_req, res) => {
+  try {
+    const forecasts = await getWeatherForecasts();
+    res.json({ data: forecasts, count: forecasts.length });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Weather forecast failed' });
+  }
+});
+
+// GET /crypto-signals — Crypto 15-min sniper signals
+polymarketRouter.get('/crypto-signals', async (_req, res) => {
+  try {
+    const signals = await getCrypto15MinSignals();
+    res.json({ data: signals, count: signals.length });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Crypto signals failed' });
+  }
+});
+
+// GET /categories — Category scoring (what's tradeable vs blocked)
+polymarketRouter.get('/categories', (_req, res) => {
+  const scores = getAllCategoryScores();
+  res.json({ data: scores, count: scores.length });
+});
+
+// ── Kalshi Live Markets + Paper Trading ──────────────────────────────────
+
+import {
+  getEvents,
+  getMarkets,
+  getActiveMarketsByCategory,
+  getKalshiPaperPortfolio,
+} from '../services/predictions/kalshi-client.js';
+
+// GET /kalshi/events — Active Kalshi events
+polymarketRouter.get('/kalshi/events', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit as string ?? '20', 10);
+    const events = await getEvents({ limit, status: 'open' });
+    res.json({ data: events, count: events.length });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed' });
+  }
+});
+
+// GET /kalshi/markets — Active Kalshi markets
+polymarketRouter.get('/kalshi/markets', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit as string ?? '20', 10);
+    const series = req.query.series as string | undefined;
+    const markets = await getMarkets({ limit, series_ticker: series, status: 'open' });
+    res.json({ data: markets, count: markets.length });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed' });
+  }
+});
+
+// GET /kalshi/categories — Markets grouped by category
+polymarketRouter.get('/kalshi/categories-live', async (_req, res) => {
+  try {
+    const byCategory = await getActiveMarketsByCategory();
+    const summary = Object.entries(byCategory).map(([cat, events]) => ({
+      category: cat,
+      eventCount: events.length,
+      events: events.slice(0, 5),
+    }));
+    res.json({ data: summary });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Failed' });
+  }
+});
+
+// GET /kalshi/paper — Kalshi paper portfolio
+polymarketRouter.get('/kalshi/paper', (_req, res) => {
+  res.json({ data: getKalshiPaperPortfolio() });
+});

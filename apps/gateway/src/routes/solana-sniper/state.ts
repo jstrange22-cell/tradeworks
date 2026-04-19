@@ -331,23 +331,45 @@ export async function getCachedSolBalance(): Promise<number> {
 
 // ── SOL Price Tracking (for bonding curve → USD conversion) ─────────
 
-export let cachedSolPriceUsd = 130; // conservative default, updated every 60s
+export let cachedSolPriceUsd = 80; // conservative default, updated every 60s
 
 export async function refreshSolPrice(): Promise<void> {
+  // Try multiple sources — Jupiter API changed, need fallbacks
+  // Source 1: CoinGecko (most reliable)
   try {
-    const res = await fetch('https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112', {
+    const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd', {
       signal: AbortSignal.timeout(5000),
     });
     if (res.ok) {
-      const data = (await res.json()) as { data: Record<string, { price: string } | undefined> };
-      const price = parseFloat(data.data['So11111111111111111111111111111111111111112']?.price ?? '0');
-      if (price > 0) {
-        cachedSolPriceUsd = price;
-      }
+      const data = (await res.json()) as { solana?: { usd?: number } };
+      const price = data.solana?.usd ?? 0;
+      if (price > 0) { cachedSolPriceUsd = price; return; }
     }
-  } catch {
-    // Keep using cached value
-  }
+  } catch { /* try next source */ }
+
+  // Source 2: Jupiter v1
+  try {
+    const res = await fetch('https://api.jup.ag/price/v1?id=So11111111111111111111111111111111111111112', {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { data?: { price?: number } };
+      const price = data.data?.price ?? 0;
+      if (price > 0) { cachedSolPriceUsd = price; return; }
+    }
+  } catch { /* try next source */ }
+
+  // Source 3: Coinbase
+  try {
+    const res = await fetch('https://api.coinbase.com/v2/prices/SOL-USD/spot', {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { data?: { amount?: string } };
+      const price = parseFloat(data.data?.amount ?? '0');
+      if (price > 0) { cachedSolPriceUsd = price; return; }
+    }
+  } catch { /* keep cached value */ }
 }
 
 // Refresh SOL price every 60 seconds
@@ -367,8 +389,9 @@ function seedTemplateEntry(id: string, template: SniperTemplate): void {
     startedAt: null,
     dailySpentSol: 0,
     dailyResetDate: new Date().toDateString(),
-    paperBalanceSol: 6.17,  // ~$500 at $81/SOL
+    paperBalanceSol: 6.0,  // Starting balance per template
     consecutiveLosses: 0,
+    consecutiveWins: 0,
     dailyRealizedLossSol: 0,
     circuitBreakerPausedUntil: 0,
   });
@@ -495,40 +518,34 @@ export function seedDefaultTemplate(): void {
     });
   }
 
-  // ── Strategy: Graduation Hold — buy early, hold through graduation, sell on DEX ──
+  // ── Strategy: DEX Graduation Play — buy AFTER graduation on DEX ──
+  // Buy AFTER graduation on DEX — real liquidity for sells, token proved demand
   if (!sniperTemplates.has('graduation-hold')) {
     seedTemplateEntry('graduation-hold', {
       id: 'graduation-hold',
-      name: 'Graduation Hold',
+      name: 'DEX Graduation Play',
       enabled: false,
       ...DEFAULT_CONFIG_FIELDS,
       strategyType: 'graduation_hold',
       buyAmountSol: 0.05,
-      maxOpenPositions: 10,
-      // Hold until graduation — very long max age
-      maxPositionAgeMs: 3_600_000,         // 1 hour — abandon if no graduation
-      stalePriceTimeoutMs: 600_000,        // 10 min stale tolerance
-      // NEVER sell on bonding curve — abandon instead
-      abandonOnBondingCurve: true,
-      stopLossPercent: -90,                // Effectively disabled — we abandon, not sell
-      // After graduation, use tight tiered exits on DEX
+      maxOpenPositions: 5,
+      minMarketCapUsd: 60_000,             // Only tokens near/past graduation ~$69K
+      maxMarketCapUsd: 500_000,
+      stopLossPercent: -15,                // Tighter — DEX tokens have better liquidity
+      abandonOnBondingCurve: false,        // We're NOT buying on bonding curve anymore
+      // Tiered exits
       enableTieredExits: true,
-      exitTier1PctGain: 100,  exitTier1SellPct: 50,
-      exitTier2PctGain: 300,  exitTier2SellPct: 25,
-      exitTier3PctGain: 500,  exitTier3SellPct: 15,
-      exitTier4PctGain: 900,  exitTier4SellPct: 100,
-      trailingStopActivatePercent: 50,
-      trailingStopPercent: -20,
-      // Strict entry — only buy tokens likely to graduate
-      minUniqueBuyers: 8,
-      minBuySellRatio: 3.5,
-      minBuyVolumeSol: 2.0,
-      momentumWindowMs: 20_000,
-      minRugCheckScore: 700,
-      maxTopHolderPct: 20,
-      graduationMaxWaitMs: 3_600_000,
-      consecutiveLossPauseThreshold: 9999,
-      maxDailyLossSol: 999,
+      exitTier1PctGain: 25,   exitTier1SellPct: 40,
+      exitTier2PctGain: 60,   exitTier2SellPct: 30,
+      exitTier3PctGain: 150,  exitTier3SellPct: 20,
+      exitTier4PctGain: 400,  exitTier4SellPct: 100,
+      trailingStopActivatePercent: 15,
+      trailingStopPercent: -10,
+      // No-pump exit
+      enableNoPumpExit: true,
+      noPumpExitMs: 300_000,               // 5 min — if not up 5%, exit
+      noPumpMinGainPct: 5,
+      paperMode: false,
       stats: makeEmptyStats(),
     });
   }
@@ -541,11 +558,11 @@ export function seedDefaultTemplate(): void {
       enabled: false,
       ...DEFAULT_CONFIG_FIELDS,
       strategyType: 'quick_scalp',
-      buyAmountSol: 0.05,
-      maxOpenPositions: 8,
+      buyAmountSol: 0.10,                    // ~$8 per trade — meaningful for scalping
+      maxOpenPositions: 5,
       maxPositionAgeMs: 60_000,            // 1 min max — get in, get out
       stalePriceTimeoutMs: 30_000,
-      stopLossPercent: -25,
+      stopLossPercent: -20,
       // Scalp settings
       quickScalpMinAgeMs: 3_000,           // Sell after 3 seconds
       quickScalpMinProfitPct: 5,           // If >5% profit
@@ -557,76 +574,109 @@ export function seedDefaultTemplate(): void {
       momentumWindowMs: 10_000,
       minUniqueBuyers: 6,
       minBuySellRatio: 3.0,
-      consecutiveLossPauseThreshold: 9999,
-      maxDailyLossSol: 999,
+      consecutiveLossPauseThreshold: 5,       // Pause after 5 consecutive losses
+      maxDailyLossSol: 1.5,                   // Max 1.5 SOL daily loss (~$120)
       stats: makeEmptyStats(),
     });
   }
 
-  // ── Strategy: Copy Trading — mirror whale wallet buys/sells ──
-  if (!sniperTemplates.has('copy-trade')) {
-    seedTemplateEntry('copy-trade', {
-      id: 'copy-trade',
-      name: 'Copy Trading',
+  // ── Strategy: Momentum Scanner — DISABLED ──
+  // KILLED: 8% WR in honest paper simulation. No edge.
+  if (!sniperTemplates.has('momentum-scanner')) {
+    seedTemplateEntry('momentum-scanner', {
+      id: 'momentum-scanner',
+      name: 'Momentum Scanner',
       enabled: false,
       ...DEFAULT_CONFIG_FIELDS,
-      strategyType: 'copy_trade',
-      buyAmountSol: 0.05,
-      maxOpenPositions: 10,
-      maxPositionAgeMs: 1_800_000,         // 30 min
-      // Copy trade settings
-      copyWalletAddresses: [],             // User adds wallet addresses
-      copyTradeDelayMs: 500,
-      // No momentum gate — whale IS the signal
-      momentumWindowMs: 1_000,             // Minimal observation
-      minUniqueBuyers: 1,                  // Just the whale
-      minBuySellRatio: 0,                  // Don't filter
-      minBuyVolumeSol: 0,
-      // Standard exits
-      enableTieredExits: true,
-      exitTier1PctGain: 50,   exitTier1SellPct: 50,
-      exitTier2PctGain: 100,  exitTier2SellPct: 30,
-      exitTier3PctGain: 300,  exitTier3SellPct: 20,
-      exitTier4PctGain: 900,  exitTier4SellPct: 100,
-      trailingStopActivatePercent: 20,
-      trailingStopPercent: -15,
-      stopLossPercent: -30,
-      consecutiveLossPauseThreshold: 9999,
-      maxDailyLossSol: 999,
-      stats: makeEmptyStats(),
-    });
-  }
-
-  // ── Strategy: Graduation Snipe — buy AT graduation moment, sell on DEX ──
-  if (!sniperTemplates.has('graduation-snipe')) {
-    seedTemplateEntry('graduation-snipe', {
-      id: 'graduation-snipe',
-      name: 'Graduation Snipe',
-      enabled: false,
-      ...DEFAULT_CONFIG_FIELDS,
-      strategyType: 'graduation_snipe',
-      buyAmountSol: 0.10,                  // Bigger size — higher conviction
+      strategyType: 'momentum',
+      buyAmountSol: 0.03,
       maxOpenPositions: 5,
-      maxPositionAgeMs: 1_800_000,         // 30 min
-      // Only buy when token is about to graduate
-      graduationBuyThreshold: 0.90,        // Buy at 90% bonding curve progress
-      minMarketCapUsd: 50_000,             // Near graduation mcap
-      maxMarketCapUsd: 500_000,
-      // All exits on DEX — good fills
+      maxPositionAgeMs: 900_000,
+      momentumWindowMs: 1_500,
+      minUniqueBuyers: 2,
+      minBuySellRatio: 0,
+      minBuyVolumeSol: 0,
       enableTieredExits: true,
-      exitTier1PctGain: 50,   exitTier1SellPct: 50,
-      exitTier2PctGain: 100,  exitTier2SellPct: 30,
+      exitTier1PctGain: 30,   exitTier1SellPct: 50,
+      exitTier2PctGain: 75,   exitTier2SellPct: 30,
       exitTier3PctGain: 200,  exitTier3SellPct: 20,
       exitTier4PctGain: 500,  exitTier4SellPct: 100,
       trailingStopActivatePercent: 15,
-      trailingStopPercent: -10,
-      stopLossPercent: -25,
-      // No traditional momentum gate — graduation IS the signal
-      momentumWindowMs: 5_000,
-      minUniqueBuyers: 3,
-      minBuySellRatio: 1.0,
-      consecutiveLossPauseThreshold: 9999,
-      maxDailyLossSol: 999,
+      trailingStopPercent: -12,
+      stopLossPercent: -20,
+      consecutiveLossPauseThreshold: 5,
+      maxDailyLossSol: 1.0,
+      stats: makeEmptyStats(),
+    });
+  }
+
+  // ── Strategy: Whale Copy — REAL whale wallet mirroring via Helius WebSocket ──
+  // Monitors verified profitable wallets and mirrors their buys within 500ms.
+  // This is the ONLY template that actually does copy trading.
+  if (!sniperTemplates.has('copy-trade')) {
+    seedTemplateEntry('copy-trade', {
+      id: 'copy-trade',
+      name: 'Whale Copy',
+      enabled: false,
+      ...DEFAULT_CONFIG_FIELDS,
+      strategyType: 'copy_trade',
+      buyAmountSol: 0.05,                   // Higher per trade — whale signal = higher conviction
+      maxOpenPositions: 8,                  // More room — whales trade diverse tokens
+      maxPositionAgeMs: 1_800_000,           // 30 min — let whale positions ride
+      // Copy trade settings — wallets loaded from whale-registry.json on startup
+      copyWalletAddresses: [],
+      copyTradeDelayMs: 500,                 // 500ms delay before mirroring
+      // Loose momentum gate — whale buy IS the signal
+      momentumWindowMs: 1_000,               // 1s — just confirm it's real
+      minUniqueBuyers: 1,                    // Whale alone is enough
+      minBuySellRatio: 0,                    // No ratio needed
+      minBuyVolumeSol: 0,                    // No min volume
+      // Exits — hold longer for whale plays
+      enableTieredExits: true,
+      exitTier1PctGain: 50,   exitTier1SellPct: 40,   // Take partial at +50%
+      exitTier2PctGain: 100,  exitTier2SellPct: 30,   // More at 2x
+      exitTier3PctGain: 300,  exitTier3SellPct: 20,   // Hold runners
+      exitTier4PctGain: 900,  exitTier4SellPct: 100,  // Close at 10x
+      trailingStopActivatePercent: 25,       // Wider trailing — whale plays run longer
+      trailingStopPercent: -15,              // Trail at -15% from high
+      stopLossPercent: -25,                  // Wider stop — trust the whale signal
+      consecutiveLossPauseThreshold: 5,
+      maxDailyLossSol: 2.0,                  // Higher daily budget for whale plays
+      stats: makeEmptyStats(),
+    });
+  }
+
+  // ── Strategy: Volume Spike Sniper — post-graduation tokens with second volume wave ──
+  // Find tokens that already graduated AND show a second volume wave — survivors only
+  if (!sniperTemplates.has('graduation-snipe')) {
+    seedTemplateEntry('graduation-snipe', {
+      id: 'graduation-snipe',
+      name: 'Volume Spike Sniper',
+      enabled: false,
+      ...DEFAULT_CONFIG_FIELDS,
+      strategyType: 'graduation_snipe',
+      buyAmountSol: 0.05,
+      maxOpenPositions: 4,
+      minMarketCapUsd: 80_000,             // Must be well past graduation
+      maxMarketCapUsd: 2_000_000,          // Can be bigger since these are proven
+      stopLossPercent: -12,                // Tight — these should be stronger tokens
+      // Tiered exits
+      enableTieredExits: true,
+      exitTier1PctGain: 20,   exitTier1SellPct: 50,
+      exitTier2PctGain: 50,   exitTier2SellPct: 25,
+      exitTier3PctGain: 100,  exitTier3SellPct: 15,
+      exitTier4PctGain: 300,  exitTier4SellPct: 100,
+      trailingStopActivatePercent: 12,
+      trailingStopPercent: -8,
+      // Volume spike momentum gate
+      momentumWindowMs: 15_000,
+      minUniqueBuyers: 10,
+      minBuySellRatio: 2.5,
+      minBuyVolumeSol: 2.0,
+      // Fast no-pump exit
+      enableNoPumpExit: true,
+      noPumpExitMs: 180_000,               // 3 min — if not up 8%, exit
+      noPumpMinGainPct: 8,
       stats: makeEmptyStats(),
     });
   }
@@ -690,6 +740,23 @@ export function persistDailySpend(): void {
   } catch { /* fire-and-forget */ }
 }
 
+/** Persist paper balances so P&L survives PM2 restarts */
+export function persistPaperBalances(): void {
+  try {
+    const balances: Record<string, number> = {};
+    for (const [templateId, runtime] of templateRuntime) {
+      const template = sniperTemplates.get(templateId);
+      if (template?.paperMode) {
+        balances[templateId] = runtime.paperBalanceSol;
+      }
+    }
+    fs.writeFileSync(
+      path.join(DATA_DIR, 'paper-balances.json'),
+      JSON.stringify(balances, null, 2),
+    );
+  } catch { /* fire-and-forget */ }
+}
+
 export function persistTemplateStats(): void {
   try {
     const stats: Record<string, TemplateStats> = {};
@@ -705,10 +772,10 @@ export function persistTemplateStats(): void {
 
 export function persistTemplateConfigs(): void {
   try {
-    const configs: Record<string, Partial<SniperConfigFields>> = {};
+    const configs: Record<string, Partial<SniperConfigFields> & { enabled?: boolean }> = {};
     for (const [id, template] of sniperTemplates) {
-      const { stats: _stats, id: _id, name: _name, enabled: _enabled, ...configFields } = template;
-      configs[id] = configFields as Partial<SniperConfigFields>;
+      const { stats: _stats, id: _id, name: _name, ...configFields } = template;
+      configs[id] = configFields as Partial<SniperConfigFields> & { enabled?: boolean };
     }
     fs.writeFileSync(
       path.join(DATA_DIR, 'template-configs.json'),
@@ -781,7 +848,35 @@ export function loadPersistedState(): void {
       console.log('[Persistence] Loaded template stats from disk');
     }
 
-    // 5. Load template configs (AI settings, dynamic sizing, etc.)
+    // 5. Load paper balances (so P&L survives PM2 restarts)
+    const balPath = path.join(DATA_DIR, 'paper-balances.json');
+    if (fs.existsSync(balPath)) {
+      const rawBal = JSON.parse(fs.readFileSync(balPath, 'utf-8')) as Record<string, number>;
+      for (const [templateId, balance] of Object.entries(rawBal)) {
+        const runtime = getRuntime(templateId);
+        const template = sniperTemplates.get(templateId);
+        if (template?.paperMode && typeof balance === 'number') {
+          // Reset negative/zero balances to minimum 3 SOL so template can trade again
+          if (balance <= 0.05) {
+            runtime.paperBalanceSol = 3.0;
+            console.log(`[Persistence] Reset ${templateId} paper balance from ${balance.toFixed(4)} to 3.0 SOL (was depleted)`);
+          } else {
+            runtime.paperBalanceSol = balance;
+          }
+        }
+      }
+      console.log('[Persistence] Loaded paper balances from disk');
+    }
+
+    // 5b. Safety: reset any negative balances in active runtime (e.g. from race conditions)
+    for (const [templateId, runtime] of templateRuntime) {
+      if (runtime.paperBalanceSol < 0) {
+        console.log(`[Persistence] SAFETY RESET: ${templateId} had negative balance ${runtime.paperBalanceSol.toFixed(4)}, resetting to 3.0 SOL`);
+        runtime.paperBalanceSol = 3.0;
+      }
+    }
+
+    // 6. Load template configs (AI settings, dynamic sizing, etc.)
     const configsPath = path.join(DATA_DIR, 'template-configs.json');
     if (fs.existsSync(configsPath)) {
       const rawConfigs = JSON.parse(fs.readFileSync(configsPath, 'utf-8')) as Record<string, Partial<SniperConfigFields>>;
@@ -826,14 +921,15 @@ export function getRuntime(templateId: string): TemplateRuntimeState {
       startedAt: null,
       dailySpentSol: 0,
       dailyResetDate: new Date().toDateString(),
-      paperBalanceSol: 6.17,  // ~$500 at $81/SOL // Default 0.5 SOL virtual balance
+      paperBalanceSol: 6.0,
       consecutiveLosses: 0,
+      consecutiveWins: 0,
       dailyRealizedLossSol: 0,
       circuitBreakerPausedUntil: 0,
     };
     templateRuntime.set(templateId, runtime);
   }
-  return runtime;
+  return runtime!;
 }
 
 export function resetDailyBudgetIfNeeded(runtime: TemplateRuntimeState): void {
@@ -1221,8 +1317,9 @@ export function createTemplate(
     startedAt: null,
     dailySpentSol: 0,
     dailyResetDate: new Date().toDateString(),
-    paperBalanceSol: 6.17,  // ~$500 at $81/SOL
+    paperBalanceSol: 6.0,  // Starting balance per template
     consecutiveLosses: 0,
+    consecutiveWins: 0,
     dailyRealizedLossSol: 0,
     circuitBreakerPausedUntil: 0,
   });

@@ -20,12 +20,9 @@ export const INSTRUMENT_MAP: Record<string, string> = {
 };
 
 /** All actively tracked instruments — analyzed every cycle */
-export const TRACKED_INSTRUMENTS = [
-  'BTC-USD', 'ETH-USD', 'SOL-USD',
-  'AVAX-USD', 'LINK-USD', 'DOGE-USD',
-  'SHIB-USD', 'ADA-USD', 'DOT-USD',
-  'NEAR-USD', 'SUI-USD',
-];
+// EMPTY — no blue chips. User holds these in personal wallets.
+// Only agent-discovered coins get added dynamically via updateCycleInstruments()
+export const TRACKED_INSTRUMENTS: string[] = [];
 
 export interface TickerData {
   instrument: string;

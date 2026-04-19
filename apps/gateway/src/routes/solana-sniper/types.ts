@@ -215,6 +215,8 @@ export interface TemplateRuntimeState {
   paperBalanceSol: number;
   /** Consecutive losses counter for circuit breaker */
   consecutiveLosses: number;
+  /** Consecutive wins counter for dynamic sizing boost */
+  consecutiveWins: number;
   /** Realized loss in SOL today for daily loss limit */
   dailyRealizedLossSol: number;
   /** Timestamp when circuit breaker pause started (0 = not paused) */
@@ -235,7 +237,7 @@ export interface SnipeExecution {
   signature: string | null;
   status: 'pending' | 'success' | 'failed';
   error: string | null;
-  trigger: 'manual' | LaunchpadSource | 'take_profit' | 'stop_loss' | 'stale_price' | 'max_age' | 'trailing_stop' | 'liquidity_crash' | 'rug_detected' | 'no_pump' | 'honeypot';
+  trigger: 'manual' | LaunchpadSource | 'take_profit' | 'stop_loss' | 'stale_price' | 'max_age' | 'trailing_stop' | 'liquidity_crash' | 'rug_detected' | 'no_pump' | 'honeypot' | 'tradingview' | 'copy_trade';
   templateId: string;
   templateName: string;
   timestamp: string;
@@ -281,6 +283,14 @@ export interface ActivePosition {
   description?: string;
   /** Accumulated SOL received across all partial sells (tiered exits) — used for per-position win/loss tracking */
   accumulatedSellSol?: number;
+  /** Last known vSolInBondingCurve — used to decide abandon vs sell */
+  vSolInBondingCurve?: number;
+  /** Whether this token has graduated from bonding curve to DEX */
+  graduated?: boolean;
+  /** Composite signal score (0-100) at time of buy */
+  compositeScore?: number;
+  /** Source wallet address for copy trades */
+  copySourceWallet?: string;
 }
 
 // ── Sell Retry Queue ────────────────────────────────────────────────────

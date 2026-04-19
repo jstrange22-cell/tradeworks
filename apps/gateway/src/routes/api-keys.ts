@@ -128,7 +128,7 @@ export function upsertMemoryKey(
  * API Key creation schema.
  */
 const ApiKeySchema = z.object({
-  service: z.enum(['coinbase', 'alpaca', 'polymarket', 'solana', 'robinhood']),
+  service: z.enum(['coinbase', 'alpaca', 'polymarket', 'solana', 'robinhood', 'kalshi']),
   keyName: z.string().min(1),
   apiKey: z.string().min(1),
   apiSecret: z.string().optional(),
