@@ -498,8 +498,40 @@ cryptoAgentRouter.get('/tradingview-signals', (_req, res) => {
 
 // ── Paper Trade Recorder (wired to cycle engine) ─────────────────────────
 
+// Defense-in-depth dedup: cycle-service dispatches trades directly through
+// this recorder (bypassing executeSignalTrade), so the 1s idempotency map
+// there doesn't catch ms-level duplicates. Guard at recordPaperTrade level
+// instead — catches ALL callers (cycle-service, executeSignalTrade, position
+// monitor, webhooks, etc.).
+const recentRecords = new Map<string, number>();
+const RECORD_DEDUP_MS = 500;
+
 function recordPaperTrade(exec: { instrument: string; side: string; quantity: number; price: number }): void {
   const symbol = exec.instrument.replace('-USD', '');
+
+  // Guard 1: reject qty=0 / dust (positionSizeUsd / $75k BTC rounds to 0)
+  if (!Number.isFinite(exec.quantity) || exec.quantity <= 0) {
+    logger.info({ symbol, side: exec.side, qty: exec.quantity, price: exec.price }, '[CryptoAgent] Recorder: qty=0 or invalid — skip');
+    return;
+  }
+  const notional = exec.quantity * exec.price;
+  if (notional < 1) {
+    logger.info({ symbol, side: exec.side, qty: exec.quantity, price: exec.price, notional }, '[CryptoAgent] Recorder: notional <$1 — skip dust');
+    return;
+  }
+
+  // Guard 2: dedup at ms-level — same symbol+side+price within 500ms = duplicate dispatch
+  const dedupKey = `${symbol}|${exec.side}|${exec.quantity.toFixed(6)}|${exec.price.toFixed(6)}`;
+  const lastTs = recentRecords.get(dedupKey);
+  const now = Date.now();
+  if (lastTs && now - lastTs < RECORD_DEDUP_MS) {
+    logger.info({ symbol, side: exec.side, qty: exec.quantity, price: exec.price }, '[CryptoAgent] Recorder: duplicate dispatch within 500ms — skip');
+    return;
+  }
+  recentRecords.set(dedupKey, now);
+  if (recentRecords.size > 1000) {
+    for (const [k, ts] of recentRecords) if (now - ts > 5_000) recentRecords.delete(k);
+  }
 
   // BLOCK blue-chip coins in LIVE mode — user holds these in personal wallets
   // Paper mode skips this check since no real trades are executed
