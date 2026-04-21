@@ -23,6 +23,10 @@
  */
 
 import { logger } from '../../lib/logger.js';
+
+// Minimum buy/sell score to emit a non-hold action. Default 4 (Standard grade).
+// Lower via TRADEVISOR_ACTION_THRESHOLD=3 for paper testing, raise to 5 for strict.
+const ACTION_THRESHOLD = parseInt(process.env.TRADEVISOR_ACTION_THRESHOLD ?? '4', 10);
 import {
   calcRSI, calcMACD, calcEMA, calcBollingerBands,
   calcSupertrend, calcATR,
@@ -176,7 +180,7 @@ export function analyzeCandles(ticker: string, candles: OHLCV[], chain: 'crypto'
   // Score confluence
   const { buyScore, sellScore } = scoreConfluence(indicators);
   const dominantScore = Math.max(buyScore, sellScore);
-  const action = buyScore >= 4 ? 'buy' : sellScore >= 4 ? 'sell' : 'hold';
+  const action = buyScore >= ACTION_THRESHOLD ? 'buy' : sellScore >= ACTION_THRESHOLD ? 'sell' : 'hold';
   const grade = getGrade(dominantScore);
   const confidence = getConfidence(dominantScore);
 
@@ -306,7 +310,7 @@ async function analyzeViaDexScreener(symbol: string): Promise<TradevisorResult |
     const indicators = { ema: emaSignal, rsi: rsiSignal, macd: macdSignal, supertrend: supertrendSignal, bollinger: bbSignal, volume: volSignal };
     const { buyScore, sellScore } = scoreConfluence(indicators);
     const dominantScore = Math.max(buyScore, sellScore);
-    const action = buyScore >= 4 ? 'buy' : sellScore >= 4 ? 'sell' : 'hold';
+    const action = buyScore >= ACTION_THRESHOLD ? 'buy' : sellScore >= ACTION_THRESHOLD ? 'sell' : 'hold';
 
     const atrProxy = price * 0.03; // 3% of price as ATR proxy
 

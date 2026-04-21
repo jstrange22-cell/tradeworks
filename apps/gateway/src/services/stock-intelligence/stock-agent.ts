@@ -66,9 +66,9 @@ const EQUITY_SIZE_BY_GRADE: Record<StockAgentSignal['grade'], number> = {
 // Options need a larger budget than equity because ATM calls on mega-caps
 // cost $500-$1500 per contract (100x multiplier). Separate from equity.
 const OPTION_BUDGET_BY_GRADE: Record<StockAgentSignal['grade'], number> = {
-  standard: 500,
-  strong: 1500,
-  prime: 3000,
+  standard: 1000,
+  strong: 3000,
+  prime: 6000,
   reject: 0,
 };
 
