@@ -598,6 +598,41 @@ const MAX_SIGNAL_LOG = 200;
 const signalCooldown = new Map<string, number>();
 const SIGNAL_COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes (was 1 hour — too slow for memecoins)
 
+// Idempotency dedup: reject the same signal identity fired within 1s. Catches
+// parallel dispatches from TradingView webhook + APEX + cycle-service + manual
+// routes — the 15-min cooldown below is set AFTER gates pass, so race windows
+// let concurrent callers slip through before the mark lands. This closes that.
+const recentSignals = new Map<string, number>();
+const DEDUP_WINDOW_MS = 1_000;
+
+function isDuplicateDispatch(symbol: string, action: string, source: string, price: number): boolean {
+  const key = `${symbol}|${action}|${source}|${price.toFixed(4)}`;
+  const last = recentSignals.get(key);
+  const now = Date.now();
+  if (last && now - last < DEDUP_WINDOW_MS) return true;
+  recentSignals.set(key, now);
+  // Prune entries older than 5s so the map doesn't grow unbounded
+  if (recentSignals.size > 500) {
+    for (const [k, ts] of recentSignals) if (now - ts > 5_000) recentSignals.delete(k);
+  }
+  return false;
+}
+
+// Qty viability: reject no-op and dust trades that would pollute the ledger.
+const MIN_NOTIONAL_USD = 1;
+
+function isViableQty(qty: number, price: number, symbol: string, side: string): boolean {
+  if (!Number.isFinite(qty) || qty <= 0) {
+    logger.info({ symbol, side, qty, price }, '[CryptoAgent] Qty rounded to 0 — skip no-op trade');
+    return false;
+  }
+  if (qty * price < MIN_NOTIONAL_USD) {
+    logger.info({ symbol, side, qty, price, notional: qty * price }, '[CryptoAgent] Notional below $1 — skip dust trade');
+    return false;
+  }
+  return true;
+}
+
 export async function executeSignalTrade(signal: TradeSignal): Promise<boolean> {
   // Validate
   if (!signal.symbol || !signal.price || signal.price <= 0) {
@@ -609,6 +644,12 @@ export async function executeSignalTrade(signal: TradeSignal): Promise<boolean> 
   // Paper mode skips this check since no real trades are executed
   const cleanSymbol = signal.symbol.toUpperCase().replace('-USD', '').replace('USDT', '');
   if (!engineState.config.paperMode && BLOCKED_COINS.has(cleanSymbol) && signal.action === 'buy') {
+    return false;
+  }
+
+  // DEDUP: Idempotency — reject same signal identity within 1s (parallel dispatchers)
+  if (isDuplicateDispatch(cleanSymbol, signal.action, signal.source, signal.price)) {
+    logger.info({ symbol: cleanSymbol, action: signal.action, source: signal.source }, '[CryptoAgent] Dedup — same signal within 1s, skipped');
     return false;
   }
 
@@ -716,11 +757,15 @@ export async function executeSignalTrade(signal: TradeSignal): Promise<boolean> 
             `[CryptoAgent] SOLANA DEX BUY via Jupiter: ${cleanSymbol}`);
           // Also record in crypto agent's paper portfolio so dashboard reflects the trade
           const qty = positionSizeUsd / Math.max(signal.price, 0.000001);
-          recordPaperTrade({ instrument: `${cleanSymbol}-USD`, side: 'buy', quantity: qty, price: signal.price });
+          if (isViableQty(qty, signal.price, cleanSymbol, 'buy')) {
+            recordPaperTrade({ instrument: `${cleanSymbol}-USD`, side: 'buy', quantity: qty, price: signal.price });
+          }
         } catch (err) {
           logger.warn({ err: err instanceof Error ? err.message : err }, '[CryptoAgent] Jupiter execution failed, falling back to paper trade');
           const qty = positionSizeUsd / Math.max(signal.price, 0.000001);
-          recordPaperTrade({ instrument: `${cleanSymbol}-USD`, side: 'buy', quantity: qty, price: signal.price });
+          if (isViableQty(qty, signal.price, cleanSymbol, 'buy')) {
+            recordPaperTrade({ instrument: `${cleanSymbol}-USD`, side: 'buy', quantity: qty, price: signal.price });
+          }
         }
       })();
     } else if (['ethereum', 'base', 'bsc', 'polygon', 'arbitrum'].includes(chain) && contractAddress) {
@@ -746,11 +791,14 @@ export async function executeSignalTrade(signal: TradeSignal): Promise<boolean> 
         }
         // Always record paper trade for portfolio tracking
         const qty = positionSizeUsd / Math.max(signal.price, 0.000001);
-        recordPaperTrade({ instrument: `${cleanSymbol}-USD`, side: 'buy', quantity: qty, price: signal.price });
+        if (isViableQty(qty, signal.price, cleanSymbol, 'buy')) {
+          recordPaperTrade({ instrument: `${cleanSymbol}-USD`, side: 'buy', quantity: qty, price: signal.price });
+        }
       })();
     } else {
       // Route 3: Coinbase paper trade (fallback for unknown chains)
       const qty = positionSizeUsd / Math.max(signal.price, 0.000001);
+      if (!isViableQty(qty, signal.price, cleanSymbol, 'buy')) return false;
       recordPaperTrade({
         instrument: `${cleanSymbol}-USD`,
         side: 'buy',
@@ -866,16 +914,29 @@ setInterval(async () => {
   const prices = await fetchCryptoPrices();
   const priceMap = new Map(prices.map(p => [p.symbol, p]));
 
-  // For positions not in CoinGecko (DEX tokens), try DexScreener
+  // For positions not in CoinGecko (DEX tokens), try DexScreener — with
+  // liquidity/volume sanity guard mirroring the entry path. A ghost pair with
+  // $4/day volume and spoofed liquidity metrics can swing 10x on a single $1
+  // trade and fake a take-profit exit. Reject those here.
   for (const [symbol] of paperPortfolio.positions) {
     if (!priceMap.has(symbol)) {
       try {
         const dsRes = await fetch(`https://api.dexscreener.com/latest/dex/search?q=${symbol}`, { signal: AbortSignal.timeout(5_000) });
         if (dsRes.ok) {
-          const dsData = await dsRes.json() as { pairs?: Array<{ baseToken: { symbol: string }; priceUsd: string }> };
-          const pair = dsData.pairs?.find(p => p.baseToken.symbol.toUpperCase() === symbol.toUpperCase());
-          if (pair?.priceUsd) {
-            priceMap.set(symbol, { symbol, price: parseFloat(pair.priceUsd), change24h: 0, volume24h: 0, marketCap: 0 });
+          const dsData = await dsRes.json() as { pairs?: Array<{ baseToken: { symbol: string }; priceUsd: string; liquidity?: { usd: number }; volume?: { h24?: number }; marketCap?: number }> };
+          const matches = (dsData.pairs ?? []).filter(p => p.baseToken.symbol.toUpperCase() === symbol.toUpperCase());
+          const legit = matches.find(p => {
+            const liq = p.liquidity?.usd ?? 0;
+            const vol24 = p.volume?.h24 ?? 0;
+            const mcap = p.marketCap ?? 0;
+            if (vol24 < 10_000) return false;
+            if (mcap > 0 && liq > mcap) return false;
+            return true;
+          });
+          if (legit?.priceUsd) {
+            priceMap.set(symbol, { symbol, price: parseFloat(legit.priceUsd), change24h: 0, volume24h: legit.volume?.h24 ?? 0, marketCap: legit.marketCap ?? 0 });
+          } else if (matches.length > 0) {
+            logger.info({ symbol, candidates: matches.length }, '[CryptoAgent] Exit price rejected — ghost pair (all matches failed liquidity guard)');
           }
         }
       } catch { /* DexScreener unavailable */ }
