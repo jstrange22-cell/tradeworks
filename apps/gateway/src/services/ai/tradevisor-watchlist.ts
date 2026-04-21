@@ -165,12 +165,17 @@ export async function scanWatchlist(): Promise<{
 
     // Multi-TF aware threshold:
     // - Solana (DexScreener) tokens: 3/6 (less history, noisier indicators)
+    // - Stocks (Alpaca 1D bars): uses TRADEVISOR_STOCK_MIN_SCORE (default 3)
+    //   Stocks don't set signalStrength like crypto does, so use an explicit knob.
     // - Crypto WITH multi-TF alignment: 3/6 (1h + 4h + 1D confirmed, high quality signal)
     // - Crypto WITHOUT multi-TF (fell back to CoinGecko/DexScreener): 4/6 (strict)
     const hasMultiTFAlignment = result.signalStrength === 'strong' || result.signalStrength === 'standard';
+    const stockMinScore = parseInt(process.env.TRADEVISOR_STOCK_MIN_SCORE ?? '3', 10);
     const minConfluence = result.chain === 'solana'
       ? 3
-      : (hasMultiTFAlignment ? 3 : 4);
+      : result.chain === 'stock'
+        ? stockMinScore
+        : (hasMultiTFAlignment ? 3 : 4);
 
     const isBuy = result.action === 'buy';
     const isSell = result.action === 'sell';

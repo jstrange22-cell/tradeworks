@@ -63,7 +63,23 @@ const EQUITY_SIZE_BY_GRADE: Record<StockAgentSignal['grade'], number> = {
   reject: 0,
 };
 
+// Options need a larger budget than equity because ATM calls on mega-caps
+// cost $500-$1500 per contract (100x multiplier). Separate from equity.
+const OPTION_BUDGET_BY_GRADE: Record<StockAgentSignal['grade'], number> = {
+  standard: 500,
+  strong: 1500,
+  prime: 3000,
+  reject: 0,
+};
+
 const MAX_OPTION_CONTRACTS = 5;
+
+// Minimum confluence score to pass the gate. Env-configurable so the user
+// can loosen for paper testing (3/6) or tighten for live (4/6 or 5/6).
+const MIN_CONFLUENCE_SCORE = parseInt(
+  process.env.TRADEVISOR_STOCK_MIN_SCORE ?? '3',
+  10,
+);
 
 // ── Ledger Accessor ─────────────────────────────────────────────────────
 
@@ -88,8 +104,11 @@ function passesGates(signal: StockAgentSignal, book: 'equity' | 'option'): boole
     return false;
   }
   if (signal.action !== 'buy' && signal.action !== 'sell') return false;
-  if (signal.grade === 'reject' || signal.score < 4) {
-    logger.info({ ticker: signal.ticker, score: signal.score, grade: signal.grade }, `[StockAgent] ${book} signal below confluence gate — skip`);
+  if (signal.grade === 'reject' || signal.score < MIN_CONFLUENCE_SCORE) {
+    logger.info(
+      { ticker: signal.ticker, score: signal.score, grade: signal.grade, min: MIN_CONFLUENCE_SCORE },
+      `[StockAgent] ${book} signal below confluence gate — skip`,
+    );
     return false;
   }
 
@@ -229,7 +248,7 @@ export async function executeOptionsSignal(signal: StockAgentSignal): Promise<bo
     return false;
   }
 
-  const budgetUsd = EQUITY_SIZE_BY_GRADE[signal.grade] ?? 0;
+  const budgetUsd = OPTION_BUDGET_BY_GRADE[signal.grade] ?? 0;
   if (budgetUsd <= 0) return false;
 
   // Each contract = 100 shares worth of premium. Cap contracts at 5.
