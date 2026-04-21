@@ -513,9 +513,15 @@ async function analyzeMultiTimeframeCoinbase(symbol: string): Promise<Tradevisor
 export async function analyzeTickerStock(symbol: string): Promise<TradevisorResult | null> {
   try {
     const { getBars } = await import('../stocks/alpaca-client.js');
-    const barsResp = await getBars({ symbols: [symbol], timeframe: '1Day', limit: 60 });
+    // Alpaca requires an explicit start date — without one it returns only today's bar.
+    // 120 calendar days → roughly 80 trading days, capped at limit=60.
+    const start = new Date(Date.now() - 120 * 86_400_000).toISOString();
+    const barsResp = await getBars({ symbols: [symbol], timeframe: '1Day', start, limit: 60 });
     const bars = barsResp.bars[symbol];
-    if (!bars || bars.length < 30) return null;
+    if (!bars || bars.length < 30) {
+      logger.info({ symbol, barsReturned: bars?.length ?? 0 }, '[Tradevisor] Stock bars insufficient (<30) — skip');
+      return null;
+    }
 
     const candles: OHLCV[] = bars.map(b => ({
       timestamp: new Date(b.t).getTime(),
