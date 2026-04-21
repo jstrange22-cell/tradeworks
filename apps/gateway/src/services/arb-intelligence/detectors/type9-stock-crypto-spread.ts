@@ -102,6 +102,7 @@ function buildT9Opportunity(params: {
   confidence: number;
   reasoning: string;
   category: string;
+  underlyingSpot?: number; // Real crypto spot (ETH/BTC USD), not NAV-per-ETF-share
 }): ArbOpportunity {
   // Normalize prices to 0-1 scale for the arb system
   // For T9, we model the spread as a virtual arb:
@@ -143,7 +144,8 @@ function buildT9Opportunity(params: {
     _rawPriceB: params.price_b,
     _spreadPct: params.spreadPct,
     _underlying: params.ticker_b.replace('-USD', ''),
-  } as ArbOpportunity & { _rawPriceA: number; _rawPriceB: number; _spreadPct: number; _underlying: string };
+    _underlyingSpot: params.underlyingSpot ?? params.price_b, // Real crypto spot for cross-system trade dispatch
+  } as ArbOpportunity & { _rawPriceA: number; _rawPriceB: number; _spreadPct: number; _underlying: string; _underlyingSpot: number };
 }
 
 export async function scanType9(): Promise<DetectorResult> {
@@ -194,6 +196,7 @@ export async function scanType9(): Promise<DetectorResult> {
             confidence: Math.min(90, 50 + Math.abs(premiumPct) * 10),
             reasoning: `${etf.ticker} ${direction} ${Math.abs(premiumPct).toFixed(2)}% vs ${etf.underlying} spot. ${action}. ETF=$${etfPrice.toFixed(2)}, NAV=$${navPerShare.toFixed(2)}`,
             category: 'crypto_etf_spread',
+            underlyingSpot: spotPrice, // Real ETH/BTC spot for cross-system signal dispatch
           }));
 
           logger.info({
@@ -263,13 +266,15 @@ export function extractT9Signals(opps: ArbOpportunity[]): Array<{
   return opps
     .filter(o => o.arbType === DETECTOR_TYPE)
     .map(o => {
-      const raw = o as ArbOpportunity & { _rawPriceA?: number; _rawPriceB?: number; _spreadPct?: number; _underlying?: string };
+      const raw = o as ArbOpportunity & { _rawPriceA?: number; _rawPriceB?: number; _spreadPct?: number; _underlying?: string; _underlyingSpot?: number };
       const isPremium = o.reasoning.includes('PREMIUM');
       return {
         underlying: raw._underlying ?? o.ticker_a,
         direction: isPremium ? 'sell' as const : 'buy' as const,
         spreadPct: raw._spreadPct ?? 0,
-        spotPrice: raw._rawPriceB ?? 0,
+        // Use the real crypto spot price (not the NAV-per-ETF-share, which
+        // was the pre-fix bug that priced ETH at $19 instead of $2300).
+        spotPrice: raw._underlyingSpot ?? raw._rawPriceB ?? 0,
         etfTicker: o.ticker_a,
         reasoning: o.reasoning,
       };

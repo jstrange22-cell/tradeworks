@@ -653,6 +653,22 @@ export async function executeSignalTrade(signal: TradeSignal): Promise<boolean> 
     return false;
   }
 
+  // PRICE SANITY: reject signals whose price diverges >5x from the cached
+  // CoinGecko price for this symbol. Catches cross-contamination bugs (e.g.,
+  // an arb signal passing NAV-per-ETF-share $19 as the "ETH spot price" when
+  // real ETH is $2,300). Applies to known CEX-tradeable symbols only.
+  const cached = priceCache.find(p => p.symbol === cleanSymbol);
+  if (cached && cached.price > 0 && signal.price > 0) {
+    const ratio = Math.max(signal.price / cached.price, cached.price / signal.price);
+    if (ratio > 5) {
+      logger.warn(
+        { symbol: cleanSymbol, signalPrice: signal.price, cachedPrice: cached.price, ratio: ratio.toFixed(1), source: signal.source },
+        '[CryptoAgent] Price sanity reject — signal price >5x divergent from CoinGecko cache',
+      );
+      return false;
+    }
+  }
+
   // DEDUP: Check cooldown — don't re-trade the same symbol within 1 hour
   const cooldownKey = `${cleanSymbol}_${signal.action}`;
   const lastTraded = signalCooldown.get(cooldownKey);
