@@ -35,6 +35,7 @@ import { loadPaperLedger, savePaperLedger } from '../services/stock-intelligence
 import { executeEquitySignal, executeOptionsSignal, executeEquitySellSignal, executeOptionSellSignal } from '../services/stock-intelligence/stock-agent.js';
 import { MAX_EQUITY_POSITIONS, MAX_OPTION_POSITIONS } from '../services/stock-intelligence/stock-models.js';
 import { getOptionQuote } from '../services/stocks/robinhood-options.js';
+import { getKillSwitchState, resetKillSwitch, checkKillSwitches } from '../services/stock-intelligence/kill-switches.js';
 
 export const stocksRouter: RouterType = Router();
 
@@ -372,6 +373,49 @@ stocksRouter.post('/close/:kind/:id', async (req, res) => {
     res.status(400).json({ error: 'kind must be "equity" or "option"' });
   } catch (err) {
     res.status(500).json({ error: 'Close failed', message: err instanceof Error ? err.message : 'Unknown' });
+  }
+});
+
+// ── Kill Switch ────────────────────────────────────────────────────────────
+
+// GET /kill-switch — Current kill-switch state. Runs a fresh evaluation
+// against the live ledger so callers see any newly-tripped condition.
+stocksRouter.get('/kill-switch', (_req, res) => {
+  try {
+    const ledger = loadPaperLedger();
+    const state = checkKillSwitches(ledger);
+    res.json({ data: state });
+  } catch (err) {
+    res.status(500).json({
+      error: 'Failed to read kill switch',
+      message: err instanceof Error ? err.message : 'Unknown',
+    });
+  }
+});
+
+// GET /kill-switch/state — Cached state without re-evaluating (cheap).
+stocksRouter.get('/kill-switch/state', (_req, res) => {
+  try {
+    const state = getKillSwitchState();
+    res.json({ data: state });
+  } catch (err) {
+    res.status(500).json({
+      error: 'Failed to read kill switch state',
+      message: err instanceof Error ? err.message : 'Unknown',
+    });
+  }
+});
+
+// POST /kill-switch/reset — Manual override to clear a tripped switch.
+stocksRouter.post('/kill-switch/reset', (_req, res) => {
+  try {
+    const state = resetKillSwitch();
+    res.json({ data: state });
+  } catch (err) {
+    res.status(500).json({
+      error: 'Failed to reset kill switch',
+      message: err instanceof Error ? err.message : 'Unknown',
+    });
   }
 });
 

@@ -141,12 +141,50 @@ export async function executeEquitySignal(signal: StockAgentSignal): Promise<boo
     return false;
   }
 
+  // Phase 5: kill switches — daily loss / max drawdown / consecutive losses.
+  {
+    const { checkKillSwitches } = await import('./kill-switches.js');
+    const ks = checkKillSwitches(state);
+    if (ks.tripped) {
+      logger.warn(
+        { symbol, reason: ks.reason, resumeAt: ks.resumeAt },
+        `[StockAgent] Kill switch active (${ks.reason}) — skip equity signal`,
+      );
+      return false;
+    }
+  }
+
+  // Phase 2: sector-diversification gate. Reject if opening this symbol
+  // would push its sector over the per-sector cap (default 2).
+  {
+    const { canOpenPosition } = await import('./sector-map.js');
+    const gate = canOpenPosition(symbol, state.equityPositions);
+    if (!gate.allowed) {
+      logger.info({ symbol, reason: gate.reason }, '[StockAgent] Sector cap — skip');
+      return false;
+    }
+  }
+
   if (state.equityPositions.length >= MAX_EQUITY_POSITIONS) {
     logger.info({ open: state.equityPositions.length }, `[StockAgent] Max equity positions (${MAX_EQUITY_POSITIONS}) — skip`);
     return false;
   }
 
-  const positionSizeUsd = EQUITY_SIZE_BY_GRADE[signal.grade] ?? 0;
+  // Phase 5: SPY regime multiplier scales grade-based sizing down in
+  // defensive / cautious tape (SPY below 50MA or below 200MA).
+  let regimeMult = 1.0;
+  try {
+    const { getRegimeMultiplier } = await import('./kill-switches.js');
+    regimeMult = await getRegimeMultiplier();
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : err },
+      '[StockAgent] regimeMultiplier failed — defaulting to 1.0',
+    );
+  }
+
+  const baseSizeUsd = EQUITY_SIZE_BY_GRADE[signal.grade] ?? 0;
+  const positionSizeUsd = Math.round(baseSizeUsd * regimeMult * 100) / 100;
   if (positionSizeUsd <= 0) return false;
 
   if (state.paperCashUsd < positionSizeUsd) {
@@ -218,9 +256,32 @@ export async function executeEquitySignal(signal: StockAgentSignal): Promise<boo
 export async function executeOptionsSignal(signal: StockAgentSignal): Promise<boolean> {
   if (!passesGates(signal, 'option')) return false;
 
+  // Phase 4: options restricted to prime-quality signals (score >= 5). Equity
+  // takes 3/6+ signals; options need 5/6+ before we risk premium decay.
+  if (signal.score < 5) {
+    logger.info(
+      { ticker: signal.ticker, score: signal.score },
+      '[StockAgent] Option signal below prime threshold (score<5) — skip',
+    );
+    return false;
+  }
+
   const symbol = signal.ticker.toUpperCase();
   const state = getLedger();
   const contractType: 'call' | 'put' = signal.action === 'buy' ? 'call' : 'put';
+
+  // Phase 5: kill switches apply to options too.
+  {
+    const { checkKillSwitches } = await import('./kill-switches.js');
+    const ks = checkKillSwitches(state);
+    if (ks.tripped) {
+      logger.warn(
+        { symbol, reason: ks.reason, resumeAt: ks.resumeAt },
+        `[StockAgent] Kill switch active (${ks.reason}) — skip option signal`,
+      );
+      return false;
+    }
+  }
 
   // Dedup: one option position per (symbol, call/put).
   if (state.optionPositions.some(p => p.symbol === symbol && p.type === contractType)) {

@@ -543,6 +543,103 @@ export async function analyzeTickerStock(symbol: string): Promise<TradevisorResu
   }
 }
 
+// ── Batched Stock Analysis ──────────────────────────────────────────────
+//
+// Fetch bars for N symbols in a single Alpaca call, then run analyzeCandles
+// against each. Alpaca's /v2/stocks/bars endpoint natively supports a comma-
+// separated `symbols` param (see alpaca-client.ts::getBars), so N=50 tickers
+// costs 1 API call per scan cycle instead of 50.
+//
+// This is the preferred entry point for the Phase 2 50-ticker universe.
+// The per-symbol `analyzeTickerStock` is retained for single-symbol callers.
+
+export async function analyzeTickersStockBatched(symbols: string[]): Promise<TradevisorResult[]> {
+  if (symbols.length === 0) return [];
+
+  const { getBars } = await import('../stocks/alpaca-client.js');
+  const start = new Date(Date.now() - 120 * 86_400_000).toISOString();
+
+  // Alpaca accepts large symbol lists, but chunk at 50 to stay well under
+  // URL-length limits and keep any single failure small.
+  const CHUNK_SIZE = 50;
+  const chunks: string[][] = [];
+  for (let i = 0; i < symbols.length; i += CHUNK_SIZE) {
+    chunks.push(symbols.slice(i, i + CHUNK_SIZE));
+  }
+
+  const results: TradevisorResult[] = [];
+
+  for (const chunk of chunks) {
+    try {
+      const barsResp = await getBars({
+        symbols: chunk,
+        timeframe: '1Day',
+        start,
+        limit: 60,
+      });
+
+      for (const symbol of chunk) {
+        const bars = barsResp.bars[symbol];
+        if (!bars || bars.length < 30) {
+          logger.info(
+            { symbol, barsReturned: bars?.length ?? 0 },
+            '[Tradevisor] Batched stock bars insufficient (<30) — skip',
+          );
+          continue;
+        }
+
+        const candles: OHLCV[] = bars.map(b => ({
+          timestamp: new Date(b.t).getTime(),
+          open: b.o,
+          high: b.h,
+          low: b.l,
+          close: b.c,
+          volume: b.v,
+        }));
+
+        try {
+          const result = analyzeCandles(symbol, candles, 'stock');
+          results.push(result);
+
+          if (result.action !== 'hold') {
+            logger.info(
+              {
+                ticker: result.ticker,
+                action: result.action,
+                score: result.confluenceScore,
+                grade: result.grade,
+              },
+              `[Tradevisor] ${result.action.toUpperCase()} ${result.ticker} — ${result.confluenceScore}/6 (batched)`,
+            );
+          }
+        } catch (err) {
+          logger.warn(
+            { symbol, err: err instanceof Error ? err.message : err },
+            '[Tradevisor] Batched analyzeCandles failed for symbol',
+          );
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        { chunkSize: chunk.length, err: err instanceof Error ? err.message : err },
+        '[Tradevisor] Batched stock getBars failed — falling back to per-symbol for this chunk',
+      );
+      // Fallback: per-symbol calls (rate-limit risk is bounded by chunk size).
+      for (const symbol of chunk) {
+        const single = await analyzeTickerStock(symbol);
+        if (single) results.push(single);
+      }
+    }
+  }
+
+  logger.info(
+    { requested: symbols.length, returned: results.length },
+    `[Tradevisor] Batched stock scan: ${symbols.length} requested, ${results.length} analyzed`,
+  );
+
+  return results;
+}
+
 // ── Scan Watchlist ──────────────────────────────────────────────────────
 
 export async function runTradevisorScan(watchlist: Array<{ ticker: string; chain: 'crypto' | 'stock' | 'solana' }>): Promise<TradevisorResult[]> {

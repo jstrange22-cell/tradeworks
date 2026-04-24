@@ -145,10 +145,14 @@ async function tick(): Promise<void> {
       const optionPositions = [...ledger.optionPositions];
       for (const pos of optionPositions) {
         let latestMid = 0;
+        let latestIV = 0;
         try {
           const quote = await getOptionQuote(pos.occSymbol);
           if (quote?.mid && quote.mid > 0) {
             latestMid = quote.mid;
+          }
+          if (typeof quote?.iv === 'number' && quote.iv > 0) {
+            latestIV = quote.iv;
           }
         } catch (err) {
           logger.warn(
@@ -162,7 +166,7 @@ async function tick(): Promise<void> {
           pos.lastPriceAt = new Date().toISOString();
         }
 
-        const exitReason = evaluateOptionExits(pos, marketOpen);
+        const exitReason = evaluateOptionExits(pos, marketOpen, latestIV);
         if (exitReason) {
           try {
             await closeOptionPosition(pos, pos.currentMid, exitReason);
@@ -237,11 +241,18 @@ function evaluateEquityExits(
   return null;
 }
 
-type OptionExitReason = 'hard_stop' | 'trailing_tp' | 'time_stop';
+type OptionExitReason = 'hard_stop' | 'trailing_tp' | 'time_stop' | 'iv_crush';
+
+// Phase 4.2: IV expansion trigger. If current IV has expanded >= 20% relative
+// to entry IV (e.g. 30% → 36%), close the position regardless of P&L. Elevated
+// IV often precedes adverse moves and inflates premium decay risk on any
+// mean-reversion pullback.
+const OPTION_IV_EXPANSION_PCT = 0.20;
 
 function evaluateOptionExits(
   pos: OptionPosition,
   marketOpen: boolean,
+  latestIV: number,
 ): OptionExitReason | null {
   if (pos.entryMid <= 0) return null;
 
@@ -267,6 +278,16 @@ function evaluateOptionExits(
   if (!marketOpen) return null;
 
   if (pnlPct <= OPTION_HARD_STOP_PCT) return 'hard_stop';
+
+  // Phase 4.2: IV-expansion exit. Only runs if we have both a valid entryIV
+  // and a valid latestIV; otherwise skip gracefully (synthetic-chain paper
+  // fills often record entryIV=0, in which case this is a no-op).
+  if (pos.entryIV > 0 && latestIV > 0) {
+    const ivChangeRel = (latestIV - pos.entryIV) / pos.entryIV;
+    if (ivChangeRel >= OPTION_IV_EXPANSION_PCT) {
+      return 'iv_crush';
+    }
+  }
 
   if (pos.trailingArmed) {
     const high = pos.highWaterPct ?? pnlPct;

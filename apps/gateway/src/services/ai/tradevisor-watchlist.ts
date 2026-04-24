@@ -8,7 +8,7 @@
  */
 
 import { logger } from '../../lib/logger.js';
-import { runTradevisorScan, recordScanStats, type TradevisorResult } from './tradevisor-engine.js';
+import { runTradevisorScan, recordScanStats, analyzeTickersStockBatched, type TradevisorResult } from './tradevisor-engine.js';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -49,12 +49,31 @@ const TOP_30_TICKERS: Array<{ ticker: string; chain: 'crypto' }> = [
   'RENDER', 'FET', 'JASMY', 'PEPE', 'SHIB', 'WIF', 'BONK',
 ].map(ticker => ({ ticker, chain: 'crypto' as const }));
 
-// ── Top 10 US Equities (seeded on startup) ───────────────────────────────
-// Liquid broad-market ETFs + megacap names. TradeVisor analyzes these on
-// the same scan cadence as the crypto list; confirmed signals route into
-// the stock-agent (see services/stock-intelligence/stock-agent.ts).
-const TOP_STOCKS: Array<{ ticker: string; chain: 'stock' }> = [
-  'SPY', 'QQQ', 'AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMD', 'META', 'GOOGL', 'AMZN',
+// ── Top 50 US Equities (seeded on startup) ───────────────────────────────
+// Phase 2 universe: 50 diversified Russell 1000 names across 7 sectors + 5
+// ETFs. TradeVisor analyzes these on the same scan cadence as the crypto
+// list; confirmed signals route into the stock-agent and are gated by the
+// per-sector cap in sector-map.ts::canOpenPosition (max 2 per sector).
+//
+// Keep this list in sync with TICKER_TO_SECTOR in
+// services/stock-intelligence/sector-map.ts.
+export const TOP_STOCKS: Array<{ ticker: string; chain: 'stock' }> = [
+  // Tech (10)
+  'AAPL', 'MSFT', 'NVDA', 'GOOGL', 'META', 'AMZN', 'AMD', 'CRM', 'ORCL', 'AVGO',
+  // Finance (7)
+  'JPM', 'BAC', 'GS', 'MS', 'WFC', 'V', 'MA',
+  // Health (7)
+  'UNH', 'JNJ', 'PFE', 'MRK', 'LLY', 'ABBV', 'TMO',
+  // Consumer (7)
+  'WMT', 'COST', 'HD', 'NKE', 'MCD', 'SBUX', 'TGT',
+  // Industrial (5)
+  'BA', 'CAT', 'GE', 'UPS', 'RTX',
+  // Energy (4)
+  'XOM', 'CVX', 'COP', 'SLB',
+  // ETFs (5)
+  'SPY', 'QQQ', 'IWM', 'DIA', 'XLK',
+  // Other (5) — discretionary autos/media, communication, fintech, platform
+  'TSLA', 'DIS', 'NFLX', 'PYPL', 'UBER',
 ].map(ticker => ({ ticker, chain: 'stock' as const }));
 
 export function addToWatchlist(ticker: string, source: string, chain: 'crypto' | 'stock' | 'solana'): boolean {
@@ -147,8 +166,23 @@ export async function scanWatchlist(): Promise<{
     return { buys: [], sells: [], holds: 0 };
   }
 
-  // Run Tradevisor analysis on all watched tickers
-  const results = await runTradevisorScan(items);
+  // Phase 2: batch stock analysis — one Alpaca call for all stock tickers
+  // instead of one call per ticker. Crypto/solana still go through the
+  // per-ticker loop in runTradevisorScan because each one has different
+  // data sources (Coinbase / DexScreener / CoinGecko).
+  const stockItems = items.filter(i => i.chain === 'stock');
+  const nonStockItems = items.filter(i => i.chain !== 'stock');
+
+  const [stockResults, nonStockResults] = await Promise.all([
+    stockItems.length > 0
+      ? analyzeTickersStockBatched(stockItems.map(i => i.ticker))
+      : Promise.resolve([] as TradevisorResult[]),
+    nonStockItems.length > 0
+      ? runTradevisorScan(nonStockItems)
+      : Promise.resolve([] as TradevisorResult[]),
+  ]);
+
+  const results = [...stockResults, ...nonStockResults];
 
   const buys: TradevisorResult[] = [];
   const sells: TradevisorResult[] = [];
@@ -218,7 +252,7 @@ export function seedWatchlist(): void {
   }
   let stockAdded = 0;
   for (const { ticker, chain } of TOP_STOCKS) {
-    if (addToWatchlist(ticker, 'seed:top10-stocks', chain)) {
+    if (addToWatchlist(ticker, 'seed:top50-stocks', chain)) {
       stockAdded++;
     }
   }
