@@ -145,6 +145,11 @@ export interface EquityPosition {
   entryAt: string;              // ISO timestamp
   signalSource: string;         // e.g. 'tradevisor_prime'
   signalScore: number;          // confluence score 0-6
+  // ── Phase 1 exit-tracking (optional so legacy ledgers still parse) ──
+  stopLossPrice?: number;       // hard stop absolute price, typically entryPrice * 0.95
+  highWaterPct?: number;        // highest pnlPct ever seen (drives trailing TP)
+  trailingArmed?: boolean;      // true once pnlPct crosses +3%
+  lastPriceAt?: string;         // ISO timestamp of last price refresh
 }
 
 export interface OptionPosition {
@@ -161,6 +166,11 @@ export interface OptionPosition {
   entryAt: string;              // ISO timestamp
   signalSource: string;
   signalScore: number;
+  // ── Phase 1 exit-tracking (optional so legacy ledgers still parse) ──
+  stopLossMid?: number;         // hard stop absolute mid, typically entryMid * 0.5
+  highWaterPct?: number;        // highest pnlPct ever seen (drives trailing TP)
+  trailingArmed?: boolean;      // true once pnlPct crosses +3%
+  lastPriceAt?: string;         // ISO timestamp of last price refresh
 }
 
 export interface EquityClosedTrade extends EquityPosition {

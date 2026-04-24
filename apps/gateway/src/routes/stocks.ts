@@ -32,7 +32,7 @@ import {
 } from '../services/stocks/alpaca-client.js';
 import { scanForSwingTrades, DEFAULT_WATCHLIST } from '../services/stocks/swing-scanner.js';
 import { loadPaperLedger, savePaperLedger } from '../services/stock-intelligence/stock-orchestrator.js';
-import { executeEquitySignal, executeOptionsSignal } from '../services/stock-intelligence/stock-agent.js';
+import { executeEquitySignal, executeOptionsSignal, executeEquitySellSignal, executeOptionSellSignal } from '../services/stock-intelligence/stock-agent.js';
 import { MAX_EQUITY_POSITIONS, MAX_OPTION_POSITIONS } from '../services/stock-intelligence/stock-models.js';
 import { getOptionQuote } from '../services/stocks/robinhood-options.js';
 
@@ -398,10 +398,14 @@ stocksRouter.post('/signal/test', async (req, res) => {
     const which = route ?? 'both';
     const results: Record<string, boolean> = {};
     if (which === 'equity' || which === 'both') {
-      results.equity = await executeEquitySignal(signal);
+      results.equity = signal.action === 'sell'
+        ? await executeEquitySellSignal(signal)
+        : await executeEquitySignal(signal);
     }
     if ((which === 'options' || which === 'both') && process.env.ENABLE_OPTIONS === 'true') {
-      results.options = await executeOptionsSignal(signal);
+      results.options = signal.action === 'sell'
+        ? await executeOptionSellSignal(signal)
+        : await executeOptionsSignal(signal);
     }
     res.json({ data: { signal, results } });
   } catch (err) {

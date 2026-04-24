@@ -387,6 +387,13 @@ server.listen(PORT, HOST, () => {
 
   if (process.env.ENABLE_STOCKS === 'true') {
     startStockEngine();
+    // Phase 1: 30s price-refresh + exit-trigger loop for TradeVisor paper ledger.
+    // Lazy import so gateways with ENABLE_STOCKS=false don't load the module.
+    void import('./services/stock-intelligence/position-monitor.js').then(mod => {
+      mod.startStockPositionMonitor();
+    }).catch(err => {
+      logger.warn({ err: err instanceof Error ? err.message : err }, '[Startup] Failed to load position-monitor');
+    });
     logger.info('[Startup] Stock engine ENABLED');
   } else {
     logger.info('[Startup] Stock engine DISABLED (set ENABLE_STOCKS=true to enable)');
@@ -400,30 +407,38 @@ server.listen(PORT, HOST, () => {
         `[Tradevisor] CONFIRMED SIGNAL → ${result.action.toUpperCase()} ${result.ticker} (${result.grade}, ${result.chain})`,
       );
       if (result.chain === 'stock') {
-        // Stock branch: fire equity paper trade + optional options paper trade.
-        // Both handlers internally gate on confluence score, cooldown, and
-        // per-book position caps — see services/stock-intelligence/stock-agent.ts.
+        // Stock branch: route buys → executeEquitySignal / executeOptionsSignal,
+        // sells → executeEquitySellSignal / executeOptionSellSignal. All four
+        // handlers internally gate on confluence score, cooldown, and (for
+        // buys) per-book position caps — see services/stock-intelligence/stock-agent.ts.
         try {
-          const { executeEquitySignal, executeOptionsSignal } = await import('./services/stock-intelligence/stock-agent.js');
-          await executeEquitySignal({
+          const {
+            executeEquitySignal,
+            executeOptionsSignal,
+            executeEquitySellSignal,
+            executeOptionSellSignal,
+          } = await import('./services/stock-intelligence/stock-agent.js');
+          const sig = {
             ticker: result.ticker,
             action: result.action,
             price: result.currentPrice,
             score: result.confluenceScore,
             grade: result.grade,
-          });
-          if (process.env.ENABLE_OPTIONS === 'true') {
-            await executeOptionsSignal({
-              ticker: result.ticker,
-              action: result.action,
-              price: result.currentPrice,
-              score: result.confluenceScore,
-              grade: result.grade,
-            });
+          };
+          if (result.action === 'buy') {
+            await executeEquitySignal(sig);
+            if (process.env.ENABLE_OPTIONS === 'true') {
+              await executeOptionsSignal(sig);
+            }
+          } else if (result.action === 'sell') {
+            await executeEquitySellSignal(sig);
+            if (process.env.ENABLE_OPTIONS === 'true') {
+              await executeOptionSellSignal(sig);
+            }
           }
         } catch (err) {
           logger.warn(
-            { err: err instanceof Error ? err.message : err, ticker: result.ticker },
+            { err: err instanceof Error ? err.message : err, ticker: result.ticker, action: result.action },
             '[Tradevisor] Stock execution failed',
           );
         }

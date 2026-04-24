@@ -24,10 +24,12 @@ import { logger } from '../../lib/logger.js';
 import {
   MAX_EQUITY_POSITIONS, MAX_OPTION_POSITIONS,
   type EquityPosition, type OptionPosition, type PaperLedgerState,
+  type EquityClosedTrade, type OptionClosedTrade,
 } from './stock-models.js';
 import { loadPaperLedger, savePaperLedger } from './stock-orchestrator.js';
 import { selectOptionContract } from './options-policy.js';
 import { getOptionsChain } from '../stocks/robinhood-options.js';
+import { computePositionSize } from './sizing.js';
 
 // ── Signal Shape ────────────────────────────────────────────────────────
 
@@ -164,15 +166,31 @@ export async function executeEquitySignal(signal: StockAgentSignal): Promise<boo
     );
   }
 
+  // Phase 1: volatility-adjusted sizing computes the hard-stop price so the
+  // position-monitor can enforce it. ATR is not yet plumbed through this
+  // path, so `computePositionSize` falls back to the flat 5% stop distance.
+  const sizing = computePositionSize({
+    accountUsd: state.paperCashUsd + positionSizeUsd,  // approximate equity before fill
+    grade: signal.grade,
+    entryPrice: signal.price,
+    isOption: false,
+  });
+  const stopLossPrice = sizing.stopLossPrice > 0 ? sizing.stopLossPrice : signal.price * 0.95;
+
+  const nowIso = new Date().toISOString();
   const position: EquityPosition = {
     id: randomUUID(),
     symbol,
     shares,
     entryPrice: signal.price,
     currentPrice: signal.price,
-    entryAt: new Date().toISOString(),
+    entryAt: nowIso,
     signalSource: `tradevisor_${signal.grade}`,
     signalScore: signal.score,
+    stopLossPrice,
+    highWaterPct: 0,
+    trailingArmed: false,
+    lastPriceAt: nowIso,
   };
 
   state.equityPositions.push(position);
@@ -274,6 +292,7 @@ export async function executeOptionsSignal(signal: StockAgentSignal): Promise<bo
     );
   }
 
+  const nowIso = new Date().toISOString();
   const position: OptionPosition = {
     id: randomUUID(),
     symbol,
@@ -285,9 +304,15 @@ export async function executeOptionsSignal(signal: StockAgentSignal): Promise<bo
     entryMid: mid,
     currentMid: mid,
     entryIV: 0,            // IV not yet plumbed — synthetic chain uses flat 35%
-    entryAt: new Date().toISOString(),
+    entryAt: nowIso,
     signalSource: `tradevisor_${signal.grade}`,
     signalScore: signal.score,
+    // Phase 1: hard stop at 50% of entry mid. Options halve quickly, so a
+    // tighter stop than equity is sensible.
+    stopLossMid: mid * 0.5,
+    highWaterPct: 0,
+    trailingArmed: false,
+    lastPriceAt: nowIso,
   };
 
   state.optionPositions.push(position);
@@ -301,5 +326,152 @@ export async function executeOptionsSignal(signal: StockAgentSignal): Promise<bo
     `[StockAgent] PAPER OPTION BUY ${symbol} ${contract.occSymbol} x${contracts} @ $${mid.toFixed(2)}`,
   );
 
+  return true;
+}
+
+// ── Close Helpers ───────────────────────────────────────────────────────
+
+export type EquityCloseReason =
+  | 'tv_sell' | 'hard_stop' | 'trailing_tp' | 'time_stop' | 'manual';
+
+export type OptionCloseReason =
+  | 'tv_sell' | 'hard_stop' | 'trailing_tp' | 'time_stop' | 'iv_crush' | 'manual';
+
+/**
+ * Close an open equity position at `exitPrice`. Mutates the ledger in-place:
+ *   - removes from equityPositions
+ *   - pushes a EquityClosedTrade into equityClosed
+ *   - credits paperCashUsd by shares * exitPrice
+ *   - updates stats.wins / losses
+ * Persists the ledger before returning.
+ */
+export async function closeEquityPosition(
+  position: EquityPosition,
+  exitPrice: number,
+  reason: EquityCloseReason,
+): Promise<void> {
+  const state = getLedger();
+  const idx = state.equityPositions.findIndex(p => p.id === position.id);
+  if (idx === -1) {
+    logger.warn({ symbol: position.symbol, id: position.id }, '[StockAgent] closeEquityPosition: position not found in ledger');
+    return;
+  }
+
+  const exit = exitPrice > 0 ? exitPrice : position.currentPrice;
+  const pnlUsd = (exit - position.entryPrice) * position.shares;
+  const pnlPct = position.entryPrice > 0
+    ? ((exit - position.entryPrice) / position.entryPrice) * 100
+    : 0;
+
+  const closed: EquityClosedTrade = {
+    ...position,
+    exitPrice: exit,
+    exitAt: new Date().toISOString(),
+    pnlUsd,
+    pnlPct,
+  };
+
+  state.equityPositions.splice(idx, 1);
+  state.equityClosed.push(closed);
+  state.paperCashUsd += position.shares * exit;
+  if (pnlUsd >= 0) state.stats.wins += 1;
+  else state.stats.losses += 1;
+
+  persist();
+
+  logger.info(
+    { symbol: position.symbol, reason, exit, pnlUsd: pnlUsd.toFixed(2), pnlPct: pnlPct.toFixed(2) },
+    `[StockAgent] PAPER SELL ${position.symbol} @ $${exit.toFixed(2)} pnl=$${pnlUsd.toFixed(2)} (${reason})`,
+  );
+}
+
+/**
+ * Close an open option position at `exitMid`. Mirrors closeEquityPosition
+ * but uses contracts * mid * 100 for cash accounting.
+ */
+export async function closeOptionPosition(
+  position: OptionPosition,
+  exitMid: number,
+  reason: OptionCloseReason,
+): Promise<void> {
+  const state = getLedger();
+  const idx = state.optionPositions.findIndex(p => p.id === position.id);
+  if (idx === -1) {
+    logger.warn({ symbol: position.symbol, id: position.id }, '[StockAgent] closeOptionPosition: position not found in ledger');
+    return;
+  }
+
+  const exit = exitMid > 0 ? exitMid : position.currentMid;
+  const pnlUsd = (exit - position.entryMid) * position.contracts * 100;
+  const pnlPct = position.entryMid > 0
+    ? ((exit - position.entryMid) / position.entryMid) * 100
+    : 0;
+
+  const closed: OptionClosedTrade = {
+    ...position,
+    exitMid: exit,
+    exitAt: new Date().toISOString(),
+    pnlUsd,
+    pnlPct,
+  };
+
+  state.optionPositions.splice(idx, 1);
+  state.optionClosed.push(closed);
+  state.paperCashUsd += position.contracts * exit * 100;
+  if (pnlUsd >= 0) state.stats.wins += 1;
+  else state.stats.losses += 1;
+
+  persist();
+
+  logger.info(
+    { symbol: position.symbol, occ: position.occSymbol, reason, exit, pnlUsd: pnlUsd.toFixed(2), pnlPct: pnlPct.toFixed(2) },
+    `[StockAgent] PAPER OPTION SELL ${position.symbol} ${position.occSymbol} @ $${exit.toFixed(2)} pnl=$${pnlUsd.toFixed(2)} (${reason})`,
+  );
+}
+
+// ── TradeVisor Sell Signal Dispatch ─────────────────────────────────────
+
+/**
+ * Close any held equity position on this symbol when TradeVisor fires a
+ * SELL signal. Gates on cooldown + confluence score like the buy path so we
+ * don't churn on borderline signals. Returns true iff a position was closed.
+ */
+export async function executeEquitySellSignal(signal: StockAgentSignal): Promise<boolean> {
+  if (!passesGates(signal, 'equity')) return false;
+
+  const symbol = signal.ticker.toUpperCase();
+  const state = getLedger();
+
+  const pos = state.equityPositions.find(p => p.symbol === symbol);
+  if (!pos) {
+    logger.info({ symbol }, '[StockAgent] SELL signal but no equity position held — skip');
+    return false;
+  }
+
+  await closeEquityPosition(pos, signal.price, 'tv_sell');
+  markCooldown(`equity_${symbol}_${signal.action}`);
+  return true;
+}
+
+/**
+ * Close any held option position on this symbol when TradeVisor fires a
+ * SELL signal. Closes BOTH call and put sides if held (rare but possible).
+ */
+export async function executeOptionSellSignal(signal: StockAgentSignal): Promise<boolean> {
+  if (!passesGates(signal, 'option')) return false;
+
+  const symbol = signal.ticker.toUpperCase();
+  const state = getLedger();
+
+  const held = state.optionPositions.filter(p => p.symbol === symbol);
+  if (held.length === 0) {
+    logger.info({ symbol }, '[StockAgent] SELL signal but no option position held — skip');
+    return false;
+  }
+
+  for (const pos of held) {
+    await closeOptionPosition(pos, pos.currentMid, 'tv_sell');
+  }
+  markCooldown(`option_${symbol}_${signal.action}`);
   return true;
 }
