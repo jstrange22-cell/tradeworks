@@ -43,13 +43,43 @@ export const cryptoAgentRouter: RouterType = Router();
 
 const PAPER_STARTING_CAPITAL = 1000; // $1000 USD
 
+// Optional per-position exit-tracking fields added in the hardening pass.
+// Legacy positions without these fields still work (defaults applied on load).
+interface PaperPosition {
+  symbol: string;
+  qty: number;
+  avgEntry: number;
+  currentPrice: number;
+  stopLossPrice?: number;
+  trailingArmed?: boolean;
+  openedAt?: string;
+  highWaterPct?: number;
+}
+
+export interface ClosedCryptoTrade {
+  symbol: string;
+  side: 'sell';
+  qty: number;
+  entryPrice: number;
+  exitPrice: number;
+  pnlUsd: number;
+  pnlPct: number;
+  reason: 'tv_sell' | 'hard_stop' | 'trailing_tp' | 'time_stop' | 'manual' | 'kill_switch' | 'legacy';
+  openedAt: string;
+  closedAt: string;
+}
+
 interface PaperPortfolio {
   cashUsd: number;
-  positions: Map<string, { symbol: string; qty: number; avgEntry: number; currentPrice: number }>;
+  positions: Map<string, PaperPosition>;
   trades: Array<{ symbol: string; side: string; qty: number; price: number; pnlUsd: number; timestamp: string }>;
   totalPnlUsd: number;
   wins: number;
   losses: number;
+  // Schema v2 additions — non-breaking on load (migration injects defaults).
+  schemaVersion: number;
+  closedTrades: ClosedCryptoTrade[];
+  peakValueUsd: number;
 }
 
 const paperPortfolio: PaperPortfolio = {
@@ -59,6 +89,9 @@ const paperPortfolio: PaperPortfolio = {
   totalPnlUsd: 0,
   wins: 0,
   losses: 0,
+  schemaVersion: 2,
+  closedTrades: [],
+  peakValueUsd: PAPER_STARTING_CAPITAL,
 };
 
 // DEX Paper Portfolio Persistence
@@ -70,12 +103,15 @@ try { dexMkdirSync(DEX_DATA_DIR, { recursive: true }); } catch { /* exists */ }
 function persistDEXState(): void {
   try {
     dexWriteFileSync(dexJoin(DEX_DATA_DIR, 'paper-state.json'), JSON.stringify({
+      schemaVersion: paperPortfolio.schemaVersion,
       cashUsd: paperPortfolio.cashUsd,
       positions: [...paperPortfolio.positions.entries()],
       trades: paperPortfolio.trades.slice(-100),
+      closedTrades: paperPortfolio.closedTrades.slice(-500),
       totalPnlUsd: paperPortfolio.totalPnlUsd,
       wins: paperPortfolio.wins,
       losses: paperPortfolio.losses,
+      peakValueUsd: paperPortfolio.peakValueUsd,
     }, null, 2));
   } catch { /* fire-and-forget */ }
 }
@@ -91,10 +127,34 @@ function loadDEXState(): void {
     if (raw.losses != null) paperPortfolio.losses = raw.losses;
     if (Array.isArray(raw.positions)) {
       paperPortfolio.positions.clear();
-      for (const [k, v] of raw.positions) paperPortfolio.positions.set(k, v);
+      for (const [k, v] of raw.positions) {
+        // Stamp openedAt on legacy positions so time-stop doesn't fire instantly.
+        if (!v.openedAt) v.openedAt = new Date().toISOString();
+        paperPortfolio.positions.set(k, v);
+      }
     }
     if (Array.isArray(raw.trades)) paperPortfolio.trades = raw.trades;
-    logger.info({ cash: paperPortfolio.cashUsd, positions: paperPortfolio.positions.size }, '[CryptoAgent] DEX state restored from disk');
+    // ── Schema v2 migration ──
+    paperPortfolio.schemaVersion = raw.schemaVersion ?? 2;
+    paperPortfolio.closedTrades = Array.isArray(raw.closedTrades) ? raw.closedTrades : [];
+    const positionsValue = [...paperPortfolio.positions.values()]
+      .reduce((s, p) => s + p.qty * (p.currentPrice || p.avgEntry), 0);
+    const currentTotalValue = paperPortfolio.cashUsd + positionsValue;
+    paperPortfolio.peakValueUsd = Math.max(
+      raw.peakValueUsd ?? 0,
+      currentTotalValue,
+      PAPER_STARTING_CAPITAL,
+    );
+    logger.info(
+      {
+        cash: paperPortfolio.cashUsd,
+        positions: paperPortfolio.positions.size,
+        closedTrades: paperPortfolio.closedTrades.length,
+        peak: paperPortfolio.peakValueUsd,
+        schema: paperPortfolio.schemaVersion,
+      },
+      '[CryptoAgent] DEX state restored from disk',
+    );
   } catch { /* start fresh */ }
 }
 
@@ -442,24 +502,42 @@ cryptoAgentRouter.get('/paper', async (_req, res) => {
   const totalValue = paperPortfolio.cashUsd + positionsValue;
   const totalPnl = totalValue - PAPER_STARTING_CAPITAL;
 
+  // Stats derived from closedTrades (canonical source of truth — legacy counters
+  // were corruption-prone and are retained for audit only).
+  const derivedWins = paperPortfolio.closedTrades.filter(t => t.pnlUsd > 0).length;
+  const derivedLosses = paperPortfolio.closedTrades.filter(t => t.pnlUsd <= 0).length;
+  const derivedPnlSum = paperPortfolio.closedTrades.reduce((s, t) => s + t.pnlUsd, 0);
+  const derivedTotal = derivedWins + derivedLosses;
+  const winRate = derivedTotal > 0 ? Math.round((derivedWins / derivedTotal) * 100) : 0;
+
   res.json({
     data: {
       startingCapital: PAPER_STARTING_CAPITAL,
       cashUsd: Math.round(paperPortfolio.cashUsd * 100) / 100,
       positionsValue: Math.round(positionsValue * 100) / 100,
       totalValue: Math.round(totalValue * 100) / 100,
+      peakValueUsd: Math.round(paperPortfolio.peakValueUsd * 100) / 100,
       totalPnlUsd: Math.round(totalPnl * 100) / 100,
       totalPnlPct: Math.round((totalPnl / PAPER_STARTING_CAPITAL) * 10000) / 100,
+      // Primary stats come from closedTrades
       trades: paperPortfolio.trades.length,
-      wins: paperPortfolio.wins,
-      losses: paperPortfolio.losses,
-      winRate: paperPortfolio.trades.length > 0 ? Math.round((paperPortfolio.wins / paperPortfolio.trades.length) * 100) : 0,
+      closedTrades: paperPortfolio.closedTrades.length,
+      wins: derivedWins,
+      losses: derivedLosses,
+      winRate,
+      // Legacy counters exposed for audit
+      legacyWins: paperPortfolio.wins,
+      legacyLosses: paperPortfolio.losses,
+      legacyPnlUsd: Math.round(paperPortfolio.totalPnlUsd * 100) / 100,
+      derivedPnlUsd: Math.round(derivedPnlSum * 100) / 100,
       openPositions,
       recentTrades: paperPortfolio.trades.slice(0, 20),
+      recentClosedTrades: paperPortfolio.closedTrades.slice(-20).reverse(),
       regime: regime.regime,
       regimeMultiplier: regime.multiplier,
       tradingViewSignalCount: tradingViewSignals.length,
       derivedPnlMatch: Math.abs(totalPnl - paperPortfolio.totalPnlUsd) < 1.0,
+      schemaVersion: paperPortfolio.schemaVersion,
     },
   });
 });
@@ -470,10 +548,78 @@ cryptoAgentRouter.post('/paper/reset', (req, res) => {
   paperPortfolio.cashUsd = capital;
   paperPortfolio.positions.clear();
   paperPortfolio.trades = [];
+  paperPortfolio.closedTrades = [];
   paperPortfolio.totalPnlUsd = 0;
   paperPortfolio.wins = 0;
   paperPortfolio.losses = 0;
+  paperPortfolio.peakValueUsd = capital;
+  paperPortfolio.schemaVersion = 2;
+  persistDEXState();
   res.json({ message: `Paper portfolio reset to $${capital}`, cashUsd: capital });
+});
+
+// ── Kill-switch endpoints ────────────────────────────────────────────────
+
+cryptoAgentRouter.get('/kill-switch', async (_req, res) => {
+  try {
+    const { checkCryptoKillSwitches } = await import('../services/ai/crypto-kill-switches.js');
+    const positionsValue = [...paperPortfolio.positions.values()]
+      .reduce((s, p) => s + p.qty * (p.currentPrice || p.avgEntry), 0);
+    const state = checkCryptoKillSwitches({
+      paperCashUsd: paperPortfolio.cashUsd,
+      positionsValueUsd: positionsValue,
+      closedTrades: paperPortfolio.closedTrades,
+      startingCapital: PAPER_STARTING_CAPITAL,
+    });
+    res.json({ data: state });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'kill-switch check failed' });
+  }
+});
+
+cryptoAgentRouter.get('/kill-switch/state', async (_req, res) => {
+  try {
+    const { getCryptoKillSwitchState } = await import('../services/ai/crypto-kill-switches.js');
+    res.json({ data: getCryptoKillSwitchState() });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'kill-switch read failed' });
+  }
+});
+
+cryptoAgentRouter.post('/kill-switch/reset', async (_req, res) => {
+  try {
+    const { resetCryptoKillSwitch, getCryptoKillSwitchState } = await import('../services/ai/crypto-kill-switches.js');
+    resetCryptoKillSwitch();
+    res.json({ data: getCryptoKillSwitchState() });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'kill-switch reset failed' });
+  }
+});
+
+// GET /stats/audit — compare derived stats vs legacy counters
+cryptoAgentRouter.get('/stats/audit', (_req, res) => {
+  const derivedWins = paperPortfolio.closedTrades.filter(t => t.pnlUsd > 0).length;
+  const derivedLosses = paperPortfolio.closedTrades.filter(t => t.pnlUsd <= 0).length;
+  const derivedPnl = paperPortfolio.closedTrades.reduce((s, t) => s + t.pnlUsd, 0);
+  const derivedN = paperPortfolio.closedTrades.length;
+  const legacyN = paperPortfolio.wins + paperPortfolio.losses;
+  const discrepancy =
+    derivedWins !== paperPortfolio.wins ||
+    derivedLosses !== paperPortfolio.losses ||
+    Math.abs(derivedPnl - paperPortfolio.totalPnlUsd) > 1;
+  res.json({
+    data: {
+      derived: { wins: derivedWins, losses: derivedLosses, pnlUsd: derivedPnl, n: derivedN },
+      legacy: {
+        wins: paperPortfolio.wins,
+        losses: paperPortfolio.losses,
+        pnlUsd: paperPortfolio.totalPnlUsd,
+        n: legacyN,
+      },
+      discrepancy,
+      schemaVersion: paperPortfolio.schemaVersion,
+    },
+  });
 });
 
 // GET /paper/verify — Verify P&L accuracy
@@ -566,9 +712,17 @@ function recordPaperTrade(exec: { instrument: string; side: string; quantity: nu
       existing.avgEntry = ((existing.avgEntry * existing.qty) + (exec.price * exec.quantity)) / totalQty;
       existing.qty = totalQty;
       existing.currentPrice = exec.price;
+      existing.stopLossPrice = existing.avgEntry * 0.95;
     } else {
       paperPortfolio.positions.set(symbol, {
-        symbol, qty: exec.quantity, avgEntry: exec.price, currentPrice: exec.price,
+        symbol,
+        qty: exec.quantity,
+        avgEntry: exec.price,
+        currentPrice: exec.price,
+        stopLossPrice: exec.price * 0.95,
+        trailingArmed: false,
+        openedAt: new Date().toISOString(),
+        highWaterPct: 0,
       });
     }
     paperPortfolio.cashUsd -= cost;
@@ -583,35 +737,95 @@ function recordPaperTrade(exec: { instrument: string; side: string; quantity: nu
     const pos = paperPortfolio.positions.get(symbol);
     if (!pos) return; // No position to sell
 
-    const rawPnl = (exec.price - pos.avgEntry) * Math.min(exec.quantity, pos.qty);
-    // Cap P&L per trade at 10x the position cost (no memecoin returns 10000%+ realistically)
-    const positionCost = pos.avgEntry * pos.qty;
-    const maxPnl = positionCost * 10; // Max 1000% gain
-    const pnl = Math.max(-positionCost, Math.min(rawPnl, maxPnl));
-    paperPortfolio.totalPnlUsd += pnl;
-    paperPortfolio.cashUsd += Math.min(exec.quantity * exec.price, positionCost + maxPnl);
-
-    if (pnl > 0) paperPortfolio.wins++;
-    else paperPortfolio.losses++;
-
-    paperPortfolio.trades.push({
-      symbol, side: 'sell', qty: exec.quantity, price: exec.price, pnlUsd: pnl,
-      timestamp: new Date().toISOString(),
-    });
-
-    // Remove or reduce position
+    // Full close → delegate to closeCryptoPosition so closedTrades ledger stays
+    // the canonical source of truth for stats. Partial close still handled
+    // inline below (no reason-tracked close, preserves legacy behavior).
     if (exec.quantity >= pos.qty) {
-      paperPortfolio.positions.delete(symbol);
+      closeCryptoPosition(symbol, exec.price, 'legacy');
+      paperPortfolio.trades.push({
+        symbol, side: 'sell', qty: exec.quantity, price: exec.price,
+        pnlUsd: 0, // pnl already captured in closedTrades entry
+        timestamp: new Date().toISOString(),
+      });
     } else {
+      // Partial close — no 10x cap anymore (price-sanity + ghost-pair guards handle it)
+      const pnl = (exec.price - pos.avgEntry) * exec.quantity;
+      paperPortfolio.totalPnlUsd += pnl;
+      paperPortfolio.cashUsd += exec.quantity * exec.price;
+      if (pnl > 0) paperPortfolio.wins++;
+      else paperPortfolio.losses++;
+      paperPortfolio.trades.push({
+        symbol, side: 'sell', qty: exec.quantity, price: exec.price, pnlUsd: pnl,
+        timestamp: new Date().toISOString(),
+      });
       pos.qty -= exec.quantity;
+      logger.info(
+        { symbol, pnl: pnl.toFixed(2), qtyRemaining: pos.qty, cash: paperPortfolio.cashUsd.toFixed(2) },
+        `[CryptoAgent] PAPER PARTIAL SELL ${symbol} P&L: $${pnl.toFixed(2)}`,
+      );
     }
-
-    logger.info({ symbol, pnl: pnl.toFixed(2), cash: paperPortfolio.cashUsd.toFixed(2) },
-      `[CryptoAgent] PAPER SELL ${symbol} P&L: $${pnl.toFixed(2)}`);
   }
 
   // Persist after every trade
   persistDEXState();
+}
+
+/**
+ * Canonical full-close path for signal-driven exits. Writes a structured
+ * entry to paperPortfolio.closedTrades with the exit reason, updates cash,
+ * refreshes peakValueUsd, and removes the position. NO 10x pnl cap —
+ * price-sanity guard at entry + ghost-pair guard on the exit path handle
+ * the corrupt-price cases that used to motivate the cap.
+ */
+function closeCryptoPosition(
+  symbol: string,
+  exitPrice: number,
+  reason: ClosedCryptoTrade['reason'],
+): void {
+  const pos = paperPortfolio.positions.get(symbol);
+  if (!pos) return;
+
+  const entryPrice = pos.avgEntry;
+  const qty = pos.qty;
+  const pnlUsd = (exitPrice - entryPrice) * qty;
+  const pnlPct = entryPrice > 0 ? ((exitPrice - entryPrice) / entryPrice) * 100 : 0;
+
+  paperPortfolio.cashUsd += qty * exitPrice;
+  paperPortfolio.closedTrades.push({
+    symbol,
+    side: 'sell',
+    qty,
+    entryPrice,
+    exitPrice,
+    pnlUsd,
+    pnlPct,
+    reason,
+    openedAt: pos.openedAt ?? new Date().toISOString(),
+    closedAt: new Date().toISOString(),
+  });
+  // Cap in-memory closedTrades — disk rotation happens in persistDEXState
+  if (paperPortfolio.closedTrades.length > 500) {
+    paperPortfolio.closedTrades = paperPortfolio.closedTrades.slice(-500);
+  }
+  paperPortfolio.positions.delete(symbol);
+
+  // Refresh peak
+  const totalValue = paperPortfolio.cashUsd + [...paperPortfolio.positions.values()]
+    .reduce((s, p) => s + p.qty * (p.currentPrice || p.avgEntry), 0);
+  if (totalValue > paperPortfolio.peakValueUsd) {
+    paperPortfolio.peakValueUsd = totalValue;
+  }
+
+  // Legacy counters for back-compat (stats endpoint now derives from closedTrades)
+  paperPortfolio.totalPnlUsd += pnlUsd;
+  if (pnlUsd > 0) paperPortfolio.wins++;
+  else paperPortfolio.losses++;
+
+  persistDEXState();
+  logger.info(
+    { symbol, exitPrice, pnlUsd: pnlUsd.toFixed(2), pnlPct: pnlPct.toFixed(2), reason },
+    `[CryptoAgent] PAPER CLOSE ${symbol} @ $${exitPrice} pnl=$${pnlUsd.toFixed(2)} (${pnlPct.toFixed(1)}%) — ${reason}`,
+  );
 }
 
 // Wire the recorder to the cycle engine (legacy — cycle engine still handles blue chips)
@@ -716,6 +930,21 @@ export async function executeSignalTrade(signal: TradeSignal): Promise<boolean> 
     }
   }
 
+  // SELL SHORT-CIRCUIT: TradeVisor sell on a held position → close with reason.
+  // Sells shouldn't be throttled by the buy-side cooldown, so this runs first.
+  if (signal.action === 'sell') {
+    const held = paperPortfolio.positions.get(cleanSymbol);
+    if (!held || held.qty <= 0) {
+      logger.info({ symbol: cleanSymbol, source: signal.source }, '[CryptoAgent] Sell signal with no held position — skip');
+      return false;
+    }
+    closeCryptoPosition(cleanSymbol, signal.price, 'tv_sell');
+    signalCooldown.set(`${cleanSymbol}_sell`, Date.now());
+    signalTradeLog.push({ ...signal, executedAt: new Date().toISOString(), success: true });
+    if (signalTradeLog.length > MAX_SIGNAL_LOG) signalTradeLog.shift();
+    return true;
+  }
+
   // DEDUP: Check cooldown — don't re-trade the same symbol within 1 hour
   const cooldownKey = `${cleanSymbol}_${signal.action}`;
   const lastTraded = signalCooldown.get(cooldownKey);
@@ -728,9 +957,50 @@ export async function executeSignalTrade(signal: TradeSignal): Promise<boolean> 
     return false;
   }
 
-  // Position size: $15-50 based on confidence
+  // ── KILL SWITCH: circuit breaker on daily loss / max DD / consec losses ──
+  try {
+    const { checkCryptoKillSwitches } = await import('../services/ai/crypto-kill-switches.js');
+    const positionsValue = [...paperPortfolio.positions.values()]
+      .reduce((s, p) => s + p.qty * (p.currentPrice || p.avgEntry), 0);
+    const ks = checkCryptoKillSwitches({
+      paperCashUsd: paperPortfolio.cashUsd,
+      positionsValueUsd: positionsValue,
+      closedTrades: paperPortfolio.closedTrades,
+      startingCapital: PAPER_STARTING_CAPITAL,
+    });
+    if (ks.tripped) {
+      logger.info({ symbol: cleanSymbol, reason: ks.reason }, '[CryptoAgent] Kill switch tripped — skip');
+      return false;
+    }
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : err }, '[CryptoAgent] Kill switch check failed — continuing');
+  }
+
+  // ── CATEGORY CAP: diversification gate (max 3 per category) ──
+  try {
+    const { canOpenCryptoPosition } = await import('../services/ai/crypto-category-map.js');
+    const catGate = canOpenCryptoPosition(cleanSymbol, [...paperPortfolio.positions.values()]);
+    if (!catGate.allowed) {
+      logger.info({ symbol: cleanSymbol, reason: catGate.reason }, '[CryptoAgent] Category cap — skip');
+      return false;
+    }
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : err }, '[CryptoAgent] Category gate failed — continuing');
+  }
+
+  // ── BTC REGIME: position-size multiplier based on BTC 20/50 MA trend ──
+  let regimeMult = 1.0;
+  try {
+    const { getBTCRegimeMultiplier } = await import('../services/ai/crypto-regime.js');
+    regimeMult = await getBTCRegimeMultiplier();
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : err }, '[CryptoAgent] Regime fetch failed — default 1.0x');
+  }
+
+  // Position size: $15-50 by confidence × BTC regime multiplier. Min $5.
   const baseSize = 15 + (signal.confidence / 100) * 35; // $15 at 30% conf, $50 at 100%
-  const positionSizeUsd = Math.round(baseSize / 5) * 5; // Round to $5
+  const rawSize = Math.round(baseSize / 5) * 5; // Round to $5
+  const positionSizeUsd = Math.max(5, rawSize * regimeMult);
 
   if (signal.action === 'buy') {
     if (paperPortfolio.cashUsd < positionSizeUsd) {
@@ -874,23 +1144,8 @@ export async function executeSignalTrade(signal: TradeSignal): Promise<boolean> 
       { symbol: cleanSymbol, source: signal.source, size: positionSizeUsd, conf: signal.confidence, chain },
       `[CryptoAgent] 🚀 SIGNAL BUY: ${cleanSymbol} $${positionSizeUsd} from ${signal.source} (conf:${signal.confidence}%, chain:${chain})`,
     );
-  } else {
-    // Sell: close position if we hold it
-    const pos = paperPortfolio.positions.get(signal.symbol);
-    if (!pos) return false;
-
-    recordPaperTrade({
-      instrument: `${signal.symbol}-USD`,
-      side: 'sell',
-      quantity: pos.qty,
-      price: signal.price,
-    });
-
-    logger.info(
-      { symbol: signal.symbol, source: signal.source },
-      `[CryptoAgent] 📉 SIGNAL SELL: ${signal.symbol} from ${signal.source}`,
-    );
   }
+  // Note: sell action handled at the top via short-circuit → closeCryptoPosition
 
   // Log the signal trade
   // Set cooldown to prevent re-triggering for 1 hour
@@ -1006,6 +1261,15 @@ setInterval(async () => {
     }
   }
 
+  // ── Multi-layer exit stack (mirrors stock position-monitor) ──
+  //   1. Time stop: close after 48h (crypto runs 24/7 — 2 days is enough)
+  //   2. Hard stop: close at -5% from entry
+  //   3. Trailing TP: arm at +3%, close on -1% drawdown from high water
+  const HOLD_LIMIT_MS = 48 * 60 * 60_000;
+  const HARD_STOP_PCT = -5;
+  const TRAIL_ARM_PCT = 3;
+  const TRAIL_GIVEBACK_PCT = 1;
+
   for (const [symbol, pos] of paperPortfolio.positions) {
     const priceData = priceMap.get(symbol);
     if (!priceData) continue;
@@ -1013,64 +1277,35 @@ setInterval(async () => {
     pos.currentPrice = priceData.price;
     const pnlPct = pos.avgEntry > 0 ? ((priceData.price - pos.avgEntry) / pos.avgEntry) * 100 : 0;
 
-    // Track high water mark for trailing stop
-    const hwm = (pos as Record<string, unknown>).highWaterPct as number | undefined;
-    const currentHwm = Math.max(hwm ?? 0, pnlPct);
-    (pos as Record<string, unknown>).highWaterPct = currentHwm;
+    // Track high water mark
+    pos.highWaterPct = Math.max(pos.highWaterPct ?? 0, pnlPct);
 
-    // Take Profit: sell if up >3% (tightened from 5%)
-    if (pnlPct >= 3) {
-      recordPaperTrade({
-        instrument: `${symbol}-USD`,
-        side: 'sell',
-        quantity: pos.qty,
-        price: priceData.price,
-      });
-      logger.info({ symbol, pnlPct: pnlPct.toFixed(1) }, `[CryptoAgent] TAKE PROFIT ${symbol} +${pnlPct.toFixed(1)}%`);
+    // 1. Time stop
+    const openedAt = pos.openedAt ? new Date(pos.openedAt).getTime() : Date.now();
+    if (Date.now() - openedAt > HOLD_LIMIT_MS) {
+      logger.info({ symbol, pnlPct: pnlPct.toFixed(1), holdHours: ((Date.now() - openedAt) / 3600000).toFixed(1) },
+        `[CryptoAgent] TIME STOP ${symbol} after ${((Date.now() - openedAt) / 3600000).toFixed(1)}h`);
+      closeCryptoPosition(symbol, priceData.price, 'time_stop');
       continue;
     }
 
-    // Trailing Stop: if was up >2% but dropped back to <0.5%, lock in small gain
-    if (currentHwm >= 2 && pnlPct < 0.5) {
-      recordPaperTrade({
-        instrument: `${symbol}-USD`,
-        side: 'sell',
-        quantity: pos.qty,
-        price: priceData.price,
-      });
-      logger.info({ symbol, pnlPct: pnlPct.toFixed(1), hwm: currentHwm.toFixed(1) },
-        `[CryptoAgent] TRAILING STOP ${symbol} — was +${currentHwm.toFixed(1)}%, now +${pnlPct.toFixed(1)}%`);
+    // 2. Hard stop
+    if (pnlPct <= HARD_STOP_PCT) {
+      logger.info({ symbol, pnlPct: pnlPct.toFixed(1) }, `[CryptoAgent] HARD STOP ${symbol} ${pnlPct.toFixed(1)}%`);
+      closeCryptoPosition(symbol, priceData.price, 'hard_stop');
       continue;
     }
 
-    // Stop Loss: sell if down >2% (tightened from 3%)
-    if (pnlPct <= -2) {
-      recordPaperTrade({
-        instrument: `${symbol}-USD`,
-        side: 'sell',
-        quantity: pos.qty,
-        price: priceData.price,
-      });
-      logger.info({ symbol, pnlPct: pnlPct.toFixed(1) }, `[CryptoAgent] STOP LOSS ${symbol} ${pnlPct.toFixed(1)}%`);
-      continue;
+    // 3. Trailing TP
+    if (!pos.trailingArmed && pnlPct >= TRAIL_ARM_PCT) {
+      pos.trailingArmed = true;
+      logger.info({ symbol, pnlPct: pnlPct.toFixed(1) }, `[CryptoAgent] TRAILING ARMED ${symbol} at +${pnlPct.toFixed(1)}%`);
     }
-
-    // Stale position: sell if held >2 hours (tightened from 4h — free capital faster)
-    const trades = paperPortfolio.trades.filter(t => t.symbol === symbol && t.side === 'buy');
-    if (trades.length > 0) {
-      const oldestBuy = trades[trades.length - 1]; // most recent buy
-      const holdMs = Date.now() - new Date(oldestBuy.timestamp).getTime();
-      if (holdMs > 2 * 60 * 60 * 1000) { // 2 hours — free capital faster
-        recordPaperTrade({
-          instrument: `${symbol}-USD`,
-          side: 'sell',
-          quantity: pos.qty,
-          price: priceData.price,
-        });
-        logger.info({ symbol, holdHours: (holdMs / 3600000).toFixed(1), pnlPct: pnlPct.toFixed(1) },
-          `[CryptoAgent] MAX HOLD EXIT ${symbol} after ${(holdMs / 3600000).toFixed(1)}h`);
-        continue;
-      }
+    if (pos.trailingArmed && pnlPct <= (pos.highWaterPct - TRAIL_GIVEBACK_PCT)) {
+      logger.info({ symbol, pnlPct: pnlPct.toFixed(1), hwm: pos.highWaterPct.toFixed(1) },
+        `[CryptoAgent] TRAILING TP ${symbol} — was +${pos.highWaterPct.toFixed(1)}%, now +${pnlPct.toFixed(1)}%`);
+      closeCryptoPosition(symbol, priceData.price, 'trailing_tp');
+      continue;
     }
   }
 }, 60_000); // check every 60 seconds
