@@ -191,20 +191,35 @@ async function fetchCryptoPrices(): Promise<PriceData[]> {
   const freshPrices: PriceData[] = [];
 
   const symbolMap: Record<string, string> = {
+    // Blue chips
     bitcoin: 'BTC', ethereum: 'ETH', solana: 'SOL', 'avalanche-2': 'AVAX',
     chainlink: 'LINK', dogecoin: 'DOGE', cardano: 'ADA', polkadot: 'DOT',
     near: 'NEAR', sui: 'SUI', ripple: 'XRP', 'matic-network': 'MATIC',
     cosmos: 'ATOM', uniswap: 'UNI', aave: 'AAVE', litecoin: 'LTC',
     'bitcoin-cash': 'BCH', filecoin: 'FIL', arbitrum: 'ARB', optimism: 'OP',
+    // Additional CEX-traded tickers the cycle-service touches. Without these,
+    // the position monitor falls through to DexScreener ticker search which
+    // returns scam Solana tokens sharing the ticker and poisons the ledger
+    // with nano-dollar "current" prices (e.g., SHIB at $3e-9 instead of $1e-5).
+    'shiba-inu': 'SHIB', 'pepe': 'PEPE', 'dogwifcoin': 'WIF', 'bonk': 'BONK',
+    'jasmycoin': 'JASMY', 'chiliz': 'CHZ', 'bittensor': 'TAO',
+    'render-token': 'RENDER', 'fetch-ai': 'FET', 'lido-dao': 'LDO',
+    'celestia': 'TIA', 'sei-network': 'SEI', 'aptos': 'APT',
+    'injective-protocol': 'INJ', 'maker': 'MKR',
   };
 
-  // Fetch in 2 smaller batches to avoid CoinGecko rate limits
+  // Fetch in 3 batches to avoid CoinGecko rate limits (was 2 batches of 10;
+  // we now have 35 IDs and CoinGecko's free tier limits are tight).
   const allIds = Object.keys(symbolMap);
-  const batch1 = allIds.slice(0, 10).join(',');
-  const batch2 = allIds.slice(10).join(',');
+  const chunkSize = 12;
+  const batches: string[] = [];
+  for (let i = 0; i < allIds.length; i += chunkSize) {
+    batches.push(allIds.slice(i, i + chunkSize).join(','));
+  }
 
   try {
-    for (const ids of [batch1, batch2]) {
+    for (let bi = 0; bi < batches.length; bi++) {
+      const ids = batches[bi];
       const res = await fetch(
         `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`,
         { signal: AbortSignal.timeout(8_000) },
@@ -224,7 +239,7 @@ async function fetchCryptoPrices(): Promise<PriceData[]> {
       }
 
       // Small delay between batches
-      if (ids === batch1) await new Promise(r => setTimeout(r, 1500));
+      if (bi < batches.length - 1) await new Promise(r => setTimeout(r, 1500));
     }
 
     // Sort by price descending (rough proxy for market cap)
