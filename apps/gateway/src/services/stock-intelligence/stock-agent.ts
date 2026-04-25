@@ -62,7 +62,7 @@ const EQUITY_SIZE_BY_GRADE: Record<StockAgentSignal['grade'], number> = {
   standard: 100,
   strong: 250,
   prime: 500,
-  reject: 0,
+  reject: 50, // score-3 paper signals allowed when TRADEVISOR_STOCK_MIN_SCORE=3
 };
 
 // Options need a larger budget than equity because ATM calls on mega-caps
@@ -106,7 +106,11 @@ function passesGates(signal: StockAgentSignal, book: 'equity' | 'option'): boole
     return false;
   }
   if (signal.action !== 'buy' && signal.action !== 'sell') return false;
-  if (signal.grade === 'reject' || signal.score < MIN_CONFLUENCE_SCORE) {
+  // Score-only gate. The 'grade' label comes from the engine's getGrade() which
+  // assigns 'reject' for any score < 4 — but with TRADEVISOR_ACTION_THRESHOLD=3
+  // the engine emits action='buy' on 3/6 signals while still labeling them
+  // 'reject'. Grade is a UI/log artifact; score is the real signal-quality gate.
+  if (signal.score < MIN_CONFLUENCE_SCORE) {
     logger.info(
       { ticker: signal.ticker, score: signal.score, grade: signal.grade, min: MIN_CONFLUENCE_SCORE },
       `[StockAgent] ${book} signal below confluence gate — skip`,

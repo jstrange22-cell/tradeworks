@@ -23,6 +23,10 @@ export interface CryptoKillSwitchState {
   trippedAt: string | null;
   resumeAt: string | null;
   peakValueUsd: number;
+  /** ISO timestamp of last manual reset. Daily-loss + consec-losses checks
+   *  only consider closedTrades closed AFTER this — otherwise a manual
+   *  reset is futile because the same historical losses re-trip immediately. */
+  lastResetAt?: string | null;
 }
 
 interface ClosedTradeLite {
@@ -79,14 +83,22 @@ export function getCryptoKillSwitchState(): CryptoKillSwitchState {
   return { ...loadState() };
 }
 
-export function resetCryptoKillSwitch(): void {
+export function resetCryptoKillSwitch(currentTotalValueUsd?: number): void {
   const prev = loadState();
+  const nowIso = new Date().toISOString();
+  // Rebase peak to the current total value (or keep prior peak if larger).
+  // Without this, a manual reset is futile when the user is recovering from
+  // a corruption-induced drawdown — max-DD re-trips on the inflated peak.
+  const rebasedPeak = currentTotalValueUsd && currentTotalValueUsd > 0
+    ? Math.max(currentTotalValueUsd, 1000) // floor at starting capital
+    : prev.peakValueUsd;
   const next: CryptoKillSwitchState = {
     ...defaultState(),
-    peakValueUsd: prev.peakValueUsd,
+    peakValueUsd: rebasedPeak,
+    lastResetAt: nowIso,
   };
   saveState(next);
-  logger.info('[CryptoKillSwitch] manually reset');
+  logger.info({ lastResetAt: nowIso, peakRebased: rebasedPeak }, '[CryptoKillSwitch] manually reset');
 }
 
 /**
@@ -121,8 +133,13 @@ export function checkCryptoKillSwitches(ctx: EvalContext): CryptoKillSwitchState
   // Already tripped and not yet resumed — return current state without re-evaluating
   if (state.tripped) return { ...state };
 
-  // Trigger 1 — daily loss
-  const dayCutoff = now - DAILY_COOLDOWN_MS;
+  // After a manual reset, only count trades closed AFTER the reset.
+  // Without this, a reset is futile because the same historical losses
+  // re-trip the switch on the very next evaluation.
+  const resetCutoff = state.lastResetAt ? new Date(state.lastResetAt).getTime() : 0;
+
+  // Trigger 1 — daily loss (only since last reset, capped at 24h window)
+  const dayCutoff = Math.max(now - DAILY_COOLDOWN_MS, resetCutoff);
   const dailyPnl = ctx.closedTrades
     .filter(t => new Date(t.closedAt).getTime() >= dayCutoff)
     .reduce((s, t) => s + t.pnlUsd, 0);
@@ -150,10 +167,12 @@ export function checkCryptoKillSwitches(ctx: EvalContext): CryptoKillSwitchState
     }
   }
 
-  // Trigger 3 — consecutive losses
-  const sorted = [...ctx.closedTrades].sort((a, b) =>
-    new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime(),
-  );
+  // Trigger 3 — consecutive losses (only since last reset)
+  const sorted = [...ctx.closedTrades]
+    .filter(t => new Date(t.closedAt).getTime() >= resetCutoff)
+    .sort((a, b) =>
+      new Date(b.closedAt).getTime() - new Date(a.closedAt).getTime(),
+    );
   let consec = 0;
   for (const t of sorted) {
     if (t.pnlUsd <= 0) consec += 1;

@@ -589,7 +589,10 @@ cryptoAgentRouter.get('/kill-switch/state', async (_req, res) => {
 cryptoAgentRouter.post('/kill-switch/reset', async (_req, res) => {
   try {
     const { resetCryptoKillSwitch, getCryptoKillSwitchState } = await import('../services/ai/crypto-kill-switches.js');
-    resetCryptoKillSwitch();
+    const positionsValue = [...paperPortfolio.positions.values()]
+      .reduce((s, p) => s + p.qty * (p.currentPrice || p.avgEntry), 0);
+    const totalValue = paperPortfolio.cashUsd + positionsValue;
+    resetCryptoKillSwitch(totalValue);
     res.json({ data: getCryptoKillSwitchState() });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'kill-switch reset failed' });
