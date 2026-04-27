@@ -69,6 +69,8 @@ import { sportsBettingRouter } from './routes/sports-betting.js';
 import { startSportsEngine } from './services/sports-intelligence/sports-orchestrator.js';
 import { startCEXEngine, startDEXMomentumScanner } from './routes/crypto-agent.js';
 import { launchCoachRouter } from './routes/token-launch-coach.js';
+import { watchdogRouter } from './routes/watchdog.js';
+import { startWatchdog } from './services/watchdog/watchdog.js';
 import { startArbAgent } from './services/ai/arb-agent.js';
 
 const app: Express = express();
@@ -218,6 +220,7 @@ app.use('/api/v1/sports', devAuth, sportsBettingRouter);
 
 // --- Token Launch Coach (APEX Coaching Module) ---
 app.use('/api/v1/launch-coach', devAuth, launchCoachRouter);
+app.use('/api/v1/watchdog', devAuth, watchdogRouter);
 
 // --- Stock Intelligence (14-Engine Equities/Options/Macro) ---
 app.use('/api/v1/stocks-intel', devAuth, stockTradingRouter);
@@ -492,6 +495,9 @@ server.listen(PORT, HOST, () => {
   } else {
     logger.info('[Startup] Token Factory DISABLED (set ENABLE_TOKEN_FACTORY=true to enable)');
   }
+
+  // Watchdog runs last so all other engines have initialized first.
+  startWatchdog();
 });
 
 // Graceful shutdown
