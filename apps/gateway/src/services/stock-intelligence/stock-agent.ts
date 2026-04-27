@@ -145,18 +145,12 @@ export async function executeEquitySignal(signal: StockAgentSignal): Promise<boo
     return false;
   }
 
-  // Phase 5: kill switches — daily loss / max drawdown / consecutive losses.
-  {
-    const { checkKillSwitches } = await import('./kill-switches.js');
-    const ks = checkKillSwitches(state);
-    if (ks.tripped) {
-      logger.warn(
-        { symbol, reason: ks.reason, resumeAt: ks.resumeAt },
-        `[StockAgent] Kill switch active (${ks.reason}) — skip equity signal`,
-      );
-      return false;
-    }
-  }
+  // Phase 5: kill switches DISABLED for paper mode. The whole point of paper
+  // trading is to learn from outcomes — blocking trades on past loss patterns
+  // means we never get the data to improve. Endpoint /stocks/kill-switch is
+  // still wired up (the state is tracked in the audit trail) but it does not
+  // gate trades anymore. Re-enable for live trading by re-introducing this
+  // block + reading ENABLE_LIVE_EQUITIES=true.
 
   // Phase 2: sector-diversification gate. Reject if opening this symbol
   // would push its sector over the per-sector cap (default 2).
@@ -274,18 +268,8 @@ export async function executeOptionsSignal(signal: StockAgentSignal): Promise<bo
   const state = getLedger();
   const contractType: 'call' | 'put' = signal.action === 'buy' ? 'call' : 'put';
 
-  // Phase 5: kill switches apply to options too.
-  {
-    const { checkKillSwitches } = await import('./kill-switches.js');
-    const ks = checkKillSwitches(state);
-    if (ks.tripped) {
-      logger.warn(
-        { symbol, reason: ks.reason, resumeAt: ks.resumeAt },
-        `[StockAgent] Kill switch active (${ks.reason}) — skip option signal`,
-      );
-      return false;
-    }
-  }
+  // Phase 5: kill switches DISABLED for paper mode (see executeEquitySignal
+  // for rationale). State is still tracked, just not gating trades.
 
   // Dedup: one option position per (symbol, call/put).
   if (state.optionPositions.some(p => p.symbol === symbol && p.type === contractType)) {

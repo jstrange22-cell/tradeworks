@@ -960,24 +960,11 @@ export async function executeSignalTrade(signal: TradeSignal): Promise<boolean> 
     return false;
   }
 
-  // ── KILL SWITCH: circuit breaker on daily loss / max DD / consec losses ──
-  try {
-    const { checkCryptoKillSwitches } = await import('../services/ai/crypto-kill-switches.js');
-    const positionsValue = [...paperPortfolio.positions.values()]
-      .reduce((s, p) => s + p.qty * (p.currentPrice || p.avgEntry), 0);
-    const ks = checkCryptoKillSwitches({
-      paperCashUsd: paperPortfolio.cashUsd,
-      positionsValueUsd: positionsValue,
-      closedTrades: paperPortfolio.closedTrades,
-      startingCapital: PAPER_STARTING_CAPITAL,
-    });
-    if (ks.tripped) {
-      logger.info({ symbol: cleanSymbol, reason: ks.reason }, '[CryptoAgent] Kill switch tripped — skip');
-      return false;
-    }
-  } catch (err) {
-    logger.warn({ err: err instanceof Error ? err.message : err }, '[CryptoAgent] Kill switch check failed — continuing');
-  }
+  // KILL SWITCH DISABLED for paper mode. State is still tracked at the endpoint
+  // for observation, but it does not gate trades. Kill switches make sense for
+  // live trading where catastrophic loss is real — in paper, they prevent
+  // collecting the data we need to learn from. Re-enable when ENABLE_LIVE_*
+  // is flipped on and real money is at stake.
 
   // ── CATEGORY CAP: diversification gate (max 3 per category) ──
   try {
