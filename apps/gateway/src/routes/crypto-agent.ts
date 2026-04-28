@@ -969,7 +969,10 @@ export async function executeSignalTrade(signal: TradeSignal): Promise<boolean> 
   // ── CATEGORY CAP: diversification gate (max 3 per category) ──
   try {
     const { canOpenCryptoPosition } = await import('../services/ai/crypto-category-map.js');
-    const catGate = canOpenCryptoPosition(cleanSymbol, [...paperPortfolio.positions.values()]);
+    // Tightened from 3 → 2 per category after Apr 28 audit. With 5 categories
+    // (major/L1/defi/memecoin/L2_infra) this caps total at ~10 (plus 'other').
+    const cryptoCatCap = parseInt(process.env.CRYPTO_CATEGORY_CAP ?? '2', 10);
+    const catGate = canOpenCryptoPosition(cleanSymbol, [...paperPortfolio.positions.values()], cryptoCatCap);
     if (!catGate.allowed) {
       logger.info({ symbol: cleanSymbol, reason: catGate.reason }, '[CryptoAgent] Category cap — skip');
       return false;
