@@ -173,10 +173,15 @@ export async function scanWatchlist(): Promise<{
   const stockItems = items.filter(i => i.chain === 'stock');
   const nonStockItems = items.filter(i => i.chain !== 'stock');
 
+  // Phase 1 reset (Apr 2026): the user's paid TradeVisor Pine indicator is
+  // the source of truth for stock signals. Internal JS port was the source
+  // of our 18% WR. Skip the stock scan entirely when DISABLE_INTERNAL_STOCK_SCAN=true.
+  const stockScanDisabled = process.env.DISABLE_INTERNAL_STOCK_SCAN === 'true';
+
   const [stockResults, nonStockResults] = await Promise.all([
-    stockItems.length > 0
-      ? analyzeTickersStockBatched(stockItems.map(i => i.ticker))
-      : Promise.resolve([] as TradevisorResult[]),
+    stockScanDisabled || stockItems.length === 0
+      ? Promise.resolve([] as TradevisorResult[])
+      : analyzeTickersStockBatched(stockItems.map(i => i.ticker)),
     nonStockItems.length > 0
       ? runTradevisorScan(nonStockItems)
       : Promise.resolve([] as TradevisorResult[]),

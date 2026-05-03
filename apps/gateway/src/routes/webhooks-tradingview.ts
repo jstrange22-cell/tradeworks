@@ -27,6 +27,10 @@ const AlertSchema = z.object({
   time: z.string().optional(),
   exchange: z.string().optional(),
   timeframe: z.string().optional(),
+  // TradeVisor-specific quality fields. User sets these in the TV alert
+  // message body so the bot knows signal grade for sizing decisions.
+  score: z.number().int().min(0).max(6).optional(),
+  grade: z.enum(['standard', 'strong', 'prime', 'reject']).optional(),
 });
 
 type NormalizedAlert = {
@@ -139,17 +143,40 @@ tradingviewWebhookRouter.post('/', async (req, res) => {
     }
   } catch { /* executeSignalTrade not loaded */ }
 
-  // ── DIRECT TRADE: TV signal triggers stock engine paper trade ────────
-  // Detect if this is a stock symbol (no USDT/USD suffix, 1-5 chars)
+  // ── PHASE 1: TradingView TradeVisor → stock-agent direct execution ────
+  // The user runs the actual TradeVisor Pine Script on TradingView. Alerts
+  // fire here. We route to stock-agent which handles sizing/exits/persistence
+  // exactly like our other signal sources, but the SOURCE OF TRUTH is the
+  // user's paid Pine indicator — not our JS reimplementation.
+  //
+  // Stock symbols: alphabetic 1-5 chars, NOT in the crypto blue-chip list above.
   try {
-    const cleanSymbol = alert.symbol.replace('USDT', '').replace('USD', '');
-    const isLikelyStock = /^[A-Z]{1,5}$/.test(cleanSymbol) && !cleanSymbol.match(/^(BTC|ETH|SOL|AVAX|LINK|DOGE|ADA|DOT|XRP|MATIC|NEAR|SUI)$/);
+    const stockSymbol = alert.symbol.replace('USDT', '').replace('USD', '').replace('-', '');
+    const isLikelyStock = /^[A-Z]{1,5}$/.test(stockSymbol) && !CEX_BLUE_CHIPS.has(stockSymbol);
     if (isLikelyStock) {
-      logger.info({ symbol: cleanSymbol, action: alert.action }, `[TradingView] Stock signal detected: ${cleanSymbol} — will execute on next stock scan cycle`);
-      // For now, the signal goes through APEX Bridge → stock orchestrator on next scan
-      // Direct stock paper trade execution will use Alpaca paper API
+      const { executeEquitySignal, executeEquitySellSignal } = await import('../services/stock-intelligence/stock-agent.js');
+      // Map TV action 'buy'/'sell'. Default score=4 (passes the standard gate)
+      // and grade='standard' if the user didn't include them in the payload.
+      const score = raw.score ?? 4;
+      const grade = raw.grade ?? 'standard';
+      const tvSignal = {
+        ticker: stockSymbol,
+        action: alert.action,
+        price: alert.price ?? 0,
+        score,
+        grade,
+      };
+      const fired = alert.action === 'sell'
+        ? await executeEquitySellSignal(tvSignal)
+        : await executeEquitySignal(tvSignal);
+      logger.info(
+        { symbol: stockSymbol, action: alert.action, price: alert.price, score, grade, fired },
+        `[TradingView→Stock] ${alert.action.toUpperCase()} ${stockSymbol} (${grade}/${score}) — ${fired ? 'EXECUTED' : 'rejected by gates'}`,
+      );
     }
-  } catch { /* stock engine not loaded */ }
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : err }, '[TradingView→Stock] dispatch failed');
+  }
 
   // ── Feed signal to Crypto Agent (ALL assets) ───────────────────────
   try {
