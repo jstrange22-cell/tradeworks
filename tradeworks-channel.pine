@@ -1,0 +1,73 @@
+// TradeWorks AI Signal Channel — TradeVisor Style
+// Add this to TradingView: Open chart → Indicators → Pine Editor → Paste → Save & Add to chart
+// Version: Pine Script v5
+
+//@version=5
+indicator("TradeWorks AI Channel", overlay=true, max_lines_count=500, max_labels_count=500)
+
+// ─── Inputs ────────────────────────────────────────────────────────────────
+emaLen   = input.int(12,  "EMA Length",  minval=1)
+atrLen   = input.int(14,  "ATR Length",  minval=1)
+atrMult  = input.float(1.0, "ATR Multiplier", minval=0.1, step=0.1)
+showBuySell = input.bool(true, "Show BUY / SELL Markers")
+
+// ─── Calculations ──────────────────────────────────────────────────────────
+mid   = ta.ema(close, emaLen)
+atr   = ta.atr(atrLen) * atrMult
+upper = mid + atr
+lower = mid - atr
+
+// ─── Channel fills (two-tone band) ─────────────────────────────────────────
+upperPlot = plot(upper, color=color.new(color.green, 60), linewidth=1,  title="Upper Band")
+midPlot   = plot(mid,   color=color.new(color.red,   0),  linewidth=2,  title="EMA Midline")
+lowerPlot = plot(lower, color=color.new(color.maroon,40), linewidth=1,  title="Lower Band")
+
+// Green fill between upper and mid (bullish zone)
+fill(upperPlot, midPlot, color=color.new(color.green, 80), title="Bullish Zone")
+
+// Red fill between mid and lower (bearish zone)
+fill(midPlot, lowerPlot, color=color.new(color.red, 82), title="Bearish Zone")
+
+// ─── Signal logic (mirrors TradeWorks AI engine) ───────────────────────────
+rsiVal  = ta.rsi(close, 14)
+[macdLine, signalLine, _] = ta.macd(close, 12, 26, 9)
+[stochK, stochD] = ta.stoch(close, high, low, 14), ta.ema(ta.stoch(close, high, low, 14), 3)
+
+// SuperTrend direction
+[_, stDir] = ta.supertrend(3.0, 10)
+
+// Score components
+trendScore   = stDir == 1 ? 0.5 : -0.5
+momentumScore = macdLine > signalLine ? 0.35 : -0.35
+rsiScore     = rsiVal < 30 ? 0.3 : rsiVal > 70 ? -0.3 : 0.0
+score = trendScore * 0.35 + momentumScore * 0.30 + rsiScore * 0.30
+
+buySignal  = score > 0.2  and ta.crossover(score,  0.2)
+sellSignal = score < -0.2 and ta.crossunder(score, -0.2)
+
+// ─── Markers ───────────────────────────────────────────────────────────────
+if showBuySell
+    if buySignal
+        label.new(bar_index, low,  "BUY 📈",  style=label.style_label_up,
+                  color=color.new(color.green, 0), textcolor=color.white, size=size.normal)
+    if sellSignal
+        label.new(bar_index, high, "SELL 🔥", style=label.style_label_down,
+                  color=color.new(color.red,   0), textcolor=color.white, size=size.normal)
+
+// ─── Table: current signal ─────────────────────────────────────────────────
+var table sigTable = table.new(position.top_right, 2, 4,
+     bgcolor=color.new(color.navy, 10), border_color=color.new(color.blue, 40), border_width=1)
+
+direction  = score > 0.15 ? "▲ BUY"  : score < -0.15 ? "▼ SELL" : "— HOLD"
+dirColor   = score > 0.15 ? color.green : score < -0.15 ? color.red : color.gray
+confPct    = math.round(math.abs(score) * 200)
+
+table.cell(sigTable, 0, 0, "AI SIGNAL",  text_color=color.new(color.white, 20), text_size=size.small)
+table.cell(sigTable, 1, 0, direction,    text_color=dirColor,                   text_size=size.small)
+table.cell(sigTable, 0, 1, "Confidence", text_color=color.new(color.white, 30), text_size=size.tiny)
+table.cell(sigTable, 1, 1, str.tostring(confPct) + "%", text_color=dirColor,   text_size=size.tiny)
+table.cell(sigTable, 0, 2, "Entry",      text_color=color.new(color.white, 30), text_size=size.tiny)
+table.cell(sigTable, 1, 2, str.tostring(math.round(close, 2)), text_color=color.white, text_size=size.tiny)
+table.cell(sigTable, 0, 3, "EMA / ATR", text_color=color.new(color.white, 30), text_size=size.tiny)
+table.cell(sigTable, 1, 3, str.tostring(math.round(mid, 1)) + " / " + str.tostring(math.round(atr, 1)),
+           text_color=color.new(color.white, 10), text_size=size.tiny)
