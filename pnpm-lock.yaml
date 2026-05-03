@@ -22,6 +22,31 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  apps/alert-manager:
+    dependencies:
+      chrome-remote-interface:
+        specifier: ^0.33.2
+        version: 0.33.3(bufferutil@4.1.0)
+      dotenv:
+        specifier: ^16.4.0
+        version: 16.6.1
+      pino:
+        specifier: ^10.3.1
+        version: 10.3.1
+      pino-pretty:
+        specifier: ^13.1.3
+        version: 13.1.3
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.39
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   apps/dashboard:
     dependencies:
       '@react-oauth/google':

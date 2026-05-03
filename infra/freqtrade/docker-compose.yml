@@ -1,0 +1,44 @@
+version: '3'
+
+# FreqTrade — automated crypto trading bot for the CEX side of TradeWorks.
+# Replaces the in-house crypto-agent.ts paper engine.
+#
+# The strategy at user_data/strategies/TradeVisorBridge.py listens for forced
+# entries pushed via FreqTrade's REST API (the gateway forwards TradeVisor
+# webhook signals to FreqTrade, FreqTrade executes the trade against
+# Coinbase). This keeps the gateway as the single signal source while
+# letting FreqTrade handle the execution + position management + risk.
+#
+# Deploy:
+#   ssh root@76.13.120.114
+#   cd /opt/tradeworks/infra/freqtrade
+#   cp config.example.json config.json   # then edit with real Coinbase keys
+#   docker compose up -d
+#   docker compose logs -f freqtrade
+#
+# REST API will be available at http://VPS:8080 — set FREQTRADE_API_URL in
+# the gateway .env to forward TradeVisor signals.
+
+services:
+  freqtrade:
+    image: freqtradeorg/freqtrade:stable
+    container_name: tradeworks-freqtrade
+    restart: unless-stopped
+    volumes:
+      - ./user_data:/freqtrade/user_data
+      - ./config.json:/freqtrade/config.json:ro
+    ports:
+      # Bind only to localhost so the API isn't exposed publicly. Gateway
+      # connects via http://localhost:8080. To expose it, change to "8080:8080"
+      # and add nginx/SSL.
+      - "127.0.0.1:8080:8080"
+    command: >
+      trade
+      --logfile /freqtrade/user_data/logs/freqtrade.log
+      --db-url sqlite:////freqtrade/user_data/tradesv3.sqlite
+      --config /freqtrade/config.json
+      --strategy TradeVisorBridge
+    environment:
+      # If you want Telegram notifications, set TELEGRAM_TOKEN + TELEGRAM_CHAT_ID
+      # in your .env or here. Skipped by default.
+      - TZ=America/New_York
