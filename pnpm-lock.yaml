@@ -218,6 +218,9 @@ importers:
       pino-http:
         specifier: ^11.0.0
         version: 11.0.0
+      pino-pretty:
+        specifier: ^13.1.3
+        version: 13.1.3
       prom-client:
         specifier: ^15.1.3
         version: 15.1.3
@@ -267,9 +270,6 @@ importers:
       '@types/ws':
         specifier: ^8.5.13
         version: 8.18.1
-      pino-pretty:
-        specifier: ^13.1.3
-        version: 13.1.3
       supertest:
         specifier: ^7.2.2
         version: 7.2.2
@@ -304,6 +304,31 @@ importers:
       '@types/ws':
         specifier: ^8.5.13
         version: 8.18.1
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  apps/tv-bridge:
+    dependencies:
+      chrome-remote-interface:
+        specifier: ^0.33.2
+        version: 0.33.3(bufferutil@4.1.0)
+      dotenv:
+        specifier: ^16.4.0
+        version: 16.6.1
+      pino:
+        specifier: ^10.3.1
+        version: 10.3.1
+      pino-pretty:
+        specifier: ^13.1.3
+        version: 13.1.3
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.39
       tsx:
         specifier: ^4.19.0
         version: 4.21.0
@@ -2290,6 +2315,9 @@ packages:
   '@types/node@12.20.55':
     resolution: {integrity: sha512-J8xLz7q2OFulZ2cyGTLE1TbbZcjpno7FaN6zdJNrgAdrJ+DZzh/uFR6YrTb4C+nXakvud8Q4+rbhoIWlYQbUFQ==}
 
+  '@types/node@20.19.39':
+    resolution: {integrity: sha512-orrrD74MBUyK8jOAD/r0+lfa1I2MO6I+vAkmAWzMYbCcgrN4lCrmK52gRFQq/JRxfYPfonkr4b0jcY7Olqdqbw==}
+
   '@types/node@22.19.13':
     resolution: {integrity: sha512-akNQMv0wW5uyRpD2v2IEyRSZiR+BeGuoB6L310EgGObO44HSMNT8z1xzio28V8qOrgYaopIDNA18YgdXd+qTiw==}
 
@@ -2878,6 +2906,10 @@ packages:
     engines: {node: '>=12.13.0'}
     hasBin: true
 
+  chrome-remote-interface@0.33.3:
+    resolution: {integrity: sha512-zNnn0prUL86Teru6UCAZ1yU1XeXljHl3gj7OrfPcarEfU62OUU4IujDPdTDW3dAWwRqN3ZMG/Chhkh2gPL/wiw==}
+    hasBin: true
+
   chromium-edge-launcher@0.2.0:
     resolution: {integrity: sha512-JfJjUnq25y9yg4FABRRVPmBGWPZZi+AQXT4mxupb67766/0UlhG8PAZCz6xzEMXTbW3CsSoE8PcCWA49n35mKg==}
 
@@ -2938,6 +2970,9 @@ packages:
   commander@14.0.3:
     resolution: {integrity: sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw==}
     engines: {node: '>=20'}
+
+  commander@2.11.0:
+    resolution: {integrity: sha512-b0553uYA5YAEGgyYIGYROzKQ7X5RAqedkfjiZxwi0kL1g3bOaBNNZfYkzt/CL0umgD5wc9Jec2FbB98CjkMRvQ==}
 
   commander@2.20.3:
     resolution: {integrity: sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ==}
@@ -7175,6 +7210,10 @@ snapshots:
 
   '@types/node@12.20.55': {}
 
+  '@types/node@20.19.39':
+    dependencies:
+      undici-types: 6.21.0
+
   '@types/node@22.19.13':
     dependencies:
       undici-types: 6.21.0
@@ -8219,6 +8258,14 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  chrome-remote-interface@0.33.3(bufferutil@4.1.0):
+    dependencies:
+      commander: 2.11.0
+      ws: 7.5.10(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
   chromium-edge-launcher@0.2.0:
     dependencies:
       '@types/node': 22.19.13
@@ -8281,6 +8328,8 @@ snapshots:
   commander@14.0.1: {}
 
   commander@14.0.3: {}
+
+  commander@2.11.0: {}
 
   commander@2.20.3: {}
 
