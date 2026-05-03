@@ -28,12 +28,27 @@ and only fires on labels with higher ids.
 
 Done once per machine — it's already wired up. Re-run if migrating to a new box:
 
-1. **Launch TradingView with CDP debug port.** TV must be running with
-   `--remote-debugging-port=9222` for the bridge to attach.
-   ```cmd
-   "C:\Users\<you>\Desktop\Claude Desk\tradingview-mcp\scripts\launch_tv_debug.bat"
+1. **TradingView auto-launch on logon.** A Windows scheduled task named
+   `TradeWorks-TV-Debug-Launch` runs `scripts/launch_tv_debug.ps1` at every
+   user logon. The script finds TradingView (including MSIX/Microsoft Store
+   installs under `C:\Program Files\WindowsApps\TradingView.Desktop_*`),
+   kills any existing instance, relaunches with `--remote-debugging-port=9222`,
+   and polls CDP until ready. Logs to `%LOCALAPPDATA%\TradeWorks-TV-Launch.log`.
+
+   To re-create the task on a new machine:
+   ```powershell
+   $ps1 = 'C:\path\to\tradeworks\scripts\launch_tv_debug.ps1'
+   $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ps1`""
+   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+   $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -StartWhenAvailable
+   $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
+   Register-ScheduledTask -TaskName 'TradeWorks-TV-Debug-Launch' -Action $action -Trigger $trigger -Settings $settings -Principal $principal
    ```
-   Re-run after every reboot or any time you close TV. Idempotent.
+
+   To trigger on demand (e.g. after manually closing TV):
+   ```powershell
+   Start-ScheduledTask -TaskName 'TradeWorks-TV-Debug-Launch'
+   ```
 
 2. **Bridge install** (already done):
    ```cmd
@@ -85,6 +100,22 @@ All env vars live in `apps/tv-bridge/.env`:
 | `BRIDGE_STATE_FILE` | `./data/state.json` | Per-symbol bookmark file |
 | `DRY_RUN` | `false` | Set `true` to log signals without POSTing |
 | `LOG_LEVEL` | `info` | `trace`, `debug`, `info`, `warn`, `error` |
+
+## Multi-asset support (CEX / DEX / Stocks)
+
+The bridge sends signals through a single webhook URL. The gateway routes
+by symbol shape, so the same bridge process handles all three asset classes
+— just switch the chart in TradingView to the asset you want to trade.
+
+| Chart symbol example | Bridge POSTs | Gateway routes to | Engine |
+|---|---|---|---|
+| `NASDAQ:AAPL`, `AMEX:SPY` | `AAPL`, `SPY` | `executeEquitySignal` (matches `/^[A-Z]{1,5}$/`) | Alpaca paper (stock-agent) |
+| `COINBASE:BTCUSD`, `BINANCE:ETHUSDT` | `BTCUSD`, `ETHUSDT` | `executeCEXTradeFromTV` (after stripping USD/USDT, matches BTC/ETH/etc) | Coinbase paper |
+| `DEX:WHATEVER` (Solana memecoin) | the symbol | `executeSignalTrade` + Jupiter resolve | DEX swap (sniper) |
+
+CEX blue-chip whitelist (gateway hardcoded): BTC, ETH, SOL, XRP, ADA, DOT,
+LINK, AVAX, MATIC, ATOM, UNI, AAVE, LTC, DOGE, SHIB, NEAR, SUI, ARB, OP, FIL.
+Anything matching one of these (after USD/USDT strip) takes the CEX path.
 
 ## Signal classification
 
