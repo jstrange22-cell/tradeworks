@@ -71,6 +71,7 @@ import { startCEXEngine, startDEXMomentumScanner } from './routes/crypto-agent.j
 import { launchCoachRouter } from './routes/token-launch-coach.js';
 import { watchdogRouter } from './routes/watchdog.js';
 import { startWatchdog } from './services/watchdog/watchdog.js';
+import { scoutRouter } from './routes/scout.js';
 import { startArbAgent } from './services/ai/arb-agent.js';
 
 const app: Express = express();
@@ -221,6 +222,7 @@ app.use('/api/v1/sports', devAuth, sportsBettingRouter);
 // --- Token Launch Coach (APEX Coaching Module) ---
 app.use('/api/v1/launch-coach', devAuth, launchCoachRouter);
 app.use('/api/v1/watchdog', devAuth, watchdogRouter);
+app.use('/api/v1/scout', devAuth, scoutRouter);
 
 // --- Stock Intelligence (14-Engine Equities/Options/Macro) ---
 app.use('/api/v1/stocks-intel', devAuth, stockTradingRouter);

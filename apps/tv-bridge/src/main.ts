@@ -1,17 +1,22 @@
 /**
  * TradingView → TradeWorks Webhook Bridge
  * --------------------------------------
- * Reads pine_labels drawn by the APEX Webhook Bridge indicator on the user's
- * active chart via Chrome DevTools Protocol (port 9222) and POSTs each new
- * BUY/SELL label to the TradeWorks gateway webhook.
+ * Reads pine_labels drawn by the APEX Webhook Bridge indicator and POSTs each
+ * new BUY/SELL label to the gateway webhook.
  *
- * This complements TradingView's server-side alert webhooks by letting the
- * user run real TradeVisor signals through the bot WITHOUT manually configuring
- * an alert per ticker. Whatever symbol the user has on their chart is what
- * gets monitored — switch tickers in TV, the bridge follows.
+ * Two modes:
+ *
+ *   AUTO_ROTATE=true (default):  pulls the AI scout's watchlist from the
+ *     gateway, programmatically switches the chart through every ticker in
+ *     turn (chart_set_symbol → settle → read labels → next), per-ticker
+ *     baselined so nothing replays.
+ *
+ *   AUTO_ROTATE=false:  legacy mode — only monitors whatever symbol is
+ *     currently loaded on the chart. The user picks tickers manually.
  *
  * REQUIRES: TradingView Desktop launched with --remote-debugging-port=9222
- * (use scripts/launch_tv_debug.bat or equivalent).
+ * (the TradeWorks-TV-Debug-Launch scheduled task handles that automatically
+ * at every Windows logon).
  */
 import 'dotenv/config';
 import { resolve } from 'path';
@@ -19,24 +24,29 @@ import pino from 'pino';
 import { evaluate, disconnect } from './cdp.js';
 import { loadState, saveState, key, type BridgeState } from './state.js';
 import { postSignal, type WebhookSignal } from './webhook.js';
+import { getWatchlist, type WatchlistEntry } from './watchlist.js';
 
 // ── Config ──────────────────────────────────────────────────────────────
 const WEBHOOK_URL = process.env['TRADINGVIEW_WEBHOOK_URL'];
-const POLL_INTERVAL_MS = Number(process.env['POLL_INTERVAL_MS'] ?? 30_000);
-// The Pine indicator whose labels we read. Defaults to "APEX Webhook Bridge"
-// because that's what the user has wired to draw "BUY B"/"SELL A" labels.
-// To use TradeVisor V2 directly instead, point this at "Tradevisor V2" — but
-// only if that script's signals are emitted as label.new() (they currently
-// aren't; TradeVisor V2 uses alertcondition() + plotshape() which don't
-// surface in pine_labels).
+const WATCHLIST_URL =
+  process.env['SCOUT_WATCHLIST_URL'] ?? 'https://ai.pulsiq.ai/api/v1/scout/watchlist';
+const AUTO_ROTATE = (process.env['AUTO_ROTATE'] ?? 'true') === 'true';
+// Cycle pacing. SETTLE_MS = how long after switching symbol before reading
+// labels — TV needs this for the indicator to recompute on the new ticker.
+// CYCLE_GAP_MS = brief pause between tickers to avoid hammering CDP.
+const SETTLE_MS = Number(process.env['SETTLE_MS'] ?? 5_000);
+const CYCLE_GAP_MS = Number(process.env['CYCLE_GAP_MS'] ?? 500);
+// Sleep between full watchlist cycles. With 50 tickers × ~5.5s = ~5min sweep,
+// then idle for FULL_CYCLE_REST_MS before starting again.
+const FULL_CYCLE_REST_MS = Number(process.env['FULL_CYCLE_REST_MS'] ?? 30_000);
+// Single-chart legacy mode poll interval.
+const SINGLE_POLL_MS = Number(process.env['POLL_INTERVAL_MS'] ?? 30_000);
+// The Pine indicator whose labels we read.
 const INDICATOR_NAME = process.env['BRIDGE_INDICATOR_NAME'] ?? 'APEX Webhook Bridge';
 const STATE_FILE = resolve(process.env['BRIDGE_STATE_FILE'] ?? './data/state.json');
 const DRY_RUN = process.env['DRY_RUN'] === 'true';
 
 const log = pino({
-  // Pretty-print only when running interactively (TTY). Under pm2 the stdout
-  // is piped, not a TTY — write plain JSON so pm2's log capture doesn't lose
-  // anything to a transport worker.
   ...(process.stdout.isTTY && process.env['PINO_PRETTY'] !== 'false'
     ? { transport: { target: 'pino-pretty', options: { colorize: true, translateTime: 'HH:MM:ss' } } }
     : {}),
@@ -49,8 +59,6 @@ if (!WEBHOOK_URL) {
 }
 
 // ── Pine label fetcher ──────────────────────────────────────────────────
-// Mirrors the buildGraphicsJS pattern from tradingview-mcp/src/core/data.js
-// so we don't need the MCP server running — we drive CDP directly.
 function buildPineLabelsJS(filter: string): string {
   const filterLit = JSON.stringify(filter);
   return `
@@ -123,17 +131,45 @@ async function readPineLabels(filter: string): Promise<PollResult> {
   return evaluate<PollResult>(buildPineLabelsJS(filter));
 }
 
+/**
+ * Programmatically switch the active chart's symbol via TV's exposed widget API.
+ * Equivalent to typing a ticker in the symbol search box.
+ */
+async function setChartSymbol(tvSymbol: string): Promise<{ ok: boolean; error?: string }> {
+  const expr = `
+    (function() {
+      try {
+        var w = window.TradingViewApi._activeChartWidgetWV.value();
+        if (!w || !w._chartWidget) return { ok: false, error: 'no chart widget' };
+        var chart = w._chartWidget;
+        // chart.setSymbol(symbol, opts?, callback?) — we fire-and-forget; the
+        // poll waits SETTLE_MS for indicator recompute regardless.
+        if (typeof chart.setSymbol === 'function') {
+          chart.setSymbol(${JSON.stringify(tvSymbol)});
+          return { ok: true };
+        }
+        // Fallback path: chartWidgetCollection.setSymbol applies to active chart
+        var cwc = window.TradingViewApi._chartWidgetCollection;
+        if (cwc && typeof cwc.setSymbol === 'function') {
+          cwc.setSymbol(${JSON.stringify(tvSymbol)});
+          return { ok: true };
+        }
+        return { ok: false, error: 'no setSymbol method found' };
+      } catch(e) {
+        return { ok: false, error: (e && e.message) ? e.message : String(e) };
+      }
+    })()
+  `;
+  return evaluate<{ ok: boolean; error?: string }>(expr);
+}
+
 // ── Signal classification ──────────────────────────────────────────────
-// APEX Webhook Bridge labels look like "BUY B", "SELL A", "BUY A", "SELL B".
-// Empirically: A-suffix is the higher-quality variant, B-suffix is standard.
-// This matches TradeVisor's grade hierarchy where 5+/6 = strong, 4/6 = standard.
 function classifyLabel(text: string): { action: 'buy' | 'sell'; grade: 'standard' | 'strong'; score: number } | null {
   const t = (text ?? '').trim().toUpperCase();
   if (!t) return null;
   const isBuy = t.startsWith('BUY');
   const isSell = t.startsWith('SELL');
   if (!isBuy && !isSell) return null;
-  // Detect quality variant from trailing letter token. Default to standard.
   const isStrong = / A\b/.test(t);
   return {
     action: isBuy ? 'buy' : 'sell',
@@ -142,7 +178,6 @@ function classifyLabel(text: string): { action: 'buy' | 'sell'; grade: 'standard
   };
 }
 
-// Strip exchange prefix ("AMEX:SPY" → "SPY") to match the gateway's symbol shape.
 function normalizeSymbol(rawSymbol: string): { symbol: string; exchange: string } {
   if (!rawSymbol) return { symbol: '', exchange: '' };
   const colonIdx = rawSymbol.indexOf(':');
@@ -153,8 +188,11 @@ function normalizeSymbol(rawSymbol: string): { symbol: string; exchange: string 
   };
 }
 
-// ── Main poll loop ──────────────────────────────────────────────────────
-async function poll(state: BridgeState): Promise<void> {
+// ── Per-ticker label processing ────────────────────────────────────────
+// Reads the current chart, fires webhooks for any new BUY/SELL labels.
+// On first sight of a (symbol|timeframe) it baselines the highest id without
+// firing — prevents historical replay.
+async function processCurrentChart(state: BridgeState): Promise<void> {
   const result = await readPineLabels(INDICATOR_NAME);
   if (result.error) {
     log.warn({ err: result.error }, 'CDP read failed (TV closed? chart not ready?)');
@@ -172,14 +210,9 @@ async function poll(state: BridgeState): Promise<void> {
   }
   const k = key(rawSymbol, resolution);
   const lastSeen = state.lastSeenIdByKey[k] ?? -1;
-
-  // Sort by id ascending to fire in chronological order.
   const sorted = [...matched.items].sort((a, b) => a.id - b.id);
   const fresh = sorted.filter((l) => l.id > lastSeen);
 
-  // First-run protection: if we've never tracked this symbol, capture the
-  // current max id without firing — we don't want to replay the entire chart's
-  // historical labels as fresh signals.
   if (lastSeen === -1) {
     const maxId = sorted.length > 0 ? sorted[sorted.length - 1]!.id : 0;
     state.lastSeenIdByKey[k] = maxId;
@@ -202,7 +235,6 @@ async function poll(state: BridgeState): Promise<void> {
     const text = lbl.raw.t ?? '';
     const cls = classifyLabel(text);
     if (!cls) {
-      log.debug({ text, id: lbl.id }, 'ignoring non-BUY/SELL label');
       state.lastSeenIdByKey[k] = lbl.id;
       continue;
     }
@@ -232,7 +264,6 @@ async function poll(state: BridgeState): Promise<void> {
         await postSignal(WEBHOOK_URL!, signal, log);
       } catch (err) {
         log.error({ err: err instanceof Error ? err.message : err, signal }, 'webhook POST threw');
-        // Don't update state on failure — retry on next tick.
         return;
       }
     }
@@ -241,14 +272,68 @@ async function poll(state: BridgeState): Promise<void> {
   }
 }
 
+// ── Auto-rotation cycle ─────────────────────────────────────────────────
+// Pulls the watchlist, switches the chart through each ticker in turn,
+// processes labels at each stop. ~5s per ticker → ~5min for a 50-name list.
+async function autoRotateCycle(state: BridgeState): Promise<void> {
+  const watchlist = await getWatchlist(WATCHLIST_URL, log);
+  if (watchlist.length === 0) {
+    log.warn(
+      { endpoint: WATCHLIST_URL },
+      'watchlist empty — falling back to current chart only this tick',
+    );
+    await processCurrentChart(state);
+    return;
+  }
+
+  log.info({ tickers: watchlist.length }, 'starting auto-rotate sweep');
+  const startedAt = Date.now();
+  let processed = 0;
+
+  for (const entry of watchlist) {
+    try {
+      const setRes = await setChartSymbol(entry.tvSymbol);
+      if (!setRes.ok) {
+        log.warn({ entry: entry.tvSymbol, err: setRes.error }, 'setSymbol failed — skipping');
+        continue;
+      }
+      // Wait for indicator to recompute on the new ticker.
+      await sleep(SETTLE_MS);
+      await processCurrentChart(state);
+      processed++;
+      // Brief gap between tickers.
+      await sleep(CYCLE_GAP_MS);
+    } catch (err) {
+      log.warn(
+        { entry: entry.tvSymbol, err: err instanceof Error ? err.message : err },
+        'cycle iteration failed',
+      );
+    }
+  }
+
+  const elapsedMs = Date.now() - startedAt;
+  log.info(
+    { processed, total: watchlist.length, elapsedSec: Math.round(elapsedMs / 1000) },
+    'auto-rotate sweep complete',
+  );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 // ── Entry point ─────────────────────────────────────────────────────────
 async function main(): Promise<void> {
   const state = loadState(STATE_FILE);
   log.info(
     {
+      mode: AUTO_ROTATE ? 'auto-rotate' : 'single-chart',
       webhookUrl: WEBHOOK_URL!.replace(/secret=[^&]+/, 'secret=***'),
+      watchlistUrl: AUTO_ROTATE ? WATCHLIST_URL : undefined,
       indicator: INDICATOR_NAME,
-      pollMs: POLL_INTERVAL_MS,
+      settleMs: SETTLE_MS,
+      cycleGapMs: CYCLE_GAP_MS,
+      fullCycleRestMs: FULL_CYCLE_REST_MS,
       stateFile: STATE_FILE,
       dryRun: DRY_RUN,
       symbolsTracked: Object.keys(state.lastSeenIdByKey).length,
@@ -269,11 +354,17 @@ async function main(): Promise<void> {
 
   while (!stopping) {
     try {
-      await poll(state);
+      if (AUTO_ROTATE) {
+        await autoRotateCycle(state);
+        await sleep(FULL_CYCLE_REST_MS);
+      } else {
+        await processCurrentChart(state);
+        await sleep(SINGLE_POLL_MS);
+      }
     } catch (err) {
-      log.error({ err: err instanceof Error ? err.message : err }, 'poll iteration failed');
+      log.error({ err: err instanceof Error ? err.message : err }, 'iteration failed');
+      await sleep(10_000);
     }
-    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
 }
 
