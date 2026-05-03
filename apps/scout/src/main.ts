@@ -31,6 +31,7 @@ import {
   type ScoredTicker,
 } from './scoring.js';
 import { claudeRerank, buildMarketContext } from './claude-rerank.js';
+import { fetchNewsForTickers, formatNewsForPrompt } from './news.js';
 
 // ── Config ──────────────────────────────────────────────────────────────
 const OUTPUT_FILE = resolve(process.env['SCOUT_OUTPUT_FILE'] ?? './data/watchlist.json');
@@ -130,8 +131,13 @@ async function refresh(): Promise<void> {
   const claudePool = rankAndTake(liquid, Math.min(60, liquid.length));
 
   // 5. Optional Claude rerank for qualitative diversification.
+  // News fetch is also optional (gated by FINNHUB_API_KEY). When both are
+  // available, headlines feed the Claude prompt so Claude can weight
+  // catalysts (earnings, FDA, M&A) alongside momentum/volatility.
   const marketContext = buildMarketContext(allScored);
-  const reranked = await claudeRerank(claudePool, STOCK_TARGET_COUNT, marketContext, log);
+  const news = await fetchNewsForTickers(claudePool.map((c) => c.ticker), log);
+  const newsBlock = formatNewsForPrompt(news);
+  const reranked = await claudeRerank(claudePool, STOCK_TARGET_COUNT, marketContext, newsBlock, log);
 
   let stockPicks: ScoredTicker[];
   let source: WatchlistFile['refreshSource'];

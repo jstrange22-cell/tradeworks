@@ -35,13 +35,13 @@ import { balancesRouter } from './routes/balances.js';
 import { assetProtectionRouter } from './routes/asset-protection.js';
 import { authRouter } from './routes/auth.js';
 import { solanaBalancesRouter } from './routes/solana-balances.js';
-import { solanaSwapRouter } from './routes/solana-swap.js';
-import { solanaScannerRouter } from './routes/solana-scanner.js';
-import { pumpFunRouter, initPumpFunMonitor } from './routes/solana-pumpfun.js';
-import { sniperRouter, autoStartSniper } from './routes/solana-sniper/index.js';
-import { whaleRouter } from './routes/solana-whales.js';
-import { moonshotRouter, initMoonshotScanner } from './routes/solana-moonshot.js';
-import { launchpadRouter, initLaunchpadMonitors } from './routes/solana-launchpads.js';
+// Solana DEX trading imports removed 2026-05-03 (Phase 2 cleanup).
+// Init helpers kept available behind ENABLE_SOLANA_SNIPER=true for the
+// optional re-enable path until the rebuild lands.
+import { initPumpFunMonitor } from './routes/solana-pumpfun.js';
+import { autoStartSniper } from './routes/solana-sniper/index.js';
+import { initMoonshotScanner } from './routes/solana-moonshot.js';
+import { initLaunchpadMonitors } from './routes/solana-launchpads.js';
 import { robinhoodRouter } from './routes/robinhood.js';
 import { polymarketRouter } from './routes/polymarket.js';
 import { journalRouter } from './routes/journal.js';
@@ -251,13 +251,24 @@ app.use('/api/v1/notifications', devAuth, notificationsRouter);
 
 // --- Solana Routes ---
 app.use('/api/v1/solana', devAuth, solanaBalancesRouter);
-app.use('/api/v1/solana', devAuth, solanaSwapRouter);
-app.use('/api/v1/solana', devAuth, solanaScannerRouter);
-app.use('/api/v1/solana', devAuth, pumpFunRouter);
-app.use('/api/v1/solana', devAuth, sniperRouter);
-app.use('/api/v1/solana', devAuth, whaleRouter);
-app.use('/api/v1/solana', devAuth, moonshotRouter);
-app.use('/api/v1/solana', devAuth, launchpadRouter);
+// Solana DEX trading routes DISABLED 2026-05-03.
+// The in-house sniper/pumpfun/moonshot/launchpad/whale/swap engines were:
+//   - Producing 18% WR / -91% paper drawdown (no winning edge)
+//   - Hammering Helius RPC + PumpPortal WS with 100s of 429s/min (~3GB/day spam)
+//   - Loss-making + log-bloating with no upside
+// Only solana-balances (read-only on-chain wallet reads) is kept.
+// Files remain in the tree pending cleanup; will be git-rm'd in a follow-up
+// once we're certain no cross-imports break (crypto-agent, intelligence,
+// apex-chat reference the modules).
+// A new Solana DEX bot is planned for Phase 3 with proper rate limiting +
+// validated strategy (see PHASE3 backlog).
+// app.use('/api/v1/solana', devAuth, solanaSwapRouter);
+// app.use('/api/v1/solana', devAuth, solanaScannerRouter);
+// app.use('/api/v1/solana', devAuth, pumpFunRouter);
+// app.use('/api/v1/solana', devAuth, sniperRouter);
+// app.use('/api/v1/solana', devAuth, whaleRouter);
+// app.use('/api/v1/solana', devAuth, moonshotRouter);
+// app.use('/api/v1/solana', devAuth, launchpadRouter);
 
 // --- API Documentation ---
 
@@ -325,23 +336,30 @@ server.listen(PORT, HOST, () => {
   initEngine();
 
   // Auto-start Solana monitors — pump.fun and moonshot run on public APIs (no wallet needed)
-  initPumpFunMonitor();
-  initMoonshotScanner();
-  initLaunchpadMonitors();
+  // Gated by ENABLE_SOLANA_SNIPER (default OFF). The in-house DEX/memecoin
+  // sniper produced 18% WR / -91% paper drawdown (see handoff) and was
+  // hammering Helius RPC + PumpPortal WS with hundreds of 429s/min, generating
+  // multi-GB log spam without producing winners. Disabled by default until
+  // a properly rate-limited / re-strategised version lands in Phase 3+.
+  // Webhook → CEX path for crypto blue chips (BTC, ETH, SOL, etc) is unaffected.
+  if (process.env['ENABLE_SOLANA_SNIPER'] === 'true') {
+    initPumpFunMonitor();
+    initMoonshotScanner();
+    initLaunchpadMonitors();
+    autoStartSniper();
+  }
 
-  // Auto-start the sniper engine so incoming tokens get evaluated immediately
-  autoStartSniper();
-
-  // Start wallet discovery — watches pump.fun trades to find profitable traders in real-time
-  import('./routes/solana-sniper/wallet-discovery.js').then(({ startWalletDiscovery, recordWalletBuy }) => {
-    startWalletDiscovery();
-    // Wire into pump.fun trade feed
-    import('./routes/solana-pumpfun.js').then(({ setWalletDiscoveryCallback }) => {
-      setWalletDiscoveryCallback(recordWalletBuy);
-      logger.info('[Startup] Wallet Discovery wired to pump.fun trade feed');
-    }).catch(() => { /* pumpfun not loaded */ });
-    logger.info('[Startup] Wallet Discovery engine STARTED');
-  }).catch(() => { /* module not ready */ });
+  // Wallet discovery depends on the pump.fun trade feed; only start when sniper is on.
+  if (process.env['ENABLE_SOLANA_SNIPER'] === 'true') {
+    import('./routes/solana-sniper/wallet-discovery.js').then(({ startWalletDiscovery, recordWalletBuy }) => {
+      startWalletDiscovery();
+      import('./routes/solana-pumpfun.js').then(({ setWalletDiscoveryCallback }) => {
+        setWalletDiscoveryCallback(recordWalletBuy);
+        logger.info('[Startup] Wallet Discovery wired to pump.fun trade feed');
+      }).catch(() => { /* pumpfun not loaded */ });
+      logger.info('[Startup] Wallet Discovery engine STARTED');
+    }).catch(() => { /* module not ready */ });
+  }
 
   // ── PHASE 1 STABILIZATION: All engines disabled by default ──
   // Set ENABLE_<ENGINE>=true in .env to re-enable one at a time after proving stability.

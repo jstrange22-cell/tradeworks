@@ -128,20 +128,11 @@ tradingviewWebhookRouter.post('/', async (req, res) => {
     } catch { /* CEX not loaded */ }
   }
 
-  // ── DEX TRADE: TV signal on non-blue-chip → crypto agent DEX execution ──
-  try {
-    const { executeSignalTrade } = await import('./crypto-agent.js');
-    if (!CEX_BLUE_CHIPS.has(cleanSymbol)) {
-      executeSignalTrade({
-        symbol: cleanSymbol,
-        action: normalizedAction as 'buy' | 'sell',
-        price: alert.price ?? 0,
-        source: 'tradingview',
-        confidence: 80,
-        reason: `Tradevisor ${normalizedAction.toUpperCase()}: ${alert.symbol} @ $${alert.price ?? 0}`,
-      });
-    }
-  } catch { /* executeSignalTrade not loaded */ }
+  // DEX path REMOVED 2026-05-03 — the in-house Solana DEX sniper produced
+  // 18% WR / -91% drawdown and is staying offline until rebuilt with proper
+  // rate-limiting + validated strategy (Phase 3 backlog). Webhook signals
+  // for non-blue-chip symbols now no-op on the crypto side; only equity
+  // (stock-agent) and CEX-blue-chip routing remains.
 
   // ── PHASE 1: TradingView TradeVisor → stock-agent direct execution ────
   // The user runs the actual TradeVisor Pine Script on TradingView. Alerts
@@ -192,40 +183,13 @@ tradingviewWebhookRouter.post('/', async (req, res) => {
     });
   } catch { /* crypto agent not loaded yet */ }
 
-  // ── Execute Solana Trades ──────────────────────────────────────────
-  // If this is a Solana token, resolve symbol → mint and trigger sniper
-  let execution: { status: string; mint?: string } | null = null;
-
-  if (alert.action === 'buy') {
-    try {
-      // Resolve symbol to Solana mint via Jupiter strict token list
-      const jupRes = await fetch(`https://api.jup.ag/tokens/v1/strict`, { signal: AbortSignal.timeout(5_000) });
-      if (jupRes.ok) {
-        const tokens = await jupRes.json() as Array<{ symbol: string; address: string; name: string }>;
-        const match = tokens.find(t => t.symbol.toUpperCase() === alert.symbol.replace('-USD', '').replace('USDT', '').toUpperCase());
-
-        if (match) {
-          logger.info({ symbol: alert.symbol, mint: match.address.slice(0, 12) }, '[TradingView] Resolved to Solana mint — executing buy');
-
-          const { executeBuySnipe } = await import('./solana-sniper/execution.js');
-          const result = await executeBuySnipe({
-            mint: match.address,
-            symbol: match.symbol,
-            name: match.name,
-            trigger: 'tradingview',
-          });
-          execution = { status: result?.status ?? 'unknown', mint: match.address };
-        }
-      }
-    } catch (err) {
-      logger.warn({ err: err instanceof Error ? err.message : err }, '[TradingView] Execution failed');
-    }
-  }
+  // Solana sniper execution REMOVED 2026-05-03 (Phase 2 cleanup, see comment
+  // at the DEX-path strip above). The in-house Jupiter-resolve + sniper
+  // engine stays offline pending a rebuild.
 
   res.status(200).json({
     ok: true,
     symbol: alert.symbol,
     action: alert.action,
-    execution: execution ?? undefined,
   });
 });

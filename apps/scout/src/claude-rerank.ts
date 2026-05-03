@@ -26,6 +26,7 @@ export async function claudeRerank(
   candidates: ScoredTicker[],
   targetCount: number,
   marketContext: string,
+  newsBlock: string,
   log: Logger,
 ): Promise<RerankResult | null> {
   const apiKey = process.env['ANTHROPIC_API_KEY'];
@@ -45,21 +46,24 @@ export async function claudeRerank(
     )
     .join('\n');
 
+  const newsSection = newsBlock ? `\n\n${newsBlock}\n` : '';
   const prompt = `You are a momentum trading scout. Pick the ${targetCount} tickers most likely to fire actionable BUY or SELL signals from a TradeVisor V2 indicator (Keltner-channel pullback engine, rewards range expansion + momentum continuation) over the next 4-8 hours of market action.
 
 ${marketContext}
 
 Candidate pool (already filtered by liquidity, ranked by composite momentum + volatility expansion):
-${candidateLines}
+${candidateLines}${newsSection}
 
-Selection priorities:
+Selection priorities (in order):
 1. Strong directional momentum (high |rs20d|) with continuing volatility expansion (atrExp > 1.0)
-2. Diversify across sectors — don't pick 10 tech names at the expense of finance/health/energy
-3. Slight bias toward names with stronger 5-day RS (recency) when 20-day RS is similar
-4. Avoid names where momentum and volatility tell conflicting stories (e.g. high RS but contracting ATR — likely topping)
+2. Catalysts in the news (earnings, FDA approvals, M&A, analyst upgrades/downgrades, regulatory changes) — pull these ahead of pure momentum names if news is fresh and material
+3. Diversify across sectors — don't pick 10 tech names at the expense of finance/health/energy
+4. Slight bias toward names with stronger 5-day RS (recency) when 20-day RS is similar
+5. Avoid names where momentum and volatility tell conflicting stories (e.g. high RS but contracting ATR — likely topping)
+6. Avoid names with NEGATIVE catalysts (regulatory action, fraud, downgrade) unless the rs20d is also negative (i.e. you're using them as short candidates)
 
 Return ONLY a JSON object, no prose, in this exact shape:
-{"picks": ["TICKER1", "TICKER2", ...], "rationale": "one-sentence summary of theme"}
+{"picks": ["TICKER1", "TICKER2", ...], "rationale": "one-sentence summary of theme + any specific news drivers"}
 
 The "picks" array must contain exactly ${targetCount} ticker symbols, each from the candidate pool above.`;
 
