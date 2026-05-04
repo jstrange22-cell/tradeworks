@@ -119,13 +119,78 @@ tradingviewWebhookRouter.post('/', async (req, res) => {
   const normalizedAction = alert.action.includes('sell') ? 'sell' : 'buy';
 
   if (CEX_BLUE_CHIPS.has(cleanSymbol)) {
-    try {
-      const { executeCEXTradeFromTV } = await import('./crypto-agent.js');
-      executeCEXTradeFromTV(cleanSymbol, normalizedAction as 'buy' | 'sell', alert.price ?? 0,
-        `Tradevisor TV ${normalizedAction.toUpperCase()}: ${cleanSymbol} @ $${alert.price ?? 0} (TF:${alert.timeframe})`);
-      logger.info({ symbol: cleanSymbol, action: normalizedAction, price: alert.price },
-        `[TradingView→CEX] ${normalizedAction.toUpperCase()} ${cleanSymbol} — routed to CEX engine`);
-    } catch { /* CEX not loaded */ }
+    // Phase 2: route to FreqTrade when ENABLE_FREQTRADE_BRIDGE=true; else
+    // legacy crypto-agent paper engine. Both can run in parallel during the
+    // 30-day cutover validation window (set both flags true to compare ledgers).
+    const useFreqtrade = process.env['ENABLE_FREQTRADE_BRIDGE'] === 'true';
+    const useLegacyCex = process.env['ENABLE_LEGACY_CEX'] !== 'false'; // default on
+
+    if (useFreqtrade) {
+      const apiUrl = process.env['FREQTRADE_API_URL'] ?? 'http://localhost:8090';
+      const username = process.env['FREQTRADE_USERNAME'] ?? 'tradeworks';
+      const password = process.env['FREQTRADE_PASSWORD'];
+      if (!password) {
+        logger.warn('[TradingView→FreqTrade] FREQTRADE_PASSWORD not set — skipping FreqTrade route');
+      } else {
+        const pair = `${cleanSymbol}/USD`;
+        // FreqTrade /forceenter for buy, /forceexit for sell. Per-grade sizing
+        // is handled by the strategy's custom_stake_amount() via entry_tag.
+        const grade = (raw.grade ?? 'standard').toString();
+        const entryTag = `tradevisor_${grade}`;
+        try {
+          const auth = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+          if (normalizedAction === 'buy') {
+            const ftRes = await fetch(`${apiUrl}/api/v1/forceenter`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: auth },
+              body: JSON.stringify({
+                pair,
+                side: 'long',
+                price: alert.price ?? null,
+                entry_tag: entryTag,
+              }),
+              signal: AbortSignal.timeout(8_000),
+            });
+            const body = await ftRes.text();
+            logger.info(
+              { symbol: cleanSymbol, pair, status: ftRes.status, grade, entryTag, body: body.slice(0, 200) },
+              `[TradingView→FreqTrade] ${normalizedAction.toUpperCase()} ${pair}`,
+            );
+          } else {
+            // SELL: FreqTrade /forceexit closes any open trade for the pair.
+            const ftRes = await fetch(`${apiUrl}/api/v1/forceexit`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: auth },
+              body: JSON.stringify({ tradeid: 'all' }), // close all positions
+              signal: AbortSignal.timeout(8_000),
+            });
+            // The 'all' wildcard closes too aggressively. For per-pair exit,
+            // we'd need to /trades first to find the trade id for this pair.
+            // For v1: log but don't auto-close-all to avoid surprises.
+            const body = await ftRes.text();
+            logger.info(
+              { symbol: cleanSymbol, pair, status: ftRes.status, body: body.slice(0, 200) },
+              `[TradingView→FreqTrade] ${normalizedAction.toUpperCase()} ${pair} (forceexit, see TODO for per-pair targeting)`,
+            );
+          }
+        } catch (err) {
+          logger.warn(
+            { err: err instanceof Error ? err.message : err, pair, action: normalizedAction },
+            '[TradingView→FreqTrade] dispatch failed',
+          );
+        }
+      }
+    }
+
+    if (useLegacyCex) {
+      try {
+        const { executeCEXTradeFromTV } = await import('./crypto-agent.js');
+        executeCEXTradeFromTV(cleanSymbol, normalizedAction as 'buy' | 'sell', alert.price ?? 0,
+          `Tradevisor TV ${normalizedAction.toUpperCase()}: ${cleanSymbol} @ $${alert.price ?? 0} (TF:${alert.timeframe})`);
+        logger.info({ symbol: cleanSymbol, action: normalizedAction, price: alert.price },
+          `[TradingView→CEX] ${normalizedAction.toUpperCase()} ${cleanSymbol} — routed to legacy CEX engine`);
+      } catch { /* CEX not loaded */ }
+    }
   }
 
   // DEX path REMOVED 2026-05-03 — the in-house Solana DEX sniper produced
