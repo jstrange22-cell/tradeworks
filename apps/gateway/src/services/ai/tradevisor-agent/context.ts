@@ -174,18 +174,40 @@ async function fetchMacro(): Promise<MacroContext> {
   return { regime: 'unknown', spyRs5d: 0, spyRs20d: 0, notes: 'no macro source available' };
 }
 
-// ── Chart state via TV MCP (placeholder) ───────────────────────────────
-// The MCP runs in the user's local Claude Code session, NOT inside the
-// gateway process. The gateway can't directly call TV MCP tools. For v1 we
-// pass the bridge's most-recent label data through the signal payload instead
-// of re-querying TV. The IncomingSignal already carries enough chart context
-// (price + grade + sourceLabel from APEX bridge).
+// ── Chart state via tv-bridge HTTP endpoint ───────────────────────────
+// The TV MCP runs in the user's local Claude Code session, NOT in the
+// gateway process. So tv-bridge exposes a small HTTP server (chart-state-
+// server.ts) that the agent calls to get live chart state on demand.
 //
-// Phase 2 enhancement: add a small REST endpoint on the local tv-bridge that
-// the gateway can call to get current chart state on demand. For now we
-// return null and the reasoner relies on signal.price + grade.
-async function fetchChart(_symbol: string): Promise<ChartContext | null> {
-  return null;
+// CHART_STATE_URL points at that endpoint. If TV/the bridge is offline,
+// fetch fails fast and the reasoner just operates without chart context
+// (it'll downweight the decision but still proceed via SOUL guidance).
+async function fetchChart(symbol: string): Promise<ChartContext | null> {
+  const baseUrl = process.env['CHART_STATE_URL'];
+  if (!baseUrl) return null;
+  try {
+    const url = `${baseUrl.replace(/\/$/, '')}/chart-state?symbol=${encodeURIComponent(symbol)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { data?: { symbol?: string; resolution?: string; studies?: Array<{ name: string; values: Record<string, string | number> }>; pineLines?: number[]; pineLabels?: Array<{ text: string; price: number }>; error?: string } };
+    if (!json.data || json.data.error) return null;
+    const studyValues: Record<string, string | number> = {};
+    for (const s of json.data.studies ?? []) {
+      for (const [k, v] of Object.entries(s.values ?? {})) {
+        studyValues[`${s.name}.${k}`] = v;
+      }
+    }
+    return {
+      matchedSymbol: json.data.symbol ?? symbol,
+      resolution: json.data.resolution ?? '',
+      studyValues,
+      pineLabels: json.data.pineLabels ?? [],
+      pineLines: json.data.pineLines ?? [],
+    };
+  } catch (err) {
+    logger.debug({ err: err instanceof Error ? err.message : err, symbol }, '[TVAgent] chart-state fetch failed');
+    return null;
+  }
 }
 
 // ── Daily P&L vs limits ────────────────────────────────────────────────

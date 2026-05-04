@@ -125,7 +125,42 @@ tradingviewWebhookRouter.post('/', async (req, res) => {
     const useFreqtrade = process.env['ENABLE_FREQTRADE_BRIDGE'] === 'true';
     const useLegacyCex = process.env['ENABLE_LEGACY_CEX'] !== 'false'; // default on
 
-    if (useFreqtrade) {
+    // Reasoning gate (same agent as the stock path) — applies to BOTH FreqTrade
+    // and legacy CEX. In gate mode, an agent veto/escalate skips both engines.
+    const cexGrade: 'standard' | 'strong' | 'prime' =
+      raw.grade === 'strong' ? 'strong'
+      : raw.grade === 'prime' ? 'prime'
+      : 'standard';
+    const cexScore = raw.score ?? 4;
+    let cexAgentDecision: { verdict: 'approve' | 'veto' | 'escalate'; reasoning: string; id: string } | null = null;
+    let cexAgentMode: 'disabled' | 'shadow' | 'gate' = 'disabled';
+    try {
+      const { evaluateSignal, getAgentMode } = await import('../services/ai/tradevisor-agent/index.js');
+      cexAgentMode = getAgentMode();
+      const decision = await evaluateSignal({
+        symbol: cleanSymbol,
+        action: normalizedAction as 'buy' | 'sell',
+        price: alert.price ?? 0,
+        score: cexScore,
+        grade: cexGrade,
+        timeframe: alert.timeframe,
+        exchange: alert.exchange,
+        sourceLabel: (raw as Record<string, unknown>)['source_label'] as string | undefined,
+        receivedAt: alert.time,
+        assetClass: 'crypto-cex',
+      });
+      cexAgentDecision = { verdict: decision.verdict, reasoning: decision.reasoning, id: decision.id };
+    } catch (err) {
+      logger.warn({ err: err instanceof Error ? err.message : err, symbol: cleanSymbol }, '[TradingView→CEX] agent evaluate failed; proceeding without gate');
+    }
+    const cexShouldExecute =
+      cexAgentMode !== 'gate' || (cexAgentDecision?.verdict ?? 'approve') === 'approve';
+    if (!cexShouldExecute && cexAgentDecision) {
+      logger.info(
+        { symbol: cleanSymbol, action: normalizedAction, verdict: cexAgentDecision.verdict, decisionId: cexAgentDecision.id, reasoning: cexAgentDecision.reasoning.slice(0, 200) },
+        `[TradingView→CEX] ${normalizedAction.toUpperCase()} ${cleanSymbol} — SKIPPED by agent`,
+      );
+    } else if (useFreqtrade) {
       const apiUrl = process.env['FREQTRADE_API_URL'] ?? 'http://localhost:8090';
       const username = process.env['FREQTRADE_USERNAME'] ?? 'tradeworks';
       const password = process.env['FREQTRADE_PASSWORD'];
@@ -157,21 +192,34 @@ tradingviewWebhookRouter.post('/', async (req, res) => {
               `[TradingView→FreqTrade] ${normalizedAction.toUpperCase()} ${pair}`,
             );
           } else {
-            // SELL: FreqTrade /forceexit closes any open trade for the pair.
-            const ftRes = await fetch(`${apiUrl}/api/v1/forceexit`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: auth },
-              body: JSON.stringify({ tradeid: 'all' }), // close all positions
+            // SELL: look up the open trade for THIS pair, then /forceexit by id.
+            // Avoids the 'all' wildcard which would close every open trade.
+            const statusRes = await fetch(`${apiUrl}/api/v1/status`, {
+              method: 'GET',
+              headers: { Authorization: auth },
               signal: AbortSignal.timeout(8_000),
             });
-            // The 'all' wildcard closes too aggressively. For per-pair exit,
-            // we'd need to /trades first to find the trade id for this pair.
-            // For v1: log but don't auto-close-all to avoid surprises.
-            const body = await ftRes.text();
-            logger.info(
-              { symbol: cleanSymbol, pair, status: ftRes.status, body: body.slice(0, 200) },
-              `[TradingView→FreqTrade] ${normalizedAction.toUpperCase()} ${pair} (forceexit, see TODO for per-pair targeting)`,
-            );
+            if (!statusRes.ok) {
+              logger.warn({ pair, status: statusRes.status }, '[TradingView→FreqTrade] /status lookup failed before SELL');
+            } else {
+              const trades = (await statusRes.json()) as Array<{ trade_id: number; pair: string; is_open: boolean }>;
+              const match = Array.isArray(trades) ? trades.find((t) => t.pair === pair && t.is_open) : null;
+              if (!match) {
+                logger.info({ pair }, `[TradingView→FreqTrade] SELL ${pair} — no open trade to close`);
+              } else {
+                const ftRes = await fetch(`${apiUrl}/api/v1/forceexit`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', Authorization: auth },
+                  body: JSON.stringify({ tradeid: String(match.trade_id) }),
+                  signal: AbortSignal.timeout(8_000),
+                });
+                const body = await ftRes.text();
+                logger.info(
+                  { symbol: cleanSymbol, pair, tradeId: match.trade_id, status: ftRes.status, body: body.slice(0, 200) },
+                  `[TradingView→FreqTrade] SELL ${pair} (trade ${match.trade_id}) — forceexit`,
+                );
+              }
+            }
           }
         } catch (err) {
           logger.warn(
@@ -182,13 +230,15 @@ tradingviewWebhookRouter.post('/', async (req, res) => {
       }
     }
 
-    if (useLegacyCex) {
+    if (cexShouldExecute && useLegacyCex) {
       try {
         const { executeCEXTradeFromTV } = await import('./crypto-agent.js');
         executeCEXTradeFromTV(cleanSymbol, normalizedAction as 'buy' | 'sell', alert.price ?? 0,
           `Tradevisor TV ${normalizedAction.toUpperCase()}: ${cleanSymbol} @ $${alert.price ?? 0} (TF:${alert.timeframe})`);
-        logger.info({ symbol: cleanSymbol, action: normalizedAction, price: alert.price },
-          `[TradingView→CEX] ${normalizedAction.toUpperCase()} ${cleanSymbol} — routed to legacy CEX engine`);
+        logger.info(
+          { symbol: cleanSymbol, action: normalizedAction, price: alert.price, agentVerdict: cexAgentDecision?.verdict, agentMode: cexAgentMode },
+          `[TradingView→CEX] ${normalizedAction.toUpperCase()} ${cleanSymbol} — legacy CEX engine [agent: ${cexAgentDecision?.verdict ?? 'n/a'}/${cexAgentMode}]`,
+        );
       } catch { /* CEX not loaded */ }
     }
   }

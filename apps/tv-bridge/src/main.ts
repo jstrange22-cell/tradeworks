@@ -25,6 +25,7 @@ import { evaluate, disconnect } from './cdp.js';
 import { loadState, saveState, key, type BridgeState } from './state.js';
 import { postSignal, type WebhookSignal } from './webhook.js';
 import { getWatchlist, type WatchlistEntry } from './watchlist.js';
+import { startChartStateServer } from './chart-state-server.js';
 
 // ── Config ──────────────────────────────────────────────────────────────
 const WEBHOOK_URL = process.env['TRADINGVIEW_WEBHOOK_URL'];
@@ -351,6 +352,16 @@ async function main(): Promise<void> {
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+  // HTTP surface for the gateway reasoner to fetch live chart state.
+  // Off by default — only spin up when the gateway is configured to use it.
+  if (process.env['BRIDGE_HTTP_ENABLED'] === 'true') {
+    try {
+      startChartStateServer(log);
+    } catch (err) {
+      log.warn({ err: err instanceof Error ? err.message : err }, 'chart-state server start failed');
+    }
+  }
 
   while (!stopping) {
     try {

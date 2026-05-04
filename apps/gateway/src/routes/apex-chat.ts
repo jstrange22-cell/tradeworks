@@ -446,6 +446,25 @@ Do NOT say "insufficient data" — the chart IS the data. Analyze what you see.`
   return skills[command] ?? '';
 }
 
+// Pull pending escalations synchronously — this list is small (a handful at
+// most) so it's cheap to inline in every chat turn.
+function getPendingEscalationsBlock(): string {
+  try {
+    // Synchronous import to avoid Promise in prompt builder.
+    // The decisions module's getPendingEscalations is sync (in-memory).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require('../services/ai/tradevisor-agent/decisions.js') as typeof import('../services/ai/tradevisor-agent/decisions.js');
+    const pending = mod.getPendingEscalations();
+    if (pending.length === 0) return '\n--- PENDING ESCALATIONS ---\nnone — agent has no decisions awaiting your approval right now.';
+    const lines = pending.slice(0, 5).map((d) => {
+      return `  • ${d.id.slice(0, 8)} — ${d.signal.action.toUpperCase()} ${d.signal.symbol} @ $${d.signal.price.toFixed(2)} (conf ${d.confidence.toFixed(2)}) — ${d.reasoning.slice(0, 140)}`;
+    });
+    return `\n--- PENDING ESCALATIONS (${pending.length} awaiting your approval) ---\n${lines.join('\n')}\nResolve via: POST /api/v1/tradevisor-agent/escalations/<id>/approve|veto`;
+  } catch {
+    return '';
+  }
+}
+
 function buildSystemPrompt(ctx: TradingContext, command: string | null): string {
   const commandContext = getCommandContext(command);
 
@@ -465,7 +484,7 @@ Exit Types: ${Object.entries(ctx.exitBreakdown).map(([k, v]) => `${k}:${v}`).joi
 --- RECENT TRADES ---
 ${ctx.recentTrades.slice(-10).map(t => `${t.symbol}: ${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(4)} SOL (${t.trigger})`).join('\n') || 'No recent trades'}`;
 
-  return `${APEX_IDENTITY}\n${liveState}${commandContext}`;
+  return `${APEX_IDENTITY}\n${liveState}${getPendingEscalationsBlock()}${commandContext}`;
 }
 
 // ── Chat History (per-user, prevents cross-session pollution) ────────────
