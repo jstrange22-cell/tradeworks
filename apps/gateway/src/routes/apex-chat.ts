@@ -87,6 +87,48 @@ async function callOpenAI(systemPrompt: string, userMessage: string, imageBase64
 }
 
 /** Call DeepSeek for analysis */
+/** Call Anthropic Claude — primary brain per SOUL.md spec (Sonnet 4.6, swap via APEX_CHAT_MODEL). */
+async function callClaude(systemPrompt: string, userMessage: string, imageBase64?: string, imageMime?: string): Promise<ModelAnalysis> {
+  const apiKey = process.env['ANTHROPIC_API_KEY'];
+  if (!apiKey) return { model: 'claude', reply: '', latencyMs: 0, error: 'No API key' };
+  const start = Date.now();
+  // Sonnet 4.6 by default — Opus 4.5 (SOUL spec) is ~7x cost for chat. Override
+  // via APEX_CHAT_MODEL=claude-opus-4-7 etc.
+  const modelId = process.env['APEX_CHAT_MODEL'] ?? 'claude-sonnet-4-6';
+  try {
+    const Anthropic = (await import('@anthropic-ai/sdk')).default;
+    const client = new Anthropic({ apiKey });
+    type ImgMime = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+    const allowedMimes: ImgMime[] = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    const userContent: Array<
+      | { type: 'text'; text: string }
+      | { type: 'image'; source: { type: 'base64'; media_type: ImgMime; data: string } }
+    > = [];
+    if (imageBase64 && imageMime && (allowedMimes as string[]).includes(imageMime)) {
+      userContent.push({
+        type: 'image',
+        source: { type: 'base64', media_type: imageMime as ImgMime, data: imageBase64 },
+      });
+      userContent.push({ type: 'text', text: userMessage || 'Analyze this chart.' });
+    } else {
+      userContent.push({ type: 'text', text: userMessage });
+    }
+    const resp = await client.messages.create({
+      model: modelId,
+      max_tokens: 3000,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userContent }],
+    });
+    const text = resp.content
+      .map((b) => (b.type === 'text' ? b.text : ''))
+      .join('')
+      .trim();
+    return { model: modelId, reply: text, latencyMs: Date.now() - start };
+  } catch (err) {
+    return { model: modelId, reply: '', latencyMs: Date.now() - start, error: err instanceof Error ? err.message : 'Failed' };
+  }
+}
+
 async function callDeepSeek(systemPrompt: string, userMessage: string): Promise<ModelAnalysis> {
   if (!DEEPSEEK_API_KEY) return { model: 'deepseek', reply: '', latencyMs: 0, error: 'No API key' };
   const start = Date.now();
@@ -172,20 +214,38 @@ function shouldUseMultiModel(command: string | null): boolean {
 }
 
 // Load APEX system prompt from file at startup
+// SOUL.md is the canonical APEX identity (215 lines incl. prompt-injection
+// defenses, regulatory rules, escalation matrix, risk parameters). The older
+// services/apex/APEX-SYSTEM.md is left in place as historical doc but is no
+// longer the runtime source unless APEX_USE_LEGACY_PROMPT=true.
 let APEX_IDENTITY = '';
-try {
-  const thisDir = dirname(fileURLToPath(import.meta.url));
-  const promptPath = resolve(thisDir, '../services/apex/APEX-SYSTEM.md');
-  APEX_IDENTITY = readFileSync(promptPath, 'utf-8');
-  console.log(`[APEX] Loaded system prompt (${APEX_IDENTITY.length} chars)`);
-} catch {
-  // Fallback if file not found (e.g. running from dist/)
+const useLegacyPrompt = process.env['APEX_USE_LEGACY_PROMPT'] === 'true';
+const thisDir = dirname(fileURLToPath(import.meta.url));
+
+// Candidate paths in priority order. Repo layout under dev: apex-chat.ts is at
+// apps/gateway/src/routes/, so SOUL.md is 4 levels up (../../../../).
+// Under dist/ deployment: dist/routes/apex-chat.js — add a process.cwd() fallback.
+const soulPaths = [
+  resolve(thisDir, '../../../../openclaw-finance/SOUL.md'),
+  resolve(process.cwd(), '../../openclaw-finance/SOUL.md'),
+  resolve(process.cwd(), 'openclaw-finance/SOUL.md'),
+  '/opt/tradeworks/openclaw-finance/SOUL.md',
+];
+const legacyPaths = [
+  resolve(thisDir, '../services/apex/APEX-SYSTEM.md'),
+  resolve(process.cwd(), 'src/services/apex/APEX-SYSTEM.md'),
+];
+
+for (const p of useLegacyPrompt ? legacyPaths : soulPaths) {
   try {
-    APEX_IDENTITY = readFileSync(resolve(process.cwd(), 'src/services/apex/APEX-SYSTEM.md'), 'utf-8');
-  } catch {
-    APEX_IDENTITY = 'You are APEX, an elite autonomous financial intelligence system built by Strange Digital Group.';
-    console.warn('[APEX] System prompt file not found — using minimal fallback');
-  }
+    APEX_IDENTITY = readFileSync(p, 'utf-8');
+    console.log(`[APEX] Loaded system prompt from ${p} (${APEX_IDENTITY.length} chars)`);
+    break;
+  } catch { /* try next */ }
+}
+if (!APEX_IDENTITY) {
+  APEX_IDENTITY = 'You are APEX, an elite autonomous financial intelligence system built by Strange Digital Group.';
+  console.warn('[APEX] System prompt file not found in any candidate path — using minimal fallback');
 }
 
 // ── Context Builder ──────────────────────────────────────────────────────
@@ -600,27 +660,53 @@ apexChatRouter.post('/chat', async (req, res) => {
     let finalReply = geminiReply;
     const modelsUsed = ['Gemini 2.5 Flash'];
 
-    if (shouldUseMultiModel(command) && (OPENAI_API_KEY || DEEPSEEK_API_KEY)) {
-      // Extract first image for OpenAI (if any)
+    if (shouldUseMultiModel(command) && (process.env['ANTHROPIC_API_KEY'] || OPENAI_API_KEY || DEEPSEEK_API_KEY)) {
+      // Extract first image for vision-capable models (Claude + OpenAI)
       const firstImage = hasFiles ? files!.find(f => f.mimeType.startsWith('image/')) : undefined;
 
-      // Fire all secondary models in parallel
-      const [openaiResult, deepseekResult] = await Promise.all([
+      // Fire ALL models in parallel — Claude added per SOUL.md "Primary: Claude" spec.
+      const [claudeResult, openaiResult, deepseekResult] = await Promise.all([
+        callClaude(systemPrompt, msgText || 'Analyze the attached content', firstImage?.data, firstImage?.mimeType),
         callOpenAI(systemPrompt, msgText || 'Analyze the attached content', firstImage?.data, firstImage?.mimeType),
         callDeepSeek(systemPrompt, msgText || 'Analyze the attached content'),
       ]);
 
+      if (claudeResult.reply) modelsUsed.push(claudeResult.model);
       if (openaiResult.reply) modelsUsed.push('GPT-4o');
       if (deepseekResult.reply) modelsUsed.push('DeepSeek');
 
-      const secondaryAnalyses = [openaiResult, deepseekResult].filter(a => !a.error && a.reply.length > 50);
+      // Choose primary: Claude (per SOUL spec) when available; else fall back to
+      // Gemini (which already responded above as `geminiReply`).
+      const claudeOk = !claudeResult.error && claudeResult.reply.length > 50;
+      const primaryReply = claudeOk ? claudeResult.reply : geminiReply;
+      const primaryName = claudeOk ? 'Claude' : 'Gemini';
 
-      if (secondaryAnalyses.length > 0) {
+      // The OTHER models become secondaries fed to the synthesis step. If
+      // Claude was primary, Gemini's response is also a useful secondary.
+      const secondaryAnalyses = [
+        ...(claudeOk
+          ? [{ model: 'gemini-2.5-flash', reply: geminiReply, latencyMs: 0 } as ModelAnalysis]
+          : [claudeResult]),
+        openaiResult,
+        deepseekResult,
+      ].filter(a => !a.error && a.reply.length > 50);
+
+      if (secondaryAnalyses.length > 0 || claudeOk) {
         logger.info(
-          { models: modelsUsed.length, openai: openaiResult.latencyMs + 'ms', deepseek: deepseekResult.latencyMs + 'ms' },
-          `[APEX] Multi-model analysis: ${modelsUsed.join(', ')}`,
+          {
+            primary: primaryName,
+            modelsUsed: modelsUsed.length,
+            claudeMs: claudeResult.latencyMs,
+            openaiMs: openaiResult.latencyMs,
+            deepseekMs: deepseekResult.latencyMs,
+          },
+          `[APEX] Multi-model: primary=${primaryName} secondaries=[${modelsUsed.filter(m => m !== claudeResult.model).join(', ') || 'none'}]`,
         );
-        finalReply = await synthesizeAnalyses(geminiReply, secondaryAnalyses, systemPrompt);
+        finalReply = secondaryAnalyses.length > 0
+          ? await synthesizeAnalyses(primaryReply, secondaryAnalyses, systemPrompt)
+          : primaryReply;
+      } else if (claudeOk) {
+        finalReply = primaryReply;
       }
     }
 

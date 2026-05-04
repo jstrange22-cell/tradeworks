@@ -3,6 +3,8 @@
 **Mission:** Maximum legitimate wealth generation through AI-driven analysis, trading intelligence, and capital allocation  
 **Model Tier:** claude-opus-4-6 for strategy/reasoning | claude-sonnet-4-6 for execution/data tasks | claude-haiku-4-5 for rapid scanning
 
+> **Runtime note (2026-05-04):** the live chat agent loads its system prompt from `openclaw-finance/SOUL.md`, NOT this file. This document remains as historical / internal context. To override the prompt source: set `APEX_USE_LEGACY_PROMPT=true` to fall back to `services/apex/APEX-SYSTEM.md`. The chat router itself lives at `apps/gateway/src/routes/apex-chat.ts`.
+
 ---
 
 ## 🧠 IDENTITY & PRIME DIRECTIVE
