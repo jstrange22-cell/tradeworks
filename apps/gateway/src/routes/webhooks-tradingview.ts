@@ -205,30 +205,78 @@ tradingviewWebhookRouter.post('/', async (req, res) => {
   // exactly like our other signal sources, but the SOURCE OF TRUTH is the
   // user's paid Pine indicator — not our JS reimplementation.
   //
+  // PHASE 2 ADDITION: every signal flows through the TradeVisor reasoning
+  // agent first. In `shadow` mode (default) the agent reasons + logs but
+  // execution proceeds with original parameters. In `gate` mode the agent's
+  // verdict actually drives whether/how the trade fires. See
+  // services/ai/tradevisor-agent for full architecture.
+  //
   // Stock symbols: alphabetic 1-5 chars, NOT in the crypto blue-chip list above.
   try {
     const stockSymbol = alert.symbol.replace('USDT', '').replace('USD', '').replace('-', '');
     const isLikelyStock = /^[A-Z]{1,5}$/.test(stockSymbol) && !CEX_BLUE_CHIPS.has(stockSymbol);
     if (isLikelyStock) {
-      const { executeEquitySignal, executeEquitySellSignal } = await import('../services/stock-intelligence/stock-agent.js');
-      // Map TV action 'buy'/'sell'. Default score=4 (passes the standard gate)
-      // and grade='standard' if the user didn't include them in the payload.
       const score = raw.score ?? 4;
-      const grade = raw.grade ?? 'standard';
-      const tvSignal = {
-        ticker: stockSymbol,
+      const rawGrade = raw.grade ?? 'standard';
+      // The webhook schema also accepts 'reject' but the agent + executor
+      // operate over the actionable trio. Fall back to 'standard' for it.
+      const grade: 'standard' | 'strong' | 'prime' =
+        rawGrade === 'strong' ? 'strong'
+        : rawGrade === 'prime' ? 'prime'
+        : 'standard';
+
+      // Reasoning gate
+      const { evaluateSignal, getAgentMode } = await import('../services/ai/tradevisor-agent/index.js');
+      const decision = await evaluateSignal({
+        symbol: stockSymbol,
         action: alert.action,
         price: alert.price ?? 0,
         score,
         grade,
-      };
-      const fired = alert.action === 'sell'
-        ? await executeEquitySellSignal(tvSignal)
-        : await executeEquitySignal(tvSignal);
-      logger.info(
-        { symbol: stockSymbol, action: alert.action, price: alert.price, score, grade, fired },
-        `[TradingView→Stock] ${alert.action.toUpperCase()} ${stockSymbol} (${grade}/${score}) — ${fired ? 'EXECUTED' : 'rejected by gates'}`,
-      );
+        timeframe: alert.timeframe,
+        exchange: alert.exchange,
+        sourceLabel: (raw as Record<string, unknown>)['source_label'] as string | undefined,
+        receivedAt: alert.time,
+        assetClass: 'stock',
+      });
+      const mode = getAgentMode();
+
+      // Decide whether to actually execute based on mode + verdict.
+      const shouldExecute =
+        mode !== 'gate' || decision.verdict === 'approve';
+      const skipReason =
+        mode === 'gate' && decision.verdict !== 'approve'
+          ? `agent ${decision.verdict}: ${decision.reasoning.slice(0, 120)}`
+          : null;
+
+      if (!shouldExecute) {
+        logger.info(
+          {
+            symbol: stockSymbol, action: alert.action, verdict: decision.verdict,
+            reasoning: decision.reasoning.slice(0, 200), decisionId: decision.id,
+          },
+          `[TradingView→Stock] ${alert.action.toUpperCase()} ${stockSymbol} — SKIPPED by agent (${skipReason ?? 'unknown'})`,
+        );
+      } else {
+        const { executeEquitySignal, executeEquitySellSignal } = await import('../services/stock-intelligence/stock-agent.js');
+        const tvSignal = {
+          ticker: stockSymbol,
+          action: alert.action,
+          price: alert.price ?? 0,
+          score,
+          grade,
+        };
+        const fired = alert.action === 'sell'
+          ? await executeEquitySellSignal(tvSignal)
+          : await executeEquitySignal(tvSignal);
+        logger.info(
+          {
+            symbol: stockSymbol, action: alert.action, price: alert.price, score, grade, fired,
+            agentVerdict: decision.verdict, agentMode: mode, decisionId: decision.id,
+          },
+          `[TradingView→Stock] ${alert.action.toUpperCase()} ${stockSymbol} (${grade}/${score}) — ${fired ? 'EXECUTED' : 'rejected by gates'} [agent: ${decision.verdict}/${mode}]`,
+        );
+      }
     }
   } catch (err) {
     logger.warn({ err: err instanceof Error ? err.message : err }, '[TradingView→Stock] dispatch failed');
