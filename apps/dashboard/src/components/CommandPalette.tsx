@@ -2,8 +2,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { Command } from 'cmdk';
 import { useNavigate } from 'react-router-dom';
 import {
-  LayoutDashboard, ArrowLeftRight, Bot, ShieldAlert, Lightbulb,
-  CandlestickChart, Globe, Zap, Settings, Play, Square, ToggleLeft, Search,
+  LayoutDashboard, ArrowLeftRight, Settings, Play, Square, ToggleLeft, Search,
+  MessageCircle, Coins, BarChart3, Sparkles, Wallet, BarChart2,
 } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
 import { toast } from 'sonner';
@@ -31,15 +31,18 @@ export function CommandPalette() {
 
   const close = useCallback(() => setOpen(false), []);
 
+  // Pruned 2026-05-04 (task E5a). Removed nav entries for archived pages
+  // (agents/risk/strategies/charts/markets/solana). Restore tag:
+  // pre-v2-ui-cleanup.
   const navigationItems: CommandItem[] = [
-    { id: 'nav-dashboard', label: 'Dashboard', icon: LayoutDashboard, shortcut: 'Ctrl+D', onSelect: () => go('/') },
+    { id: 'nav-cockpit', label: 'Command Center', icon: LayoutDashboard, shortcut: 'Ctrl+D', onSelect: () => go('/') },
+    { id: 'nav-apex', label: 'APEX Chat', icon: MessageCircle, shortcut: 'Ctrl+P', onSelect: () => go('/apex') },
+    { id: 'nav-crypto', label: 'Crypto', icon: Coins, onSelect: () => go('/crypto') },
+    { id: 'nav-stocks', label: 'Stocks', icon: BarChart3, shortcut: 'Ctrl+B', onSelect: () => go('/stocks') },
     { id: 'nav-trades', label: 'Trades', icon: ArrowLeftRight, shortcut: 'Ctrl+T', onSelect: () => go('/trades') },
-    { id: 'nav-agents', label: 'Agents', icon: Bot, shortcut: 'Ctrl+A', onSelect: () => go('/agents') },
-    { id: 'nav-risk', label: 'Risk', icon: ShieldAlert, shortcut: 'Ctrl+R', onSelect: () => go('/risk') },
-    { id: 'nav-strategies', label: 'Strategies', icon: Lightbulb, shortcut: 'Ctrl+S', onSelect: () => go('/strategies') },
-    { id: 'nav-charts', label: 'Charts', icon: CandlestickChart, shortcut: 'Ctrl+C', onSelect: () => go('/charts') },
-    { id: 'nav-markets', label: 'Markets', icon: Globe, shortcut: 'Ctrl+M', onSelect: () => go('/markets') },
-    { id: 'nav-solana', label: 'Solana', icon: Zap, shortcut: 'Ctrl+O', onSelect: () => go('/solana') },
+    { id: 'nav-analytics', label: 'Analytics', icon: BarChart2, onSelect: () => go('/analytics') },
+    { id: 'nav-intelligence', label: 'APEX Intel', icon: Sparkles, shortcut: 'Ctrl+I', onSelect: () => go('/intelligence') },
+    { id: 'nav-wallets', label: 'Wallets', icon: Wallet, shortcut: 'Ctrl+W', onSelect: () => go('/wallets') },
     { id: 'nav-settings', label: 'Settings', icon: Settings, onSelect: () => go('/settings') },
   ];
 

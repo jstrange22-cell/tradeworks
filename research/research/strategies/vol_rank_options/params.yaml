@@ -1,0 +1,47 @@
+# Strategy B3: Vol-Rank Mean Reversion (Options) — parameters
+#
+# All times are calendar-day where noted; all sigmas are simple stdev of the
+# raw close-price series over the lookback (NOT of returns). The trigger is
+# "price 2 sigma below 20d SMA", a textbook Bollinger-band style setup.
+
+# ---------- Entry filters ----------
+iv_rank_min: 70.0              # Top 30% of trailing 252d IV percentile
+sigma_below: 2.0               # Price must be at least N stdev below 20d SMA
+sma_lookback: 20               # SMA + stdev window for mean-reversion trigger
+iv_rank_lookback: 252          # IV-rank percentile lookback
+trend_filter_lookback: 200     # Long-bias 200d SMA filter
+earnings_blackout_days: 14     # Skip if earnings within N calendar days
+allowed_regimes: ["calm", "trending"]
+
+# ---------- Spread structure ----------
+dte_min: 30                    # Minimum days-to-expiry on entry
+dte_max: 45                    # Maximum days-to-expiry on entry
+short_delta: 0.30              # Short put delta target (sells the 30-delta put)
+long_delta: 0.15               # Long put delta target (buys the 15-delta wing)
+risk_free_rate: 0.045          # Annual risk-free rate (10y treasury approx 2026)
+
+# ---------- Exit rules ----------
+profit_target: 0.50            # Close at 50% of max profit (i.e. credit decays to 50%)
+loss_stop: 1.00                # Close at -100% of credit (loss = 1x credit received)
+time_stop_dte: 21              # Force-close when DTE <= 21 (gamma risk)
+hard_close_days: 21            # Force-close 21 calendar days after entry (belt-and-suspenders)
+
+# ---------- Position sizing ----------
+risk_per_trade: 0.005          # 0.5% of equity at max-loss per trade
+max_concurrent: 6              # Cap on simultaneous open spreads
+max_per_underlying: 1          # One spread per underlying at a time
+
+# ---------- Engine ----------
+initial_cash: 100000.0
+fee_per_contract: 0.65         # Typical IBKR/tastytrade per-leg commission
+slippage_bps: 5.0              # 5 bps slippage on credit (each side)
+warmup_bars: 252               # Wait for IV-rank window before signaling
+
+# ---------- Synthetic data generation (fixture-only) ----------
+# Used by run.py to build the fixture if it's missing. Real deployments
+# replace this with a polygon/CBOE IV feed.
+synth_seed: 42
+synth_iv_long_run: 0.20        # IV mean-reversion target (20% annualized)
+synth_iv_kappa: 3.0            # Mean-reversion speed (annualized)
+synth_iv_vol_of_vol: 0.6       # Vol-of-vol for the IV process
+synth_drift_annual: 0.07       # Underlying drift

@@ -1,0 +1,66 @@
+{
+  "updatedAt": "2026-05-05T04:40:53.044Z",
+  "schemaVersion": 1,
+  "strategies": {
+    "pead": {
+      "weight": 0.16666666666666666,
+      "prevWeight": 0.16666666666666666,
+      "voteShare": 0,
+      "sampleSize90d": 0,
+      "winRate": 0.5,
+      "expectancy": 0,
+      "sharpeProxy": 0,
+      "source": "cold_start"
+    },
+    "regime_trend": {
+      "weight": 0.16666666666666666,
+      "prevWeight": 0.16666666666666666,
+      "voteShare": 0,
+      "sampleSize90d": 0,
+      "winRate": 0.5,
+      "expectancy": 0,
+      "sharpeProxy": 0,
+      "source": "cold_start"
+    },
+    "vol_rank_options": {
+      "weight": 0.16666666666666666,
+      "prevWeight": 0.16666666666666666,
+      "voteShare": 0,
+      "sampleSize90d": 0,
+      "winRate": 0.5,
+      "expectancy": 0,
+      "sharpeProxy": 0,
+      "source": "cold_start"
+    },
+    "sector_rotation": {
+      "weight": 0.16666666666666666,
+      "prevWeight": 0.16666666666666666,
+      "voteShare": 0,
+      "sampleSize90d": 0,
+      "winRate": 0.5,
+      "expectancy": 0,
+      "sharpeProxy": 0,
+      "source": "cold_start"
+    },
+    "funding_basis": {
+      "weight": 0.16666666666666666,
+      "prevWeight": 0.16666666666666666,
+      "voteShare": 0,
+      "sampleSize90d": 0,
+      "winRate": 0.5,
+      "expectancy": 0,
+      "sharpeProxy": 0,
+      "source": "cold_start"
+    },
+    "range_grid_stables": {
+      "weight": 0.16666666666666666,
+      "prevWeight": 0.16666666666666666,
+      "voteShare": 0,
+      "sampleSize90d": 0,
+      "winRate": 0.5,
+      "expectancy": 0,
+      "sharpeProxy": 0,
+      "source": "cold_start"
+    }
+  }
+}

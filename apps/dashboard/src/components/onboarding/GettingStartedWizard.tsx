@@ -446,7 +446,7 @@ export function GettingStartedWizard({
             <div className="space-y-3">
               {/* Start Engine button */}
               <button
-                onClick={engineStarted ? () => navigate('/agents') : handleStartEngine}
+                onClick={engineStarted ? () => navigate('/intelligence') : handleStartEngine}
                 disabled={engineStarting}
                 className={`flex w-full items-center gap-4 rounded-lg border p-4 text-left transition-colors ${
                   engineStarted
@@ -496,7 +496,7 @@ export function GettingStartedWizard({
               )}
 
               <button
-                onClick={() => navigate('/charts')}
+                onClick={() => navigate('/stocks')}
                 className="flex w-full items-center gap-4 rounded-lg border border-slate-700/30 bg-slate-900/30 p-4 text-left transition-colors hover:bg-slate-800/50"
               >
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-green-500/20">
@@ -512,7 +512,7 @@ export function GettingStartedWizard({
               </button>
 
               <button
-                onClick={() => navigate('/markets')}
+                onClick={() => navigate('/crypto')}
                 className="flex w-full items-center gap-4 rounded-lg border border-slate-700/30 bg-slate-900/30 p-4 text-left transition-colors hover:bg-slate-800/50"
               >
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-purple-500/20">

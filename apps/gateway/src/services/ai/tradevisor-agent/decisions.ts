@@ -14,6 +14,9 @@ import { appendFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { logger } from '../../../lib/logger.js';
 import type { Decision } from './types.js';
+import { insertDecision as memoryInsertDecision } from '../../memory/decisions.js';
+import { embedAndStore } from '../../memory/embeddings.js';
+import { emitAppEvent } from '../../../lib/events-bus.js';
 
 const STORE_FILE = resolve(process.env['TRADEVISOR_DECISIONS_FILE'] ?? './data/tradevisor-decisions.jsonl');
 const RING_CAP = 500;
@@ -53,6 +56,84 @@ export function recordDecision(d: Decision): void {
   } catch (err) {
     logger.warn({ err: err instanceof Error ? err.message : err }, '[TVAgent] decision persist failed');
   }
+
+  // Mirror to the v2 memory DB + embed for future RAG retrieval. Fire and
+  // forget — failures here MUST NOT block the JSONL persist or the caller.
+  void persistToMemoryStore(d).catch((err) => {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      '[TVAgent] memory mirror failed (non-fatal)',
+    );
+  });
+
+  // Fan out to SSE subscribers. Synchronous, non-throwing — the dashboard's
+  // decisions feed updates in <100 ms typical. If no clients are connected,
+  // the emitter is a no-op.
+  emitAppEvent('decision-created', { decision: d });
+}
+
+/**
+ * Bridge a TradeVisor `Decision` into the v2 pgvector memory store and
+ * persist its embedding. Async, side-effect-only, swallows its own errors.
+ *
+ * Note: the memory DB picks its own UUID; we use that for the embedding row
+ * so the FK in `decision_embeddings` resolves cleanly. The TradeVisor ring
+ * buffer keeps using `d.id` (its own UUID) — they don't need to match.
+ */
+async function persistToMemoryStore(d: Decision): Promise<void> {
+  const signalText = buildEmbeddingText(d);
+  let memoryDecisionId: string | null = null;
+  try {
+    const inserted = await memoryInsertDecision({
+      strategy: 'tradevisor',
+      signal: d.signal,
+      context: d.context,
+      verdict: d.verdict,
+      reasoning: d.reasoning,
+      confidence: d.confidence,
+      adjustedSizeUsd: d.adjustedSize,
+      adjustedStopPct: d.adjustedStopPct,
+      modelUsed: d.modelUsed,
+      reasoningLatencyMs: d.reasoningLatencyMs,
+    });
+    if (!inserted) return; // memory DB unavailable — already logged
+    memoryDecisionId = inserted.id;
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err), decisionId: d.id },
+      '[TVAgent] memory insertDecision failed',
+    );
+    return;
+  }
+
+  try {
+    await embedAndStore(memoryDecisionId, signalText);
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err), memoryDecisionId },
+      '[TVAgent] embedAndStore failed',
+    );
+  }
+}
+
+/**
+ * Compose the text that gets embedded. Same shape as the RAG query so
+ * retrieval matches what writers store.
+ */
+function buildEmbeddingText(d: Decision): string {
+  const s = d.signal;
+  const ctx = d.context;
+  const parts: string[] = [
+    `${s.action} ${s.symbol}`,
+    `grade=${s.grade}`,
+    `score=${s.score}`,
+    `tf=${s.timeframe}`,
+    `regime=${ctx.macro.regime}`,
+  ];
+  if (ctx.scout?.rationale) {
+    parts.push(`scout: ${ctx.scout.rationale.slice(0, 200)}`);
+  }
+  return parts.join(' | ');
 }
 
 // ── Read APIs ──────────────────────────────────────────────────────────
@@ -88,6 +169,15 @@ export function resolveEscalation(
     appendFileSync(STORE_FILE, JSON.stringify({ ...d, _event: 'resolved' }) + '\n');
   } catch { /* ignore */ }
   logger.info({ id, resolution, resolvedBy }, '[TVAgent] escalation resolved');
+
+  // Fan out for the dashboard's escalations queue. Same non-throwing
+  // contract as `decision-created`.
+  emitAppEvent('decision-resolved', {
+    decisionId: id,
+    resolution,
+    resolvedBy,
+  });
+
   return d;
 }
 

@@ -23,16 +23,31 @@
 import { logger } from '../../../lib/logger.js';
 import { gatherContext } from './context.js';
 import { reasonAboutSignal } from './reasoner.js';
+import { reasonAboutSignalEnsemble } from './ensemble-reasoner.js';
 import { recordDecision, getRecentDecisions, getPendingEscalations, getDecisionById, resolveEscalation, getDecisionStats } from './decisions.js';
 import type { IncomingSignal, Decision } from './types.js';
 import { randomUUID } from 'crypto';
 
 export type AgentMode = 'disabled' | 'shadow' | 'gate';
+export type ReasonerMode = 'solo' | 'ensemble';
 
 export function getAgentMode(): AgentMode {
   if (process.env['ENABLE_TRADEVISOR_AGENT'] !== 'true') return 'disabled';
   const m = process.env['TRADEVISOR_AGENT_MODE'];
   return m === 'gate' ? 'gate' : 'shadow';
+}
+
+/**
+ * Reasoner backend selector.
+ *   - solo (default): single Claude call. Cheap, fast, well-tested.
+ *   - ensemble: parallel Claude + GPT-4o + Gemini with consensus. More
+ *     expensive (~3x) and slightly slower, but catches model bias and
+ *     escalates 3-way disagreements as a quality signal.
+ *
+ * Default = solo for v2 paper. Switch to ensemble after a week of validation.
+ */
+export function getReasonerMode(): ReasonerMode {
+  return process.env['TRADEVISOR_REASONER_MODE'] === 'ensemble' ? 'ensemble' : 'solo';
 }
 
 /**
@@ -57,7 +72,15 @@ export async function evaluateSignal(signal: IncomingSignal): Promise<Decision> 
           sectorCount: {}, sectorCap: 2, alreadyHolding: false,
         },
         scout: null,
-        macro: { regime: 'unknown', spyRs5d: 0, spyRs20d: 0, notes: 'agent disabled' },
+        macro: {
+          regime: 'unknown',
+          regimeTag: null,
+          regimeConfidence: 0,
+          regimeRationale: '',
+          spyRs5d: 0,
+          spyRs20d: 0,
+          notes: 'agent disabled',
+        },
         dailyPnl: { pct: 0, limitPct: -3, remaining: 3 },
       },
       verdict: 'approve',
@@ -73,7 +96,10 @@ export async function evaluateSignal(signal: IncomingSignal): Promise<Decision> 
 
   // Shadow + gate: gather context, reason, persist decision.
   const ctx = await gatherContext(signal);
-  const decision = await reasonAboutSignal(ctx);
+  const reasonerMode = getReasonerMode();
+  const decision = reasonerMode === 'ensemble'
+    ? await reasonAboutSignalEnsemble(ctx)
+    : await reasonAboutSignal(ctx);
   recordDecision(decision);
 
   logger.info(
@@ -87,8 +113,10 @@ export async function evaluateSignal(signal: IncomingSignal): Promise<Decision> 
       adjStopPct: decision.adjustedStopPct,
       latencyMs: decision.reasoningLatencyMs,
       mode,
+      reasonerMode,
+      modelUsed: decision.modelUsed,
     },
-    `[TVAgent] ${signal.action.toUpperCase()} ${signal.symbol} → ${decision.verdict.toUpperCase()} (${mode})`,
+    `[TVAgent] ${signal.action.toUpperCase()} ${signal.symbol} → ${decision.verdict.toUpperCase()} (${mode}/${reasonerMode})`,
   );
 
   return decision;

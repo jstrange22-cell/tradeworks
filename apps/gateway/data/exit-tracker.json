@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "trackerId": "equity:s2",
+      "highSinceEntry": 105,
+      "lowSinceEntry": 100,
+      "ladderPartialDone": true,
+      "lastEvaluatedAt": "2026-05-05T06:23:17.437Z"
+    },
+    {
+      "trackerId": "equity:s3",
+      "highSinceEntry": 101,
+      "lowSinceEntry": 100,
+      "ladderPartialDone": false,
+      "lastEvaluatedAt": "2026-05-05T06:23:17.456Z"
+    }
+  ]
+}

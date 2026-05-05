@@ -35,7 +35,9 @@ import {
   getDiscoveredCoinbasePairs,
 } from '../services/coin-discovery-service.js';
 import { getMacroRegime } from '../services/ai/macro-regime.js';
+import { triggerExit } from '../services/exits/index.js';
 import { logger } from '../lib/logger.js';
+import { emitAppEvent } from '../lib/events-bus.js';
 
 export const cryptoAgentRouter: RouterType = Router();
 
@@ -54,6 +56,11 @@ interface PaperPosition {
   trailingArmed?: boolean;
   openedAt?: string;
   highWaterPct?: number;
+  // TradeVisor agent Decision UUID that approved entry. Optional so legacy
+  // persisted positions still parse — new writes populate it via the BUY
+  // path of executeSignalTrade. Used by triggerExit to attribute realized
+  // P&L back to the reasoning trace when the position closes.
+  decisionId?: string | null;
 }
 
 export interface ClosedCryptoTrade {
@@ -670,7 +677,17 @@ cryptoAgentRouter.get('/tradingview-signals', (_req, res) => {
 const recentRecords = new Map<string, number>();
 const RECORD_DEDUP_MS = 500;
 
-function recordPaperTrade(exec: { instrument: string; side: string; quantity: number; price: number }): void {
+// Optional `decisionId` propagates through to the SSE `execution-filled`
+// event so the dashboard can stitch the fill to the parent reasoning trace.
+// It's optional because legacy call sites (signal-driven, no agent gate)
+// don't have one — null is fine.
+function recordPaperTrade(exec: {
+  instrument: string;
+  side: string;
+  quantity: number;
+  price: number;
+  decisionId?: string | null;
+}): void {
   const symbol = exec.instrument.replace('-USD', '');
 
   // Guard 1: reject qty=0 / dust (positionSizeUsd / $75k BTC rounds to 0)
@@ -729,12 +746,30 @@ function recordPaperTrade(exec: { instrument: string; side: string; quantity: nu
       });
     }
     paperPortfolio.cashUsd -= cost;
+    const buyTimestamp = new Date().toISOString();
     paperPortfolio.trades.push({
       symbol, side: 'buy', qty: exec.quantity, price: exec.price, pnlUsd: 0,
-      timestamp: new Date().toISOString(),
+      timestamp: buyTimestamp,
     });
     logger.info({ symbol, qty: exec.quantity, price: exec.price, cash: paperPortfolio.cashUsd.toFixed(2) },
       `[CryptoAgent] PAPER BUY ${symbol} x${exec.quantity} @ $${exec.price}`);
+
+    // SSE fan-out — same shape as stock-agent.executeEquitySignal so the
+    // dashboard's positions list / decisions feed can use one handler
+    // regardless of asset class.
+    emitAppEvent('execution-filled', {
+      execution: {
+        decisionId: exec.decisionId ?? null,
+        assetClass: 'crypto',
+        symbol,
+        side: 'buy',
+        quantity: exec.quantity,
+        fillPrice: exec.price,
+        fillStatus: 'filled',
+        broker: 'coinbase_paper',
+        filledAt: buyTimestamp,
+      },
+    });
 
   } else if (exec.side === 'sell') {
     const pos = paperPortfolio.positions.get(symbol);
@@ -745,10 +780,24 @@ function recordPaperTrade(exec: { instrument: string; side: string; quantity: nu
     // inline below (no reason-tracked close, preserves legacy behavior).
     if (exec.quantity >= pos.qty) {
       closeCryptoPosition(symbol, exec.price, 'legacy');
+      const sellTimestamp = new Date().toISOString();
       paperPortfolio.trades.push({
         symbol, side: 'sell', qty: exec.quantity, price: exec.price,
         pnlUsd: 0, // pnl already captured in closedTrades entry
-        timestamp: new Date().toISOString(),
+        timestamp: sellTimestamp,
+      });
+      emitAppEvent('execution-filled', {
+        execution: {
+          decisionId: exec.decisionId ?? null,
+          assetClass: 'crypto',
+          symbol,
+          side: 'sell',
+          quantity: exec.quantity,
+          fillPrice: exec.price,
+          fillStatus: 'filled',
+          broker: 'coinbase_paper',
+          filledAt: sellTimestamp,
+        },
       });
     } else {
       // Partial close — no 10x cap anymore (price-sanity + ghost-pair guards handle it)
@@ -757,15 +806,30 @@ function recordPaperTrade(exec: { instrument: string; side: string; quantity: nu
       paperPortfolio.cashUsd += exec.quantity * exec.price;
       if (pnl > 0) paperPortfolio.wins++;
       else paperPortfolio.losses++;
+      const partialTimestamp = new Date().toISOString();
       paperPortfolio.trades.push({
         symbol, side: 'sell', qty: exec.quantity, price: exec.price, pnlUsd: pnl,
-        timestamp: new Date().toISOString(),
+        timestamp: partialTimestamp,
       });
       pos.qty -= exec.quantity;
       logger.info(
         { symbol, pnl: pnl.toFixed(2), qtyRemaining: pos.qty, cash: paperPortfolio.cashUsd.toFixed(2) },
         `[CryptoAgent] PAPER PARTIAL SELL ${symbol} P&L: $${pnl.toFixed(2)}`,
       );
+      emitAppEvent('execution-filled', {
+        execution: {
+          decisionId: exec.decisionId ?? null,
+          assetClass: 'crypto',
+          symbol,
+          side: 'sell',
+          quantity: exec.quantity,
+          fillPrice: exec.price,
+          fillStatus: 'partial',
+          broker: 'coinbase_paper',
+          filledAt: partialTimestamp,
+          pnlUsd: pnl,
+        },
+      });
     }
   }
 
@@ -793,6 +857,12 @@ function closeCryptoPosition(
   const pnlUsd = (exitPrice - entryPrice) * qty;
   const pnlPct = entryPrice > 0 ? ((exitPrice - entryPrice) / entryPrice) * 100 : 0;
 
+  // Capture pre-mutation values for outcome attribution.
+  const positionDecisionId = pos.decisionId ?? null;
+  const positionStopLoss = pos.stopLossPrice ?? null;
+  const openedAt = pos.openedAt ?? new Date().toISOString();
+  const closedAt = new Date().toISOString();
+
   paperPortfolio.cashUsd += qty * exitPrice;
   paperPortfolio.closedTrades.push({
     symbol,
@@ -803,8 +873,8 @@ function closeCryptoPosition(
     pnlUsd,
     pnlPct,
     reason,
-    openedAt: pos.openedAt ?? new Date().toISOString(),
-    closedAt: new Date().toISOString(),
+    openedAt,
+    closedAt,
   });
   // Cap in-memory closedTrades — disk rotation happens in persistDEXState
   if (paperPortfolio.closedTrades.length > 500) {
@@ -829,6 +899,26 @@ function closeCryptoPosition(
     { symbol, exitPrice, pnlUsd: pnlUsd.toFixed(2), pnlPct: pnlPct.toFixed(2), reason },
     `[CryptoAgent] PAPER CLOSE ${symbol} @ $${exitPrice} pnl=$${pnlUsd.toFixed(2)} (${pnlPct.toFixed(1)}%) — ${reason}`,
   );
+
+  // ── Outcome attribution (C1) ──────────────────────────────────────────
+  // closeCryptoPosition is sync — fire-and-forget, never throws to caller.
+  // No-ops when decisionId missing (pre-A6 positions) or DB unavailable.
+  if (positionDecisionId) {
+    void triggerExit({
+      decisionId: positionDecisionId,
+      assetClass: 'crypto-dex',
+      symbol,
+      side: 'long',
+      entryPrice,
+      exitPrice,
+      qty,
+      stopPrice: positionStopLoss,
+      openedAt,
+      closedAt,
+      reason,
+      notes: reason,
+    });
+  }
 }
 
 // Wire the recorder to the cycle engine (legacy — cycle engine still handles blue chips)
@@ -1589,6 +1679,10 @@ interface CEXPosition {
   avgEntry: number;
   currentPrice: number;
   openedAt: string;
+  // TradeVisor agent Decision UUID that approved entry. Optional so legacy
+  // persisted positions still parse. Stamped by recordCEXTrade on BUY and
+  // consumed by triggerExit on SELL for realized-P&L attribution.
+  decisionId?: string | null;
 }
 
 interface CEXTrade {
@@ -1599,6 +1693,10 @@ interface CEXTrade {
   pnlUsd: number;
   reason: string;
   timestamp: string;
+  // TradeVisor agent Decision UUID that approved this trade. Optional so
+  // legacy persisted CEX rows still parse on load — new writes always
+  // populate it. See `executeCEXTradeFromTV` for the wiring point.
+  decisionId?: string | null;
 }
 
 const cexPortfolio = {
@@ -1656,14 +1754,23 @@ function loadCEXState(): void {
   } catch { /* start fresh */ }
 }
 
-function recordCEXTrade(symbol: string, side: 'buy' | 'sell', qty: number, price: number, reason: string): void {
+function recordCEXTrade(
+  symbol: string,
+  side: 'buy' | 'sell',
+  qty: number,
+  price: number,
+  reason: string,
+  decisionId: string | null = null,
+): void {
   if (side === 'buy') {
     const cost = qty * price;
     if (cexPortfolio.cashUsd < cost) return;
 
     const existing = cexPortfolio.positions.get(symbol);
     if (existing) {
-      // Average in
+      // Average in. Keep the original decisionId — the first decision is the
+      // one we'll attribute the eventual P&L to (averaging in is conviction
+      // on the original thesis, not a new thesis).
       const totalQty = existing.qty + qty;
       existing.avgEntry = ((existing.avgEntry * existing.qty) + (price * qty)) / totalQty;
       existing.qty = totalQty;
@@ -1675,15 +1782,29 @@ function recordCEXTrade(symbol: string, side: 'buy' | 'sell', qty: number, price
         avgEntry: price,
         currentPrice: price,
         openedAt: new Date().toISOString(),
+        decisionId,
       });
     }
     cexPortfolio.cashUsd -= cost;
 
-    cexPortfolio.trades.push({ symbol, side, qty, price, pnlUsd: 0, reason, timestamp: new Date().toISOString() });
+    cexPortfolio.trades.push({ symbol, side, qty, price, pnlUsd: 0, reason, timestamp: new Date().toISOString(), decisionId });
     if (cexPortfolio.trades.length > 200) cexPortfolio.trades.shift();
 
     persistCEXState();
-    logger.info({ symbol, qty: qty.toFixed(6), price, cost: cost.toFixed(2), reason },
+
+    // TODO(memory): wire to the pgvector memory DB. Module landed (A5) at
+    // services/memory/index.ts, but insertExecution requires the parent
+    // decision row in the `decisions` table — TradeVisor agent doesn't
+    // persist there yet. Once that lands, uncomment and pass decisionId:
+    //   if (decisionId) {
+    //     await insertExecution({
+    //       decisionId, assetClass: 'crypto-cex', symbol, side: 'buy',
+    //       quantity: qty, fillPrice: price, fillStatus: 'filled',
+    //       broker: 'cex_paper_legacy',
+    //     }).catch((err) => logger.warn({ err }, '[CEX] memory.insertExecution failed'));
+    //   }
+
+    logger.info({ symbol, qty: qty.toFixed(6), price, cost: cost.toFixed(2), reason, decisionId },
       `[CEX] BUY ${symbol} $${cost.toFixed(2)} @ $${price.toLocaleString()} — ${reason}`);
   } else {
     // Sell
@@ -1699,15 +1820,41 @@ function recordCEXTrade(symbol: string, side: 'buy' | 'sell', qty: number, price
     if (pnl >= 0) cexPortfolio.wins++;
     else cexPortfolio.losses++;
 
+    // Capture pre-mutation values for outcome attribution before we splice
+    // the position out of the map.
+    const isFullClose = pos.qty - sellQty <= 0.000001;
+    const positionDecisionId = pos.decisionId ?? decisionId;
+    const positionEntry = pos.avgEntry;
+    const positionOpenedAt = pos.openedAt;
+
     pos.qty -= sellQty;
     if (pos.qty <= 0.000001) cexPortfolio.positions.delete(symbol);
 
-    cexPortfolio.trades.push({ symbol, side, qty: sellQty, price, pnlUsd: pnl, reason, timestamp: new Date().toISOString() });
+    cexPortfolio.trades.push({ symbol, side, qty: sellQty, price, pnlUsd: pnl, reason, timestamp: new Date().toISOString(), decisionId });
     if (cexPortfolio.trades.length > 200) cexPortfolio.trades.shift();
 
     persistCEXState();
-    logger.info({ symbol, qty: sellQty.toFixed(6), price, pnl: pnl.toFixed(2), reason },
+    logger.info({ symbol, qty: sellQty.toFixed(6), price, pnl: pnl.toFixed(2), reason, decisionId },
       `[CEX] SELL ${symbol} $${proceeds.toFixed(2)} P&L: $${pnl.toFixed(2)} — ${reason}`);
+
+    // ── Outcome attribution (C1) ──────────────────────────────────────
+    // Only fire on FULL close so we don't double-count partial sells; partial
+    // closes will get caught by the eventual full close (decisionId stays on
+    // the remaining position). recordCEXTrade is sync — fire-and-forget.
+    if (isFullClose && positionDecisionId) {
+      void triggerExit({
+        decisionId: positionDecisionId,
+        assetClass: 'crypto-cex',
+        symbol,
+        side: 'long',
+        entryPrice: positionEntry,
+        exitPrice: price,
+        qty: sellQty,
+        openedAt: positionOpenedAt,
+        reason,
+        notes: reason,
+      });
+    }
   }
 }
 
@@ -1934,7 +2081,13 @@ export function getCEXPortfolio() {
 // ── CEX TradingView Integration ──────────────────────────────────────────
 // Called by webhooks-tradingview.ts when a blue chip TV signal comes in
 
-export function executeCEXTradeFromTV(symbol: string, action: 'buy' | 'sell', price: number, reason: string): void {
+export function executeCEXTradeFromTV(
+  symbol: string,
+  action: 'buy' | 'sell',
+  price: number,
+  reason: string,
+  decisionId: string | null = null,
+): void {
   if (price <= 0) return;
 
   if (action === 'buy') {
@@ -1955,8 +2108,8 @@ export function executeCEXTradeFromTV(symbol: string, action: 'buy' | 'sell', pr
     if (positionSizeUsd < 10) return;
 
     const qty = positionSizeUsd / price;
-    recordCEXTrade(symbol, 'buy', qty, price, reason);
-    logger.info({ symbol, size: positionSizeUsd.toFixed(0), price },
+    recordCEXTrade(symbol, 'buy', qty, price, reason, decisionId);
+    logger.info({ symbol, size: positionSizeUsd.toFixed(0), price, decisionId },
       `[CEX-TV] BUY ${symbol} $${positionSizeUsd.toFixed(0)} @ $${price} — TradingView Tradevisor signal`);
   } else {
     // Sell: close position if we hold it
@@ -1965,8 +2118,8 @@ export function executeCEXTradeFromTV(symbol: string, action: 'buy' | 'sell', pr
       logger.info({ symbol }, `[CEX-TV] No ${symbol} position to sell`);
       return;
     }
-    recordCEXTrade(symbol, 'sell', pos.qty, price, reason);
-    logger.info({ symbol, price }, `[CEX-TV] SELL ${symbol} — TradingView Tradevisor signal`);
+    recordCEXTrade(symbol, 'sell', pos.qty, price, reason, decisionId);
+    logger.info({ symbol, price, decisionId }, `[CEX-TV] SELL ${symbol} — TradingView Tradevisor signal`);
   }
 }
 

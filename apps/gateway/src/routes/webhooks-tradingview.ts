@@ -91,6 +91,41 @@ tradingviewWebhookRouter.post('/', async (req, res) => {
     raw,
   };
 
+  // ── Multi-level kill-switch gate (entry-side) ──────────────────────
+  // Evaluated BEFORE agent gating so a paused strategy / portfolio /
+  // master-killed system never spends Anthropic tokens on doomed signals.
+  // Strategy name derives from raw.grade or message tag; we fall back to
+  // 'tradingview' when no explicit strategy is supplied.
+  try {
+    const { isTradingAllowed } = await import('../services/orchestrator/kill-switches.js');
+    const stratName = (raw as Record<string, unknown>)['strategy'] as string | undefined
+      ?? raw.grade
+      ?? 'tradingview';
+    const gate = isTradingAllowed(stratName);
+    if (!gate.allowed) {
+      logger.info(
+        { symbol: alert.symbol, action: alert.action, strategy: stratName, reason: gate.reason },
+        '[TradingView] kill-switch VETO — signal not executed',
+      );
+      // Still broadcast for the dashboard so users can see the rejected
+      // signal, but skip every downstream execution path.
+      broadcast('tradingview:alerts', { ...alert, vetoed: true, reason: gate.reason });
+      res.status(200).json({
+        ok: true,
+        vetoed: true,
+        reason: gate.reason,
+        symbol: alert.symbol,
+        action: alert.action,
+      });
+      return;
+    }
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : err },
+      '[TradingView] kill-switch gate failed — failing OPEN (signal continues)',
+    );
+  }
+
   broadcast('tradingview:alerts', alert);
 
   logger.info(
@@ -170,8 +205,16 @@ tradingviewWebhookRouter.post('/', async (req, res) => {
         const pair = `${cleanSymbol}/USD`;
         // FreqTrade /forceenter for buy, /forceexit for sell. Per-grade sizing
         // is handled by the strategy's custom_stake_amount() via entry_tag.
+        // The tag now embeds the agent decision UUID so closed trades can be
+        // attributed back to the decision that approved them. Format:
+        //   `tradevisor_<grade>_<decisionId>`
+        // FreqTrade allows ~100 chars in entry_tag and propagates the tag
+        // through the trade lifecycle (visible in /status, /trades, exports).
         const grade = (raw.grade ?? 'standard').toString();
-        const entryTag = `tradevisor_${grade}`;
+        const decisionId = cexAgentDecision?.id ?? null;
+        const entryTag = decisionId
+          ? `tradevisor_${grade}_${decisionId}`
+          : `tradevisor_${grade}`;
         try {
           const auth = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
           if (normalizedAction === 'buy') {
@@ -188,7 +231,7 @@ tradingviewWebhookRouter.post('/', async (req, res) => {
             });
             const body = await ftRes.text();
             logger.info(
-              { symbol: cleanSymbol, pair, status: ftRes.status, grade, entryTag, body: body.slice(0, 200) },
+              { symbol: cleanSymbol, pair, status: ftRes.status, grade, entryTag, decisionId, body: body.slice(0, 200) },
               `[TradingView→FreqTrade] ${normalizedAction.toUpperCase()} ${pair}`,
             );
           } else {
@@ -233,10 +276,15 @@ tradingviewWebhookRouter.post('/', async (req, res) => {
     if (cexShouldExecute && useLegacyCex) {
       try {
         const { executeCEXTradeFromTV } = await import('./crypto-agent.js');
-        executeCEXTradeFromTV(cleanSymbol, normalizedAction as 'buy' | 'sell', alert.price ?? 0,
-          `Tradevisor TV ${normalizedAction.toUpperCase()}: ${cleanSymbol} @ $${alert.price ?? 0} (TF:${alert.timeframe})`);
+        executeCEXTradeFromTV(
+          cleanSymbol,
+          normalizedAction as 'buy' | 'sell',
+          alert.price ?? 0,
+          `Tradevisor TV ${normalizedAction.toUpperCase()}: ${cleanSymbol} @ $${alert.price ?? 0} (TF:${alert.timeframe})`,
+          cexAgentDecision?.id ?? null,
+        );
         logger.info(
-          { symbol: cleanSymbol, action: normalizedAction, price: alert.price, agentVerdict: cexAgentDecision?.verdict, agentMode: cexAgentMode },
+          { symbol: cleanSymbol, action: normalizedAction, price: alert.price, agentVerdict: cexAgentDecision?.verdict, agentMode: cexAgentMode, decisionId: cexAgentDecision?.id },
           `[TradingView→CEX] ${normalizedAction.toUpperCase()} ${cleanSymbol} — legacy CEX engine [agent: ${cexAgentDecision?.verdict ?? 'n/a'}/${cexAgentMode}]`,
         );
       } catch { /* CEX not loaded */ }
@@ -308,24 +356,80 @@ tradingviewWebhookRouter.post('/', async (req, res) => {
           `[TradingView→Stock] ${alert.action.toUpperCase()} ${stockSymbol} — SKIPPED by agent (${skipReason ?? 'unknown'})`,
         );
       } else {
-        const { executeEquitySignal, executeEquitySellSignal } = await import('../services/stock-intelligence/stock-agent.js');
-        const tvSignal = {
-          ticker: stockSymbol,
-          action: alert.action,
-          price: alert.price ?? 0,
-          score,
-          grade,
-        };
-        const fired = alert.action === 'sell'
-          ? await executeEquitySellSignal(tvSignal)
-          : await executeEquitySignal(tvSignal);
-        logger.info(
-          {
-            symbol: stockSymbol, action: alert.action, price: alert.price, score, grade, fired,
-            agentVerdict: decision.verdict, agentMode: mode, decisionId: decision.id,
-          },
-          `[TradingView→Stock] ${alert.action.toUpperCase()} ${stockSymbol} (${grade}/${score}) — ${fired ? 'EXECUTED' : 'rejected by gates'} [agent: ${decision.verdict}/${mode}]`,
-        );
+        // ── Portfolio heat gate ──
+        // After agent approval, before executor dispatch, verify the
+        // prospective trade fits inside total/sector/factor heat budgets.
+        // Only check on BUY (opens new risk); SELL signals close existing
+        // exposure and are always allowed through.
+        let heatVeto: { reason: string; offendingBudget: string } | null = null;
+        if (alert.action === 'buy') {
+          try {
+            // Estimate prospective riskUsd using the same grade-tier model
+            // sizing.ts uses (account × risk% / 5%-flat-stop). When ATR data
+            // is plumbed through this path, the sizer should be the source
+            // of truth — for now we use a conservative grade-floor estimate
+            // that matches the EQUITY_SIZE_BY_GRADE budget × 5% stop.
+            const baseSizeByGrade: Record<string, number> = {
+              standard: 100,
+              strong: 250,
+              prime: 500,
+            };
+            const baseSize = baseSizeByGrade[grade] ?? 100;
+            const prospectiveRiskUsd = baseSize * 0.05; // 5% flat stop fallback
+            const { checkHeatBudget } = await import('../services/orchestrator/heat.js');
+            const heatVerdict = await checkHeatBudget({
+              symbol: stockSymbol,
+              riskUsd: prospectiveRiskUsd,
+            });
+            if (!heatVerdict.ok) {
+              heatVeto = {
+                reason: heatVerdict.reason,
+                offendingBudget: heatVerdict.offendingBudget,
+              };
+            }
+          } catch (err) {
+            // Heat module unavailable → fail-open with a warn so the trade
+            // still executes. Heat is a defence-in-depth gate, not the
+            // primary risk control.
+            logger.warn(
+              { err: err instanceof Error ? err.message : err, symbol: stockSymbol },
+              '[TradingView→Stock] heat check failed — proceeding without heat gate',
+            );
+          }
+        }
+
+        if (heatVeto) {
+          logger.warn(
+            {
+              symbol: stockSymbol, action: alert.action, decisionId: decision.id,
+              offendingBudget: heatVeto.offendingBudget, reason: heatVeto.reason,
+            },
+            `[TradingView→Stock] ${alert.action.toUpperCase()} ${stockSymbol} — VETOED by heat gate (${heatVeto.offendingBudget}: ${heatVeto.reason})`,
+          );
+        } else {
+          const { executeEquitySignal, executeEquitySellSignal } = await import('../services/stock-intelligence/stock-agent.js');
+          const tvSignal = {
+            ticker: stockSymbol,
+            action: alert.action,
+            price: alert.price ?? 0,
+            score,
+            grade,
+            // Carry the agent Decision UUID through to the executor so the
+            // resulting paper-ledger position can be attributed back to the
+            // reasoning trace at close time. Required field on StockAgentSignal.
+            decisionId: decision.id,
+          };
+          const fired = alert.action === 'sell'
+            ? await executeEquitySellSignal(tvSignal)
+            : await executeEquitySignal(tvSignal);
+          logger.info(
+            {
+              symbol: stockSymbol, action: alert.action, price: alert.price, score, grade, fired,
+              agentVerdict: decision.verdict, agentMode: mode, decisionId: decision.id,
+            },
+            `[TradingView→Stock] ${alert.action.toUpperCase()} ${stockSymbol} (${grade}/${score}) — ${fired ? 'EXECUTED' : 'rejected by gates'} [agent: ${decision.verdict}/${mode}]`,
+          );
+        }
       }
     }
   } catch (err) {

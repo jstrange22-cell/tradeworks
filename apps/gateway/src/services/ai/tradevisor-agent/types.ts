@@ -87,7 +87,22 @@ export interface ScoutContext {
 }
 
 export interface MacroContext {
+  /**
+   * Legacy regime label (risk-on/risk-off/etc) preserved for back-compat.
+   * The new orchestrator-level regime is in `regimeTag`. Reasoner prompts
+   * should prefer `regimeTag` going forward.
+   */
   regime: 'risk-on' | 'risk-off' | 'transitioning' | 'crisis' | 'unknown';
+  /**
+   * APEX market regime tag from `services/orchestrator/regime.ts`. This is
+   * the canonical regime used by the bandit, sizing, and heat modules.
+   * `null` only when the regime module hasn't initialized yet.
+   */
+  regimeTag: 'calm' | 'trending' | 'volatile' | 'crisis' | null;
+  /** Confidence in the regime tag, 0..1. */
+  regimeConfidence: number;
+  /** Human-readable regime rationale (e.g. "VIX 18.5 + 20d ret +2.1% → calm"). */
+  regimeRationale: string;
   spyRs5d: number;
   spyRs20d: number;
   notes: string;

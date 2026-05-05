@@ -1,0 +1,22 @@
+# Template strategy parameters.
+#
+# This is a vanilla SMA-crossover demo so the scaffold has something to backtest.
+# Real strategies override this file with their own knobs.
+
+# Fast and slow simple moving averages. Long when fast > slow; flat when fast < slow.
+sma_fast: 20
+sma_slow: 50
+
+# Minimum data required before signals fire. Same as sma_slow by default.
+warmup_bars: 50
+
+# Position size as a fraction of equity per entry. 1.0 = all-in.
+position_size: 1.0
+
+# Engine knobs forwarded to run_full_backtest.
+initial_cash: 10000.0
+fee_bps: 1.0          # 1 bp per side
+slippage_bps: 1.0     # 1 bp per side
+train_years: 2.0
+test_years: 0.5
+step_years: 0.5

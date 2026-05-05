@@ -72,6 +72,21 @@ export function stopStockPositionMonitor(): void {
 
 async function tick(): Promise<void> {
   try {
+    // Multi-level kill-switch evaluation runs every tick — independent of
+    // whether the paper ledger has any open positions. This is the central
+    // 60s heartbeat for auto-activation (5 consecutive losses → strategy pause,
+    // daily/weekly DD breach → portfolio pause). Failures here must NOT block
+    // the rest of the tick.
+    try {
+      const { checkAndActivateAuto } = await import('../orchestrator/kill-switches.js');
+      await checkAndActivateAuto();
+    } catch (err) {
+      logger.warn(
+        { err: err instanceof Error ? err.message : err },
+        '[PositionMonitor] kill-switch checkAndActivateAuto failed',
+      );
+    }
+
     const ledger = loadPaperLedger();
     const equityCount = ledger.equityPositions.length;
     const optionCount = ledger.optionPositions.length;

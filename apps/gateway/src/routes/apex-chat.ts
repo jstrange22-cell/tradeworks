@@ -22,6 +22,8 @@ import {
   cachedSolBalanceLamports,
 } from './solana-sniper/state.js';
 import { logger } from '../lib/logger.js';
+import { synthesizeResponses } from '../services/ai/ensemble/synthesize.js';
+import type { ModelResponse } from '../services/ai/ensemble/types.js';
 
 export const apexChatRouter: RouterType = Router();
 
@@ -162,50 +164,25 @@ async function callDeepSeek(systemPrompt: string, userMessage: string): Promise<
   }
 }
 
-/** Synthesize multiple model analyses into a unified response */
+/**
+ * Synthesize multiple model analyses into a unified response.
+ *
+ * Delegates to the shared `synthesizeResponses` primitive in
+ * `services/ai/ensemble/synthesize.ts` so the same code is exercised by
+ * the chat synthesis path and the TradeVisor ensemble reasoner.
+ */
 async function synthesizeAnalyses(
   primary: string,
   analyses: ModelAnalysis[],
   systemPrompt: string,
 ): Promise<string> {
-  const validAnalyses = analyses.filter(a => a.reply.length > 50);
-  if (validAnalyses.length === 0) return primary; // Only Gemini responded
-
-  const synthesisPrompt = `You are APEX. You just received analysis from ${validAnalyses.length + 1} different AI models on the same request. Your job is to synthesize the BEST insights from all of them into one unified, actionable response.
-
-YOUR primary analysis (Gemini):
-${primary}
-
-${validAnalyses.map(a => `--- ${a.model.toUpperCase()} ANALYSIS (${a.latencyMs}ms) ---\n${a.reply}`).join('\n\n')}
-
-SYNTHESIS RULES:
-1. Lead with the CONSENSUS — what do all models agree on?
-2. Highlight any DISAGREEMENTS between models — these are where alpha lives
-3. If one model found something the others missed, include it
-4. Use the most specific price levels from whichever model provided them
-5. Keep the APEX TRADE PROMPT format for the final recommendation
-6. At the end, note which models contributed: "Analysis powered by: Gemini, GPT-4o, DeepSeek"
-7. Be concise — don't repeat the same point from different models`;
-
-  try {
-    const res = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ role: 'user', parts: [{ text: synthesisPrompt }] }],
-        tools: [{ google_search: {} }],
-        generationConfig: { temperature: 0.5, maxOutputTokens: 8192, topP: 0.9 },
-      }),
-      signal: AbortSignal.timeout(45_000),
-    });
-
-    if (!res.ok) return primary + '\n\n---\n*Multi-model synthesis unavailable*';
-    const data = await res.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-    return data.candidates?.[0]?.content?.parts?.[0]?.text ?? primary;
-  } catch {
-    return primary + '\n\n---\n*Multi-model synthesis unavailable*';
-  }
+  // Adapt ModelAnalysis → ModelResponse (just rename `error` semantics-equivalent)
+  const adapted: ModelResponse[] = analyses.map((a) => {
+    const r: ModelResponse = { model: a.model, reply: a.reply, latencyMs: a.latencyMs };
+    if (a.error) r.error = a.error;
+    return r;
+  });
+  return synthesizeResponses(primary, adapted, systemPrompt);
 }
 
 /** Check if the request warrants multi-model analysis (analyze commands, not casual chat) */
@@ -768,4 +745,38 @@ apexChatRouter.delete('/history', (req, res) => {
   const userId = ((req as unknown as Record<string, unknown>).user as { id?: string } | undefined)?.id ?? 'default';
   chatHistoryMap.delete(userId);
   res.json({ message: 'Chat history cleared' });
+});
+
+// ── APEX chat tools ────────────────────────────────────────────────────
+// Chat-callable tool registry. The synthesis layer (and dashboard quick
+// actions) invoke these by name. Today they cover the kill-switch surface:
+//   - kill_all_positions(reason)
+//   - pause_strategy(strategy, hours, reason)
+//   - pause_portfolio(reason)
+//   - kill_switch_status()
+// When apex-chat grows native tool_use / function-calling, the same registry
+// feeds into the model's tool list.
+
+apexChatRouter.get('/tools', async (_req, res) => {
+  try {
+    const { listChatTools } = await import('../services/ai/chat-tools.js');
+    res.json({ data: listChatTools() });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'tools list failed' });
+  }
+});
+
+apexChatRouter.post('/tools/:name', async (req, res) => {
+  try {
+    const { invokeChatTool } = await import('../services/ai/chat-tools.js');
+    const result = await invokeChatTool(req.params.name, req.body ?? {});
+    res.json({ data: result });
+  } catch (err) {
+    const status = (err as Error & { statusCode?: number }).statusCode ?? 500;
+    const details = (err as Error & { details?: unknown }).details;
+    res.status(status).json({
+      error: err instanceof Error ? err.message : 'tool invocation failed',
+      ...(details ? { details } : {}),
+    });
+  }
 });

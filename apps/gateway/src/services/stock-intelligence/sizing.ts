@@ -1,4 +1,8 @@
 /**
+ * DEPRECATED: replaced by orchestrator/sizing.ts (vol-budgeted, ATR-distance,
+ * fractional-Kelly). Kept temporarily for backward compatibility — do not
+ * call from new code. The stock-agent now uses the orchestrator sizer.
+ *
  * Volatility-Adjusted Position Sizer
  *
  * Computes per-trade position size using:

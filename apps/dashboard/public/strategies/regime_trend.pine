@@ -1,0 +1,168 @@
+//@version=6
+// =====================================================================
+// TradeWorks v2 — Strategy B2: Regime-Filtered Trend Following
+// ---------------------------------------------------------------------
+// Long-only trend follower for broad-market and sector ETFs. Entries fire
+// only when ALL of the following hold on the daily close:
+//   1. close > SMA(close, ma_period)               // 200d trend filter
+//   2. ROC(close, roc_period) > roc_min            // 21d positive momentum
+//   3. ATR%(atr_period) within [lo, hi] percentiles of its 252d distribution
+//   4. SPY > SMA(SPY, ma_period)                   // broad-market confluence
+//   5. (Visual) Background green = "calm/trending" regime per VIX + SPY MA
+//
+// Exits:
+//   - Trailing stop = trail_atr_multiple * ATR(atr_period) below highest close
+//   - Regime flip to volatile/crisis (visualized via background color)
+//   - Optional time stop = time_stop_days bars
+//
+// Mirrors:  research/strategies/regime_trend/signal.py
+// Source:   apps/dashboard/public/strategies/regime_trend.pine
+// =====================================================================
+strategy(
+     title             = "TradeWorks v2: Regime Trend",
+     shorttitle        = "TW B2: Regime Trend",
+     overlay           = true,
+     pyramiding        = 0,
+     default_qty_type  = strategy.percent_of_equity,
+     default_qty_value = 15.0,
+     initial_capital   = 100000,
+     commission_type   = strategy.commission.percent,
+     commission_value  = 0.01,
+     slippage          = 1,
+     calc_on_every_tick = false,
+     process_orders_on_close = false)
+
+// ---------------- Inputs ----------------
+grpTrend  = "Trend filter"
+maPeriod  = input.int(200, "MA period (trend filter)", minval=20, group=grpTrend)
+rocPeriod = input.int(21,  "ROC period (momentum)",   minval=5,  group=grpTrend)
+rocMin    = input.float(0.0, "ROC min threshold",     step=0.001, group=grpTrend)
+
+grpVol     = "Volatility filter"
+atrPeriod  = input.int(14,  "ATR period",                          minval=2,  group=grpVol)
+volWindow  = input.int(252, "Vol percentile window",               minval=50, group=grpVol)
+volPctLo   = input.float(25.0, "Vol percentile low (skip below)",  minval=0.0, maxval=100.0, group=grpVol)
+volPctHi   = input.float(75.0, "Vol percentile high (skip above)", minval=0.0, maxval=100.0, group=grpVol)
+
+grpReg = "Regime + confluence"
+useSpyConfluence = input.bool(true,  "Require SPY > 200d MA for entries", group=grpReg)
+spySymbol        = input.symbol("AMEX:SPY", "SPY symbol for confluence",  group=grpReg)
+useVixRegime     = input.bool(true,  "Use VIX regime overlay (background)", group=grpReg)
+vixSymbol        = input.symbol("CBOE:VIX", "VIX symbol for regime",      group=grpReg)
+vixVolatile      = input.float(22.0, "VIX volatile threshold",           group=grpReg)
+vixCrisis        = input.float(35.0, "VIX crisis threshold",             group=grpReg)
+vixCrisisBelowMa = input.float(25.0, "VIX crisis-while-below-MA threshold", group=grpReg)
+
+grpExit       = "Exits"
+trailAtrMult  = input.float(1.5, "Trailing stop ATR multiple", minval=0.1, step=0.1, group=grpExit)
+useTimeStop   = input.bool(true, "Enable time stop", group=grpExit)
+timeStopDays  = input.int(90, "Time stop (bars)", minval=1, group=grpExit)
+
+// ---------------- Helpers ----------------
+// Approximate rolling percentile via highest/lowest of an N-bar window.
+// (Pine v6 has no built-in rolling-percentile; for visual sanity-check this
+// is close enough — use the Python backtest for hard numbers.)
+f_rolling_percentile(_src, _len, _pct) =>
+    var float[] buf = array.new<float>(0)
+    array.unshift(buf, _src)
+    if array.size(buf) > _len
+        array.pop(buf)
+    sorted = array.copy(buf)
+    array.sort(sorted, order.ascending)
+    sz = array.size(sorted)
+    sz < _len ? na : array.get(sorted, math.max(0, math.min(sz - 1, math.round(_pct / 100.0 * (sz - 1)))))
+
+// ---------------- Indicators ----------------
+sma200       = ta.sma(close, maPeriod)
+rocVal       = ta.roc(close, rocPeriod) / 100.0   // ta.roc returns a percent
+atrVal       = ta.atr(atrPeriod)
+atrPct       = atrVal / close * 100.0             // ATR as % of price
+
+volLo = f_rolling_percentile(atrPct, volWindow, volPctLo)
+volHi = f_rolling_percentile(atrPct, volWindow, volPctHi)
+
+// ---------------- SPY confluence ----------------
+spyClose = useSpyConfluence ? request.security(spySymbol, "D", close, lookahead=barmerge.lookahead_off) : close
+spySma   = useSpyConfluence ? request.security(spySymbol, "D", ta.sma(close, maPeriod), lookahead=barmerge.lookahead_off) : sma200
+spyTrendOk = not useSpyConfluence or spyClose > spySma
+
+// ---------------- VIX regime overlay ----------------
+vixVal     = useVixRegime ? request.security(vixSymbol, "D", close, lookahead=barmerge.lookahead_off) : 0.0
+isCrisis   = useVixRegime and (vixVal > vixCrisis or (close < sma200 and vixVal > vixCrisisBelowMa))
+isVolatile = useVixRegime and (not isCrisis) and (vixVal > vixVolatile)
+isTrending = (not isCrisis) and (not isVolatile) and (close > sma200) and (math.abs(ta.roc(close, 20) / 100.0) > 0.03)
+isCalm     = (not isCrisis) and (not isVolatile) and (not isTrending)
+regimeOk   = isCalm or isTrending
+
+// ---------------- Entry permission ----------------
+trendOk    = close > sma200
+momentumOk = rocVal > rocMin
+volBandOk  = not na(volLo) and not na(volHi) and atrPct >= volLo and atrPct <= volHi
+
+permit = trendOk and momentumOk and volBandOk and spyTrendOk and regimeOk
+
+// Rising-edge entry: was permit false on the prior bar?
+risingEdge = permit and not nz(permit[1], false)
+
+// ---------------- Trailing stop / time stop state ----------------
+var float trailHigh   = na
+var int   barsInPos   = 0
+
+if strategy.position_size > 0
+    trailHigh := na(trailHigh) ? close : math.max(trailHigh, close)
+    barsInPos += 1
+else
+    trailHigh := na
+    barsInPos := 0
+
+stopLevel = na(trailHigh) ? na : trailHigh - trailAtrMult * atrVal
+
+// ---------------- Orders ----------------
+if risingEdge and strategy.position_size == 0
+    strategy.entry("Long", strategy.long, comment="entry")
+
+// Exits while in a position
+if strategy.position_size > 0
+    // 1. Regime exit (immediate)
+    if not regimeOk
+        strategy.close("Long", comment="regime")
+    // 2. Trailing ATR stop
+    if not na(stopLevel) and close <= stopLevel
+        strategy.close("Long", comment="trail")
+    // 3. Time stop
+    if useTimeStop and barsInPos >= timeStopDays
+        strategy.close("Long", comment="time")
+
+// ---------------- Visuals ----------------
+plot(sma200,      title="SMA(200)",       color=color.new(color.orange, 0), linewidth=2)
+plot(stopLevel,   title="Trail stop",     color=color.new(color.red, 0),    style=plot.style_linebr)
+
+// Regime background colors (transparent shading).
+bgcolor(isCrisis   ? color.new(color.red,    85) : na, title="Crisis bg")
+bgcolor(isVolatile ? color.new(color.orange, 88) : na, title="Volatile bg")
+bgcolor(isTrending ? color.new(color.green,  90) : na, title="Trending bg")
+bgcolor(isCalm     ? color.new(color.aqua,   93) : na, title="Calm bg")
+
+// Permit / entry markers for visual debugging.
+plotshape(risingEdge,      title="Rising-edge entry",   style=shape.triangleup,   location=location.belowbar, color=color.new(color.lime, 0), size=size.tiny)
+plotshape(permit and not risingEdge, title="Permit-on-bar", style=shape.circle, location=location.belowbar,
+     color=color.new(color.green, 60), size=size.tiny)
+
+// Optional info table — useful when running on multiple charts.
+var table info = table.new(position.top_right, 2, 6, border_width=1)
+if barstate.islast
+    table.cell(info, 0, 0, "Regime",      bgcolor=color.new(color.gray, 80))
+    table.cell(info, 1, 0, isCrisis ? "crisis" : isVolatile ? "volatile" : isTrending ? "trending" : "calm",
+         bgcolor=isCrisis ? color.red : isVolatile ? color.orange : isTrending ? color.green : color.aqua,
+         text_color=color.white)
+    table.cell(info, 0, 1, "Close > 200MA")
+    table.cell(info, 1, 1, trendOk ? "yes" : "no")
+    table.cell(info, 0, 2, "ROC > min")
+    table.cell(info, 1, 2, momentumOk ? "yes" : "no")
+    table.cell(info, 0, 3, "ATR% in band")
+    table.cell(info, 1, 3, volBandOk ? "yes" : "no")
+    table.cell(info, 0, 4, "SPY trend OK")
+    table.cell(info, 1, 4, spyTrendOk ? "yes" : "no")
+    table.cell(info, 0, 5, "Permit")
+    table.cell(info, 1, 5, permit ? "PERMIT" : "BLOCK",
+         bgcolor=permit ? color.green : color.red, text_color=color.white)

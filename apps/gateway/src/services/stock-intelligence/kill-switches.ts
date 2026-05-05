@@ -1,24 +1,32 @@
 /**
- * Kill Switches + SPY Regime Multiplier
+ * @deprecated The kill-switch surface in this file (getKillSwitchState,
+ * resetKillSwitch, checkKillSwitches) has been SUPERSEDED by the unified
+ * multi-level orchestrator at `services/orchestrator/kill-switches.ts`. New
+ * callers should import from there instead — see `getKillSwitchStatus`,
+ * `isTradingAllowed`, `activateMasterKill`, `pauseStrategy`, `pausePortfolio`.
  *
- * Phase 5 risk management. Three circuit breakers evaluated before every
- * equity/option entry:
+ * Why a unified module?
+ *   - The orchestrator covers strategy / portfolio / master levels (not just
+ *     the equity-ledger snapshot this module sees).
+ *   - It pulls realized PnL from the memory DB (cross-asset, persistent),
+ *     not just the in-memory paper ledger.
+ *   - It's wired into the TradingView webhook entry gate AND the exits
+ *     monitor tick — single source of truth for "can we trade right now?"
  *
- *   1. Daily loss cap:
- *        Today's realised P&L < -3% of account → trip for 24h.
- *   2. Max drawdown cap:
- *        Peak-to-current drawdown > 15% → trip indefinitely (manual reset).
- *   3. Consecutive-loss cap:
- *        Last 5 closed trades all losses → trip for 4h.
+ * What stays here:
+ *   - `getRegimeMultiplier()` is the SPY regime size scaler — a different
+ *     concept than kill switches. It remains in this file because it has no
+ *     better home today and no callers want to restructure imports for it.
  *
- * A lightweight SPY regime multiplier scales position size:
- *   - SPY above 50MA AND 200MA  → 1.0 (normal)
- *   - SPY above 50MA, below 200 → 0.7 (cautious)
- *   - SPY below 50MA            → 0.5 (defensive)
- *
- * State is persisted to data/stocks/kill-switch.json so a restart does not
- * reset an active trip.
+ * Migration plan:
+ *   - `routes/stocks.ts` legacy endpoints (`/kill-switch`, `/kill-switch/reset`)
+ *     have been retained for backward compatibility but they now report a
+ *     deprecation warning header. Dashboards should switch to
+ *     `/api/v1/kill-switches/status` + `/master-deactivate`.
  */
+/* eslint-disable @typescript-eslint/no-deprecated */
+//
+// Kill Switches + SPY Regime Multiplier  (legacy — see above)
 
 import fs from 'fs';
 import path from 'path';

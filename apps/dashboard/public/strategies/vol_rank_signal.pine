@@ -1,0 +1,100 @@
+// TradeWorks Strategy B3 — Vol-Rank Mean Reversion (Options) Signal
+//
+// Pine v6 INDICATOR (not strategy — options aren't tradable in Pine, the
+// gateway picks up the alert and routes to Alpaca options paper).
+//
+// Plots:
+//   - IV-rank using the historical-vol proxy: stdev(returns, 20) * sqrt(252),
+//     ranked over a 252-day window
+//   - Vertical buy-signal arrow when (IV-rank > 70) AND (close < SMA(20) - 2*stdev)
+//   - 200d SMA for the long-bias filter
+//
+// Webhook alert payload (one alert per ticker, set to "Once Per Bar Close"):
+//   {"strategy":"vol_rank","symbol":"{{ticker}}","action":"open_put_spread","price":{{close}}}
+//
+// Add to TradingView: Pine Editor → paste → Save → Add to chart → Right-click
+// the indicator → Add Alert → Condition: "TradeWorks Vol-Rank Signal" →
+// "Open Put Spread" → set webhook URL to the gateway's TradingView endpoint.
+
+//@version=6
+indicator("TradeWorks Vol-Rank Signal (B3)", overlay=true,
+          max_lines_count=100, max_labels_count=100)
+
+// ─── Inputs ────────────────────────────────────────────────────────────────
+ivRankLen     = input.int(252, "IV-Rank Lookback (bars)",     minval=20)
+ivRankMin     = input.float(70.0, "IV-Rank Minimum (%)",      minval=0.0, maxval=100.0, step=1.0)
+smaLen        = input.int(20,  "Mean-Reversion SMA Length",   minval=2)
+sigmaMult     = input.float(2.0,  "Std-Dev Below SMA",        minval=0.5,  step=0.1)
+trendLen      = input.int(200, "Trend Filter SMA Length",     minval=20)
+showIvRankPlot= input.bool(true, "Show IV-Rank in Lower Pane (separate indicator)")
+
+// ─── Calculations ──────────────────────────────────────────────────────────
+// HV proxy: 20d annualized realized vol. (Real IV would come from option chain
+// — Pine doesn't have native IV, but HV is a usable proxy for the rank logic.)
+returns      = math.log(close / close[1])
+ivProxy      = ta.stdev(returns, smaLen) * math.sqrt(252)
+
+// Trailing 252d percentile rank of ivProxy.
+ivRank       = ta.percentrank(ivProxy, ivRankLen)
+
+// Mean-reversion trigger.
+sma20        = ta.sma(close, smaLen)
+std20        = ta.stdev(close, smaLen)
+lowerBand    = sma20 - sigmaMult * std20
+
+// Long-bias filter.
+sma200       = ta.sma(close, trendLen)
+trendOk      = close > sma200
+
+// Composite buy signal — all gates must fire.
+buySignal    = (ivRank > ivRankMin) and (close < lowerBand) and trendOk
+
+// ─── Plots ─────────────────────────────────────────────────────────────────
+// 200d SMA (trend filter).
+plot(sma200, color=color.new(color.gray, 30), linewidth=2, title="SMA 200 (trend)")
+// 20d SMA + 2-sigma lower band.
+plot(sma20,    color=color.new(color.aqua, 0),  linewidth=1, title="SMA 20")
+plot(lowerBand,color=color.new(color.red,  20), linewidth=1, title="Lower Band (-2σ)",
+     style=plot.style_linebr)
+
+// Vertical arrow at the buy bar.
+plotshape(buySignal, title="Buy Put-Spread Signal",
+          location=location.belowbar, color=color.new(color.green, 0),
+          style=shape.triangleup, size=size.normal,
+          text="VR-BUY", textcolor=color.white)
+
+// IV-rank value displayed as a label every 50 bars (so chart isn't cluttered).
+var label ivRankLabel = na
+if bar_index % 50 == 0 and not na(ivRank)
+    label.delete(ivRankLabel)
+    ivRankLabel := label.new(
+         x=bar_index, y=high * 1.01,
+         text="IVR " + str.tostring(ivRank, "#.0") + "%",
+         color=color.new(color.purple, 70),
+         textcolor=color.white,
+         style=label.style_label_down,
+         size=size.small)
+
+// ─── Alert ─────────────────────────────────────────────────────────────────
+// Set this alert's "Message" field on TradingView to:
+//   {"strategy":"vol_rank","symbol":"{{ticker}}","action":"open_put_spread","price":{{close}}}
+// or use alert() with a hardcoded JSON body (below) — both work; the
+// hardcoded form is more reliable since it doesn't depend on the user
+// remembering to copy the message into the alert dialog.
+if buySignal
+    alert(
+       '{"strategy":"vol_rank","symbol":"' + syminfo.ticker
+       + '","action":"open_put_spread","price":' + str.tostring(close)
+       + ',"iv_rank":' + str.tostring(ivRank, "#.00")
+       + ',"sma20":' + str.tostring(sma20, "#.00")
+       + ',"lower_band":' + str.tostring(lowerBand, "#.00")
+       + '}',
+       alert.freq_once_per_bar_close)
+
+// ─── Optional: emit IV-rank value via plot for tv-bridge ───────────────────
+// tv-bridge picks up plot values via CDP for cross-checking. Keep IV-rank
+// last so it appears as the final value in the indicator's value column.
+plot(ivRank, title="IV-Rank %", color=color.new(color.purple, 50),
+     display=display.data_window)
+plot(buySignal ? 1.0 : 0.0, title="VR-Signal (1=buy)",
+     color=color.new(color.green, 50), display=display.data_window)

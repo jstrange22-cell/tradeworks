@@ -165,18 +165,84 @@ async function setChartSymbol(tvSymbol: string): Promise<{ ok: boolean; error?: 
 }
 
 // ── Signal classification ──────────────────────────────────────────────
-function classifyLabel(text: string): { action: 'buy' | 'sell'; grade: 'standard' | 'strong'; score: number } | null {
+// Direction comes from the label TEXT; the numeric grade comes from the
+// indicator's `IntScore` plot read live from the chart via CDP (see
+// readIndicatorScore below). The stale text-only "isStrong = / A\b/.test"
+// heuristic that lived here was fiction — the gateway's per-grade sizing
+// ($100/$250/$500) was decoupled from the Pine indicator's actual score.
+function classifyLabelDirection(text: string): { action: 'buy' | 'sell' } | null {
   const t = (text ?? '').trim().toUpperCase();
   if (!t) return null;
-  const isBuy = t.startsWith('BUY');
-  const isSell = t.startsWith('SELL');
-  if (!isBuy && !isSell) return null;
-  const isStrong = / A\b/.test(t);
-  return {
-    action: isBuy ? 'buy' : 'sell',
-    grade: isStrong ? 'strong' : 'standard',
-    score: isStrong ? 5 : 4,
-  };
+  if (t.startsWith('BUY')) return { action: 'buy' };
+  if (t.startsWith('SELL')) return { action: 'sell' };
+  return null;
+}
+
+// Map the integer 0..6 confluence score from the Pine indicator to the
+// gateway's grade enum. Thresholds match docs/SNIPER-IMPROVEMENT-PLAN.md and
+// the tradevisor-engine expectations: 6 = full 3-way alignment, 5 = 2.5-way
+// (with neutral RSI), 4 = 2-of-3 alignment, anything below = reject.
+function gradeFromIntScore(intScore: number): { grade: 'prime' | 'strong' | 'standard' | 'reject'; score: number } {
+  // Clamp to 0..6 (gateway Zod schema requires int in this range).
+  const clamped = Math.max(0, Math.min(6, Math.round(intScore)));
+  if (clamped >= 6) return { grade: 'prime', score: 6 };
+  if (clamped >= 5) return { grade: 'strong', score: 5 };
+  if (clamped >= 4) return { grade: 'standard', score: 4 };
+  return { grade: 'reject', score: clamped };
+}
+
+// Read the Pine indicator's hidden `IntScore` plot off the active chart via
+// CDP. Reuses the same `dataSource._lastValues` path that the chart-state
+// HTTP server (chart-state-server.ts) walks for the gateway reasoner. If the
+// indicator is missing, removed, or the value isn't finite we return null —
+// the caller posts the signal with grade='reject' so the gateway's
+// fail-closed agent (A1) drops the trade rather than fabricating a number.
+function buildReadIntScoreJS(filter: string): string {
+  const filterLit = JSON.stringify(filter);
+  return `
+    (function() {
+      try {
+        var chart = window.TradingViewApi._activeChartWidgetWV.value()._chartWidget;
+        var sources = chart.model().model().dataSources();
+        var filter = ${filterLit};
+        for (var si = 0; si < sources.length; si++) {
+          var s = sources[si];
+          if (!s.metaInfo) continue;
+          var meta = null;
+          try { meta = s.metaInfo(); } catch(e) { continue; }
+          if (!meta) continue;
+          var name = meta.description || meta.shortDescription || '';
+          if (filter && name.indexOf(filter) === -1) continue;
+          if (!s._lastValues) continue;
+          // Pine plot title becomes the key. Prefer IntScore (machine-readable
+          // grade); fall back to ScoreRaw if a future Pine revision drops one.
+          var v = s._lastValues['IntScore'];
+          if (v === undefined || v === null) v = s._lastValues['ScoreRaw'];
+          if (typeof v !== 'number' || !isFinite(v)) continue;
+          return { ok: true, value: v, source: name };
+        }
+        return { ok: false, error: 'indicator not found or no _lastValues' };
+      } catch(e) {
+        return { ok: false, error: (e && e.message) ? e.message : String(e) };
+      }
+    })()
+  `;
+}
+
+async function readIndicatorScore(filter: string): Promise<number | null> {
+  try {
+    const r = await evaluate<{ ok: boolean; value?: number; error?: string }>(
+      buildReadIntScoreJS(filter),
+    );
+    if (!r.ok || typeof r.value !== 'number' || !Number.isFinite(r.value)) {
+      log.debug({ filter, err: r.error }, 'indicator score read failed');
+      return null;
+    }
+    return r.value;
+  } catch (err) {
+    log.warn({ err: err instanceof Error ? err.message : err }, 'CDP read of indicator score threw');
+    return null;
+  }
 }
 
 function normalizeSymbol(rawSymbol: string): { symbol: string; exchange: string } {
@@ -234,8 +300,8 @@ async function processCurrentChart(state: BridgeState): Promise<void> {
 
   for (const lbl of fresh) {
     const text = lbl.raw.t ?? '';
-    const cls = classifyLabel(text);
-    if (!cls) {
+    const direction = classifyLabelDirection(text);
+    if (!direction) {
       state.lastSeenIdByKey[k] = lbl.id;
       continue;
     }
@@ -246,12 +312,26 @@ async function processCurrentChart(state: BridgeState): Promise<void> {
       continue;
     }
 
+    // Read the live integer score off the indicator on the same chart.
+    // If the read fails, fall through with grade=reject so the gateway's
+    // fail-closed agent drops the trade — never fabricate a number.
+    const rawScore = await readIndicatorScore(matched.studyName);
+    const graded = rawScore == null
+      ? { grade: 'reject' as const, score: 0 }
+      : gradeFromIntScore(rawScore);
+    if (rawScore == null) {
+      log.warn(
+        { symbol, study: matched.studyName, label: text },
+        'indicator score unreadable — posting with grade=reject (gateway will drop)',
+      );
+    }
+
     const signal: WebhookSignal = {
       symbol,
-      action: cls.action,
+      action: direction.action,
       price: Math.round(price * 100) / 100,
-      score: cls.score,
-      grade: cls.grade,
+      score: graded.score,
+      grade: graded.grade,
       time: new Date().toISOString(),
       exchange,
       timeframe: resolution,

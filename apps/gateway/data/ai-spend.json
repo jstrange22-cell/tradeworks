@@ -1,0 +1,22 @@
+{
+  "current": {
+    "date": "2026-05-05",
+    "totalUsd": 1.5756249999999985,
+    "callCount": 100,
+    "byModel": {
+      "claude-sonnet-4-6": {
+        "calls": 50,
+        "usd": 1.1249999999999993
+      },
+      "gpt-4o": {
+        "calls": 25,
+        "usd": 0.4375000000000003
+      },
+      "gemini-2.5-flash": {
+        "calls": 25,
+        "usd": 0.013124999999999996
+      }
+    }
+  },
+  "history": []
+}

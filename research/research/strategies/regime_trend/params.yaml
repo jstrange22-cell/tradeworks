@@ -1,0 +1,44 @@
+# Regime-Filtered Trend Following (Strategy B2) parameters.
+#
+# Long-only trend following on broad-market + sector ETFs. Entries gated by
+# regime tag (calm/trending only). Exits on trailing ATR stop, regime flip,
+# or 90-day time stop. Sizing via ATR-risk units. References:
+#   - Faber, M. (2007). "A Quantitative Approach to Tactical Asset Allocation."
+#   - Antonacci, G. (2014). "Dual Momentum Investing."
+
+# --- Trend filter ---
+ma_period: 200          # canonical 200-day SMA trend filter (Faber 2007)
+roc_period: 21          # 21-day rate-of-change momentum window (~1 month)
+roc_min: 0.0            # require positive momentum
+
+# --- Volatility filter ---
+atr_period: 14          # ATR lookback for vol percentile + stop sizing
+vol_pctile_window: 252  # rolling window for ATR-% percentile bounds (~1 year)
+vol_pctile_lo: 25.0     # skip low-vol (mean-reverting churn)
+vol_pctile_hi: 75.0     # skip high-vol (whipsaw zone)
+
+# --- SPY confluence (set True to require SPY > 200d MA on every entry) ---
+require_spy_trend: true
+
+# --- Allowed regimes (entries blocked outside this set) ---
+allowed_regimes:
+  - calm
+  - trending
+
+# --- Exit rules ---
+trail_atr_multiple: 1.5  # trailing stop = 1.5 * ATR(14) below highest close
+time_stop_days: 90       # max hold period; null disables
+
+# --- Position sizing ---
+risk_per_trade: 0.004    # 0.4% equity at risk per trade
+max_position_pct: 0.15   # cap any single ETF at 15% of equity
+max_concurrent_positions: 8
+
+# --- Engine knobs forwarded to run_full_backtest ---
+initial_cash: 100000.0
+fee_bps: 1.0             # 1 bp per side
+slippage_bps: 1.0        # 1 bp per side
+train_years: 2.0
+test_years: 0.5
+step_years: 0.5
+warmup_bars: 252         # need a full year for vol percentile + 200MA

@@ -32,8 +32,16 @@ export function getCycleInstruments(): string[] {
   return [...cycleInstruments];
 }
 
-// Paper trade recording hook — set by crypto-agent.ts
-let paperTradeRecorder: ((exec: { instrument: string; side: string; quantity: number; price: number }) => void) | null = null;
+// Paper trade recording hook — set by crypto-agent.ts. `decisionId` is
+// optional because the engine's signal-generator path doesn't always know
+// the parent TradeVisor decision; recordPaperTrade tolerates null.
+let paperTradeRecorder: ((exec: {
+  instrument: string;
+  side: string;
+  quantity: number;
+  price: number;
+  decisionId?: string | null;
+}) => void) | null = null;
 
 export function setPaperTradeRecorder(fn: typeof paperTradeRecorder): void {
   paperTradeRecorder = fn;

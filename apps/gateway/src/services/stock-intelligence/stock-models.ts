@@ -145,6 +145,11 @@ export interface EquityPosition {
   entryAt: string;              // ISO timestamp
   signalSource: string;         // e.g. 'tradevisor_prime'
   signalScore: number;          // confluence score 0-6
+  // TradeVisor agent Decision UUID that approved this entry. Lets us
+  // attribute realized P&L back to the reasoning trace when the position
+  // closes. Optional so legacy ledger rows that pre-date this field still
+  // parse — new writes always populate it (random UUID for non-agent entries).
+  decisionId?: string | null;
   // ── Phase 1 exit-tracking (optional so legacy ledgers still parse) ──
   stopLossPrice?: number;       // hard stop absolute price, typically entryPrice * 0.95
   highWaterPct?: number;        // highest pnlPct ever seen (drives trailing TP)
@@ -166,6 +171,9 @@ export interface OptionPosition {
   entryAt: string;              // ISO timestamp
   signalSource: string;
   signalScore: number;
+  // TradeVisor agent Decision UUID that approved this entry. See
+  // EquityPosition.decisionId — same purpose, options book.
+  decisionId?: string | null;
   // ── Phase 1 exit-tracking (optional so legacy ledgers still parse) ──
   stopLossMid?: number;         // hard stop absolute mid, typically entryMid * 0.5
   highWaterPct?: number;        // highest pnlPct ever seen (drives trailing TP)

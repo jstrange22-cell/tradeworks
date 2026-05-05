@@ -85,6 +85,9 @@ importers:
       cmdk:
         specifier: ^1.1.1
         version: 1.1.1(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      idb-keyval:
+        specifier: ^6.2.2
+        version: 6.2.2
       lightweight-charts:
         specifier: ^4.2.0
         version: 4.2.3
@@ -237,6 +240,9 @@ importers:
       jsonwebtoken:
         specifier: ^9.0.3
         version: 9.0.3
+      pg:
+        specifier: ^8.13.0
+        version: 8.19.0
       pino:
         specifier: ^10.3.1
         version: 10.3.1
@@ -283,6 +289,9 @@ importers:
       '@types/jsonwebtoken':
         specifier: ^9.0.10
         version: 9.0.10
+      '@types/pg':
+        specifier: ^8.11.0
+        version: 8.18.0
       '@types/pino-http':
         specifier: ^6.1.0
         version: 6.1.0

@@ -45,6 +45,35 @@ score = trendScore * 0.35 + momentumScore * 0.30 + rsiScore * 0.30
 buySignal  = score > 0.2  and ta.crossover(score,  0.2)
 sellSignal = score < -0.2 and ta.crossunder(score, -0.2)
 
+// ─── Machine-readable grade for tv-bridge ──────────────────────────────────
+// The continuous `score` above is in [-0.37, 0.37] which is hard for the
+// gateway (which expects an integer 0-6 grade). Compute a directional integer
+// confluence: 2 points per aligned component (trend / momentum / RSI bias).
+// On a BUY label, all three components must be bullish-leaning so the value
+// will be 4-6 (4 = standard, 5 = strong w/ partial RSI, 6 = prime). On a
+// SELL label, the logic mirrors via the absolute count of bearish components.
+// tv-bridge reads this via `_lastValues` over CDP and maps it to the
+// {standard, strong, prime, reject} grade enum the gateway accepts.
+trendBull    = stDir == 1
+trendBear    = stDir == -1
+momBull      = macdLine > signalLine
+momBear      = macdLine < signalLine
+rsiBull      = rsiVal < 30
+rsiBear      = rsiVal > 70
+rsiNeutral   = not rsiBull and not rsiBear
+// On the BUY side: full alignment (trend+mom+RSI<30) = 6, two-of-three with
+// neutral RSI = 5, two-of-three with the third inverted = 4. Same magnitude
+// scale on SELL via bearish components.
+bullCount = (trendBull ? 1 : 0) + (momBull ? 1 : 0) + (rsiBull ? 1 : 0) + (rsiNeutral and (trendBull or momBull) ? 1 : 0)
+bearCount = (trendBear ? 1 : 0) + (momBear ? 1 : 0) + (rsiBear ? 1 : 0) + (rsiNeutral and (trendBear or momBear) ? 1 : 0)
+// Pick the active side. Range 0..3 → multiplied by 2 → 0/2/4/6.
+intScoreSide  = score > 0 ? bullCount : score < 0 ? bearCount : 0
+intScore      = intScoreSide * 2
+// Hidden plot — invisible on chart, appears in TV's data window and is
+// readable via `dataSource._lastValues` over CDP. Title becomes the key.
+plot(intScore, title="IntScore", display=display.data_window, color=color.new(color.white, 100))
+plot(score,    title="ScoreRaw", display=display.data_window, color=color.new(color.white, 100))
+
 // ─── Markers ───────────────────────────────────────────────────────────────
 if showBuySell
     if buySignal

@@ -140,8 +140,26 @@ function fetchScout(symbol: string): ScoutContext | null {
 
 // ── Macro regime ───────────────────────────────────────────────────────
 async function fetchMacro(): Promise<MacroContext> {
-  // Reuse existing macro-regime service when available; otherwise derive from
-  // SPY's scout entry (which we already have RS data for).
+  // Always try the orchestrator-level regime first — it's the canonical signal
+  // consumed by sizing, heat, and the bandit. The legacy macro-regime service
+  // (risk-on/risk-off/etc) is preserved for prompt back-compat but kept
+  // secondary.
+  let regimeTag: MacroContext['regimeTag'] = null;
+  let regimeConfidence = 0;
+  let regimeRationale = '';
+  try {
+    const regimeSvc = await import('../../orchestrator/regime.js');
+    const r = await regimeSvc.getCurrentRegime();
+    regimeTag = r.tag;
+    regimeConfidence = r.confidence;
+    regimeRationale = r.rationale;
+  } catch (err) {
+    logger.debug(
+      { err: err instanceof Error ? err.message : err },
+      '[TVAgent] regime fetch failed',
+    );
+  }
+
   try {
     const macroSvc = await import('../macro-regime.js');
     if (typeof macroSvc.getMacroRegime === 'function') {
@@ -153,25 +171,39 @@ async function fetchMacro(): Promise<MacroContext> {
               : regime.includes('transition') ? 'transitioning'
               : regime.includes('crisis') ? 'crisis'
               : 'unknown',
+        regimeTag,
+        regimeConfidence,
+        regimeRationale,
         spyRs5d: 0,
         spyRs20d: 0,
-        notes: r?.summary ?? '',
+        notes: regimeRationale ? `${r?.summary ?? ''} | ${regimeRationale}`.trim() : (r?.summary ?? ''),
       };
     }
   } catch { /* fallthrough */ }
 
-  // Fallback: derive from scout's SPY entry
+  // Fallback: derive legacy label from scout's SPY entry
   const spy = fetchScout('SPY');
   if (spy) {
-    const regime = spy.rs20d < -0.05 ? 'risk-off' : spy.rs20d > 0.05 ? 'risk-on' : 'transitioning';
+    const legacyRegime = spy.rs20d < -0.05 ? 'risk-off' : spy.rs20d > 0.05 ? 'risk-on' : 'transitioning';
     return {
-      regime,
+      regime: legacyRegime,
+      regimeTag,
+      regimeConfidence,
+      regimeRationale,
       spyRs5d: spy.rs5d,
       spyRs20d: spy.rs20d,
-      notes: `derived from SPY rs20d=${(spy.rs20d * 100).toFixed(1)}%`,
+      notes: `derived from SPY rs20d=${(spy.rs20d * 100).toFixed(1)}%${regimeRationale ? ` | ${regimeRationale}` : ''}`,
     };
   }
-  return { regime: 'unknown', spyRs5d: 0, spyRs20d: 0, notes: 'no macro source available' };
+  return {
+    regime: 'unknown',
+    regimeTag,
+    regimeConfidence,
+    regimeRationale,
+    spyRs5d: 0,
+    spyRs20d: 0,
+    notes: regimeRationale || 'no macro source available',
+  };
 }
 
 // ── Chart state via tv-bridge HTTP endpoint ───────────────────────────

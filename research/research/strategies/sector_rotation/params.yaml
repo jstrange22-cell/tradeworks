@@ -1,0 +1,33 @@
+# Sector Rotation by Relative Strength — Strategy B4
+#
+# Cross-sectional momentum across the 11 SPDR sector ETFs. On each rebalance
+# date (last trading day of the month) we rank the sectors by trailing ROC,
+# hold the top-N equal-weight, and apply Antonacci-style dual-momentum
+# (positive absolute return required) plus a portfolio-level drawdown breaker.
+
+# --- Signal knobs ---
+# Lookback for trailing ROC (relative-strength score). 21 ~= 1 trading month.
+roc_lookback: 21
+
+# Number of top-ranked sectors to hold equal-weight.
+top_n: 3
+
+# If true, drop sectors whose trailing ROC is <= 0 (Antonacci dual momentum).
+# Positions that fail this filter are replaced by SHV (cash).
+dual_momentum: true
+
+# --- Portfolio risk knobs ---
+# Drawdown circuit-breaker. If portfolio peak-to-trough drawdown breaches
+# this fraction, allocate 100% to SHV until the curve recovers and a new
+# month-end rebalance puts us back in sectors. Set to 0 to disable.
+drawdown_breaker: 0.12
+
+# --- Engine knobs ---
+initial_cash: 10000.0
+fee_bps: 1.0          # 1 bp per side
+slippage_bps: 1.0     # 1 bp per side
+
+# Walk-forward windowing (5y train / 1y test, sliding 1y).
+train_years: 5.0
+test_years: 1.0
+step_years: 1.0

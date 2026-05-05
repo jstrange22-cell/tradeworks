@@ -29,7 +29,9 @@ import {
 import { loadPaperLedger, savePaperLedger } from './stock-orchestrator.js';
 import { selectOptionContract } from './options-policy.js';
 import { getOptionsChain } from '../stocks/robinhood-options.js';
-import { computePositionSize } from './sizing.js';
+import { computePositionSize } from '../orchestrator/sizing.js';
+import { triggerExit } from '../exits/index.js';
+import { emitAppEvent } from '../../lib/events-bus.js';
 
 // ── Signal Shape ────────────────────────────────────────────────────────
 
@@ -39,6 +41,14 @@ export interface StockAgentSignal {
   price: number;
   score: number;
   grade: 'prime' | 'strong' | 'standard' | 'reject';
+  /**
+   * TradeVisor agent Decision UUID that approved this signal. Stamped onto
+   * the resulting EquityPosition / OptionPosition so the close handler can
+   * attribute realized P&L back to the reasoning trace. Required for new
+   * call sites — callers without an agent decision should generate a fresh
+   * UUID (e.g. `randomUUID()`) so the type stays non-null on the wire.
+   */
+  decisionId: string;
 }
 
 // ── Cooldown ────────────────────────────────────────────────────────────
@@ -58,12 +68,13 @@ function markCooldown(key: string): void {
 
 // ── Sizing ──────────────────────────────────────────────────────────────
 
-const EQUITY_SIZE_BY_GRADE: Record<StockAgentSignal['grade'], number> = {
-  standard: 100,
-  strong: 250,
-  prime: 500,
-  reject: 50, // score-3 paper signals allowed when TRADEVISOR_STOCK_MIN_SCORE=3
-};
+// DEPRECATED: equity sizing is now handled by orchestrator/sizing.ts (vol-
+// budgeted, ATR-distance, fractional-Kelly). The grade-tier dollar table
+// below is left as a reference for the legacy options sizing path only.
+// Equity sizing call sites now pass `totalEquityUsd` and a stop price into
+// the new `computePositionSize` and use `recommendedQuantity` directly.
+//
+// const EQUITY_SIZE_BY_GRADE = { standard: 100, strong: 250, prime: 500, reject: 50 };
 
 // Options need a larger budget than equity because ATM calls on mega-caps
 // cost $500-$1500 per contract (100x multiplier). Separate from equity.
@@ -181,17 +192,52 @@ export async function executeEquitySignal(signal: StockAgentSignal): Promise<boo
     );
   }
 
-  const baseSizeUsd = EQUITY_SIZE_BY_GRADE[signal.grade] ?? 0;
-  const positionSizeUsd = Math.round(baseSizeUsd * regimeMult * 100) / 100;
-  if (positionSizeUsd <= 0) return false;
+  // Quant sizing: vol-budgeted, ATR-distance, fractional-Kelly. Replaces the
+  // legacy grade-tier dollar sizing. ATR isn't yet plumbed through this path,
+  // so we use a flat 5% default stop distance — when ATR lands, swap stopPrice
+  // for `signal.price - atr * 2`.
+  const FLAT_STOP_PCT = 0.05;
+  const stopPrice = signal.price * (1 - FLAT_STOP_PCT);
+  // Approximate total equity = paper cash + open equity book (mark-to-entry).
+  const openEquityValue = state.equityPositions.reduce(
+    (acc, p) => acc + p.shares * p.currentPrice,
+    0,
+  );
+  const totalEquityUsd = state.paperCashUsd + openEquityValue;
 
-  if (state.paperCashUsd < positionSizeUsd) {
-    logger.warn({ cash: state.paperCashUsd, needed: positionSizeUsd }, '[StockAgent] Insufficient paper cash for equity signal');
+  const sizing = await computePositionSize({
+    strategy: `tradevisor_${signal.grade}`,
+    symbol,
+    side: 'buy',
+    entryPrice: signal.price,
+    stopPrice,
+    totalEquityUsd,
+    isOption: false,
+  });
+
+  // Apply regime multiplier (Phase 5: SPY regime scales notional in defensive
+  // tape). `recommendedQuantity` is whole shares from the new sizer; we scale
+  // and re-floor to keep integer quantities.
+  const rawShares = Math.floor(sizing.recommendedQuantity * regimeMult);
+  if (rawShares <= 0) {
+    logger.info(
+      { symbol, sizing: sizing.warnings },
+      '[StockAgent] sizing returned zero shares — skip',
+    );
     return false;
   }
 
-  const shares = Number((positionSizeUsd / signal.price).toFixed(4));
-  if (shares <= 0) return false;
+  const shares = rawShares;
+  const positionSizeUsd = Math.round(shares * signal.price * 100) / 100;
+  if (positionSizeUsd <= 0) return false;
+
+  if (state.paperCashUsd < positionSizeUsd) {
+    logger.warn(
+      { cash: state.paperCashUsd, needed: positionSizeUsd },
+      '[StockAgent] Insufficient paper cash for equity signal',
+    );
+    return false;
+  }
 
   // Live path is gated — leave a breadcrumb and fall through to paper fill
   // so the system keeps functioning until live wiring lands.
@@ -202,16 +248,7 @@ export async function executeEquitySignal(signal: StockAgentSignal): Promise<boo
     );
   }
 
-  // Phase 1: volatility-adjusted sizing computes the hard-stop price so the
-  // position-monitor can enforce it. ATR is not yet plumbed through this
-  // path, so `computePositionSize` falls back to the flat 5% stop distance.
-  const sizing = computePositionSize({
-    accountUsd: state.paperCashUsd + positionSizeUsd,  // approximate equity before fill
-    grade: signal.grade,
-    entryPrice: signal.price,
-    isOption: false,
-  });
-  const stopLossPrice = sizing.stopLossPrice > 0 ? sizing.stopLossPrice : signal.price * 0.95;
+  const stopLossPrice = stopPrice;
 
   const nowIso = new Date().toISOString();
   const position: EquityPosition = {
@@ -223,6 +260,7 @@ export async function executeEquitySignal(signal: StockAgentSignal): Promise<boo
     entryAt: nowIso,
     signalSource: `tradevisor_${signal.grade}`,
     signalScore: signal.score,
+    decisionId: signal.decisionId,
     stopLossPrice,
     highWaterPct: 0,
     trailingArmed: false,
@@ -235,10 +273,41 @@ export async function executeEquitySignal(signal: StockAgentSignal): Promise<boo
   persist();
   markCooldown(`equity_${symbol}_${signal.action}`);
 
+  // TODO(memory): wire to the pgvector memory DB. The module landed (A5) at
+  // services/memory/index.ts, but insertExecution requires the parent decision
+  // to exist in the `decisions` table — which the TradeVisor agent doesn't
+  // persist there yet (it writes to data/tradevisor-decisions.jsonl). Once the
+  // agent is updated to call memory.insertDecision() alongside its JSONL append,
+  // uncomment:
+  //   const { insertExecution } = await import('../memory/index.js');
+  //   await insertExecution({
+  //     decisionId: signal.decisionId, assetClass: 'equity', symbol,
+  //     side: 'buy', quantity: shares, fillPrice: signal.price,
+  //     fillStatus: 'filled', broker: 'alpaca_paper',
+  //   }).catch((err) => logger.warn({ err }, '[StockAgent] memory.insertExecution failed'));
+
   logger.info(
-    { symbol, shares, price: signal.price, grade: signal.grade, score: signal.score },
+    { symbol, shares, price: signal.price, grade: signal.grade, score: signal.score, decisionId: signal.decisionId },
     `[StockAgent] PAPER BUY ${symbol} x${shares} @ $${signal.price.toFixed(2)}`,
   );
+
+  // Fan out to SSE so the cockpit's positions list updates without polling.
+  // We emit the EquityPosition shape here — receivers do their own typing.
+  // The shape mirrors what `services/memory.insertExecution()` will write
+  // once the memory-DB wiring (TODO above) lands.
+  emitAppEvent('execution-filled', {
+    execution: {
+      decisionId: signal.decisionId,
+      assetClass: 'equity',
+      symbol,
+      side: 'buy',
+      quantity: shares,
+      fillPrice: signal.price,
+      fillStatus: 'filled',
+      broker: 'alpaca_paper',
+      filledAt: nowIso,
+    },
+  });
 
   return true;
 }
@@ -356,6 +425,7 @@ export async function executeOptionsSignal(signal: StockAgentSignal): Promise<bo
     entryAt: nowIso,
     signalSource: `tradevisor_${signal.grade}`,
     signalScore: signal.score,
+    decisionId: signal.decisionId,
     // Phase 1: hard stop at 50% of entry mid. Options halve quickly, so a
     // tighter stop than equity is sensible.
     stopLossMid: mid * 0.5,
@@ -370,8 +440,16 @@ export async function executeOptionsSignal(signal: StockAgentSignal): Promise<bo
   persist();
   markCooldown(`option_${symbol}_${signal.action}`);
 
+  // TODO(memory): wire to the pgvector memory DB once the agent persists
+  // decisions there (see executeEquitySignal for the full caveat). Then:
+  //   await insertExecution({
+  //     decisionId: signal.decisionId, assetClass: 'equity', symbol,
+  //     side: 'buy', quantity: contracts, fillPrice: mid,
+  //     fillStatus: 'filled', broker: 'alpaca_paper_option',
+  //   }).catch((err) => logger.warn({ err }, '[StockAgent] memory.insertExecution failed'));
+
   logger.info(
-    { symbol, occ: contract.occSymbol, contracts, mid, grade: signal.grade, score: signal.score },
+    { symbol, occ: contract.occSymbol, contracts, mid, grade: signal.grade, score: signal.score, decisionId: signal.decisionId },
     `[StockAgent] PAPER OPTION BUY ${symbol} ${contract.occSymbol} x${contracts} @ $${mid.toFixed(2)}`,
   );
 
@@ -432,6 +510,45 @@ export async function closeEquityPosition(
     { symbol: position.symbol, reason, exit, pnlUsd: pnlUsd.toFixed(2), pnlPct: pnlPct.toFixed(2) },
     `[StockAgent] PAPER SELL ${position.symbol} @ $${exit.toFixed(2)} pnl=$${pnlUsd.toFixed(2)} (${reason})`,
   );
+
+  // SSE fan-out — same shape as the BUY emit so the dashboard's positions
+  // list can use one handler. The matching `outcome-written` event is
+  // dispatched downstream by the outcome-writer triggered via triggerExit().
+  emitAppEvent('execution-filled', {
+    execution: {
+      decisionId: position.decisionId ?? null,
+      assetClass: 'equity',
+      symbol: position.symbol,
+      side: 'sell',
+      quantity: position.shares,
+      fillPrice: exit,
+      fillStatus: 'filled',
+      broker: 'alpaca_paper',
+      filledAt: closed.exitAt,
+      pnlUsd,
+      pnlPct,
+      reason,
+    },
+  });
+
+  // ── Outcome attribution (C1) ──────────────────────────────────────────
+  // Write the realized P&L back to the originating decision so APEX can
+  // learn from it. No-ops cleanly when memory DB is offline or the position
+  // pre-dates the decisionId field (legacy ledger rows).
+  await triggerExit({
+    decisionId: position.decisionId ?? null,
+    assetClass: 'equity',
+    symbol: position.symbol,
+    side: 'long',
+    entryPrice: position.entryPrice,
+    exitPrice: exit,
+    qty: position.shares,
+    stopPrice: position.stopLossPrice ?? null,
+    openedAt: position.entryAt,
+    closedAt: closed.exitAt,
+    reason,
+    notes: `signalSource=${position.signalSource} score=${position.signalScore}`,
+  });
 }
 
 /**
@@ -476,6 +593,25 @@ export async function closeOptionPosition(
     { symbol: position.symbol, occ: position.occSymbol, reason, exit, pnlUsd: pnlUsd.toFixed(2), pnlPct: pnlPct.toFixed(2) },
     `[StockAgent] PAPER OPTION SELL ${position.symbol} ${position.occSymbol} @ $${exit.toFixed(2)} pnl=$${pnlUsd.toFixed(2)} (${reason})`,
   );
+
+  // ── Outcome attribution (C1) ──────────────────────────────────────────
+  // Options use the 100x contract multiplier baked into qty so realized P&L
+  // matches the dollar number we just persisted. R-multiple uses stopLossMid
+  // when available; stopless contracts produce a null R-multiple as designed.
+  await triggerExit({
+    decisionId: position.decisionId ?? null,
+    assetClass: 'option',
+    symbol: position.symbol,
+    side: 'long',
+    entryPrice: position.entryMid,
+    exitPrice: exit,
+    qty: position.contracts * 100,
+    stopPrice: position.stopLossMid ?? null,
+    openedAt: position.entryAt,
+    closedAt: closed.exitAt,
+    reason,
+    notes: `occ=${position.occSymbol} type=${position.type} strike=${position.strike} expiry=${position.expiry}`,
+  });
 }
 
 // ── TradeVisor Sell Signal Dispatch ─────────────────────────────────────

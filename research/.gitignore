@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# uv
+.uv/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Cached data + pickles
+data/cache/
+data/raw/
+*.pkl
+*.parquet
+*.feather
+
+# Strategy outputs (generated artifacts, not committed)
+research/strategies/*/reports/
+research/strategies/*/results/
+research/strategies/_template/reports/
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db

@@ -16,6 +16,7 @@
  */
 
 import { Router, type Router as RouterType } from 'express';
+import { randomUUID } from 'crypto';
 import {
   getAccount,
   getPositions,
@@ -438,6 +439,9 @@ stocksRouter.post('/signal/test', async (req, res) => {
       price,
       score: typeof score === 'number' ? score : 4,
       grade: g,
+      // Test signals don't pass through the agent reasoning gate, so mint a
+      // fresh UUID purely for ledger attribution.
+      decisionId: randomUUID(),
     };
     const which = route ?? 'both';
     const results: Record<string, boolean> = {};

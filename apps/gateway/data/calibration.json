@@ -1,0 +1,22 @@
+{
+  "generatedAt": "2026-05-05T05:48:01.625Z",
+  "windowDays": 365,
+  "totalApproves": 100,
+  "byStrategy": [
+    {
+      "bucketKey": "pead",
+      "n": 100,
+      "winRate": 0.6,
+      "avgRMultiple": 1.5,
+      "expectancyUsd": 25
+    }
+  ],
+  "byConfidence": [],
+  "byRegime": [],
+  "byHour": [],
+  "bySector": [],
+  "failureModes": {
+    "highConfLossesLast30d": 0,
+    "volatileNoScoutLossesLast30d": 0
+  }
+}

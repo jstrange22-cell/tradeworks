@@ -1,0 +1,66 @@
+{
+  "PEAD": {
+    "timeStopDays": 60,
+    "atrTrailMultiple": 1.5,
+    "profitTargetPct": null,
+    "rLadderEnabled": true,
+    "atrTrailEnabled": true,
+    "regimeExitEnabled": true
+  },
+  "regime_trend": {
+    "timeStopDays": 90,
+    "atrTrailMultiple": 2.0,
+    "profitTargetPct": null,
+    "rLadderEnabled": true,
+    "atrTrailEnabled": true,
+    "regimeExitEnabled": true
+  },
+  "vol_rank_options": {
+    "timeStopDays": 21,
+    "atrTrailMultiple": 1.5,
+    "profitTargetPct": null,
+    "rLadderEnabled": false,
+    "atrTrailEnabled": false,
+    "regimeExitEnabled": true
+  },
+  "sector_rotation": {
+    "timeStopDays": 30,
+    "atrTrailMultiple": 1.5,
+    "profitTargetPct": null,
+    "rLadderEnabled": true,
+    "atrTrailEnabled": true,
+    "regimeExitEnabled": true
+  },
+  "funding_basis": {
+    "timeStopDays": null,
+    "atrTrailMultiple": 1.5,
+    "profitTargetPct": null,
+    "rLadderEnabled": false,
+    "atrTrailEnabled": false,
+    "regimeExitEnabled": false
+  },
+  "range_grid": {
+    "timeStopDays": null,
+    "atrTrailMultiple": 1.5,
+    "profitTargetPct": null,
+    "rLadderEnabled": false,
+    "atrTrailEnabled": false,
+    "regimeExitEnabled": false
+  },
+  "tradevisor": {
+    "timeStopDays": 7,
+    "atrTrailMultiple": 1.5,
+    "profitTargetPct": null,
+    "rLadderEnabled": true,
+    "atrTrailEnabled": true,
+    "regimeExitEnabled": true
+  },
+  "unknown": {
+    "timeStopDays": 30,
+    "atrTrailMultiple": 1.5,
+    "profitTargetPct": null,
+    "rLadderEnabled": false,
+    "atrTrailEnabled": false,
+    "regimeExitEnabled": true
+  }
+}

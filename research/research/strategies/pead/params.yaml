@@ -1,0 +1,46 @@
+# Strategy B1: PEAD parameters.
+
+# --- Universe / data ---
+universe: russell1000           # informational only; fixture has 100 synthetic tickers
+min_adv_usd: 50_000_000         # liquidity floor (informational; fixture pre-filtered)
+data_years: 10                  # how much history to synthesize / load
+seed: 42                        # deterministic fixture generator
+
+# --- Entry filters (LONG side) ---
+surprise_min_pct: 5.0           # actual vs consensus EPS surprise, > +5% required
+revenue_must_not_miss: true     # rev miss disqualifies even with EPS beat
+guidance_required: maintain_or_raise   # one of: raise_only | maintain_or_raise | any
+pre_announce_momentum_days: 20  # 20d return must be >= 0
+gap_min_pct: 1.0                # next-day gap-up at open vs prior close, > 1%
+no_earnings_within_days: 30     # block if another earnings event within 30d
+no_exdiv_within_days: 30        # block if ex-div within 30d
+
+# --- Entry filters (SHORT side, default OFF) ---
+short_enabled: false
+short_surprise_max_pct: -5.0
+short_gap_max_pct: -1.0
+short_guidance_required: lower
+
+# --- Exits ---
+time_stop_days: 60              # hard time stop (calendar days)
+trail_atr_mult: 1.5             # trail at -1.5x ATR(14) from highest close since entry
+hard_stop_pct: 8.0              # hard stop -8% from entry
+profit_ladder:                  # scale-out at increasing levels
+  - { trigger_pct: 5.0,  size_pct: 50.0 }
+  - { trigger_pct: 10.0, size_pct: 25.0 }
+  # last 25% rides the trail
+exit_at_next_earnings: true     # close before the next reporting date
+
+# --- Sizing ---
+risk_pct_per_trade: 0.005       # 0.5% of equity per trade (ATR-stop sized)
+max_position_pct: 0.05          # cap any one position at 5% of equity
+atr_period: 14
+atr_stop_mult: 2.0              # initial stop distance for sizing math (in ATR units)
+
+# --- Engine knobs ---
+initial_cash: 100_000.0         # PEAD trades many positions, needs more capital than 10k
+fee_bps: 1.0
+slippage_bps: 2.0               # earnings drift uses event-driven fills, slightly worse
+train_years: 2.0
+test_years: 0.5
+step_years: 0.5

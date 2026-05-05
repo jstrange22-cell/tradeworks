@@ -1,0 +1,54 @@
+# Strategy B5: Funding-Rate Cash-and-Carry Basis Trade.
+#
+# Delta-neutral: long spot + short perp. Earn the funding payment when funding > 0.
+# All thresholds in fractions (not %): 0.0005 = 5 bps per 8h period.
+
+# --- Pairs ---
+pairs:
+  - BTC/USD
+  - ETH/USD
+  - SOL/USD
+
+# --- Entry ---
+# Enter the basis when the realized funding rate of the most-recent 8h period is at
+# or above this threshold (5 bps per 8h ≈ 54%/yr annualized = "rich" funding).
+funding_min_per_period: 0.0005       # 0.05% per 8h
+# Annualized equivalent floor used for sanity-checking + reports.
+funding_min_apr: 0.20                # 20% APR — generous comfort floor
+
+# --- Exits ---
+# Exit if funding goes negative for N consecutive 8h periods (i.e. we'd be paying).
+exit_neg_periods: 3
+# Exit if the spot-vs-perp basis blows out beyond this fraction (1% widening).
+spread_blow_out: 0.01
+# Risk-off macro filter (informational; toggled by macro_kill_switch in backtest).
+macro_kill_switch: true
+
+# --- Sizing ---
+# Strategy-level fraction of total crypto sleeve. Near-market-neutral so a larger
+# allocation is appropriate vs directional positions.
+strategy_alloc_pct: 0.30
+# Per-pair cap (fraction of strategy budget allocated to any single pair).
+per_pair_cap_pct: 0.50
+# Max simultaneous open basis pairs.
+max_pairs: 3
+# Use isolated margin if exchange supports it (informational for FreqTrade port).
+prefer_isolated_margin: true
+
+# --- Costs ---
+# Open the basis = 1 spot taker + 1 perp taker. Close = symmetric. 4 fills total.
+spot_taker_bps: 5.0                  # Coinbase Advanced retail taker
+perp_taker_bps: 6.0                  # Coinbase International / Bybit
+slippage_bps_per_side: 2.0           # market-orderable basis on BTC/ETH; SOL slightly worse
+funding_periods_per_day: 3           # 8h × 3 = 24h
+periods_per_year: 1095               # 365 × 3
+
+# --- Engine knobs ---
+initial_cash: 100_000.0              # NOTIONAL of the basis sleeve (long spot + short perp net 0 cash, uses margin)
+seed: 42
+years: 4
+fixture_funding_seed: 17
+
+# --- Pass/fail bars ---
+target_annual_return: 0.08           # 8% APR after costs
+target_max_dd: 0.05                  # 5% max drawdown (very low — basis trades drift small)

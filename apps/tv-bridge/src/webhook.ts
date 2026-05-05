@@ -5,7 +5,11 @@ export interface WebhookSignal {
   action: 'buy' | 'sell';
   price: number;
   score: number;
-  grade: 'standard' | 'strong' | 'prime';
+  // 'reject' is posted when tv-bridge can't read the live indicator score
+  // (e.g. indicator removed from chart, CDP read failed). The gateway accepts
+  // it via Zod schema but downgrades to 'standard' before execution — by then
+  // the TradeVisor reasoning agent (fail-closed) has already vetoed the trade.
+  grade: 'standard' | 'strong' | 'prime' | 'reject';
   time: string;
   exchange: string;
   timeframe: string;

@@ -12,6 +12,7 @@ import pinoHttp from 'pino-http';
 import swaggerUi from 'swagger-ui-express';
 import { openapiSpec } from './docs/openapi.js';
 import { createServer } from 'http';
+import { randomUUID } from 'crypto';
 import { logger } from './lib/logger.js';
 import { setupWebSocket } from './websocket/server.js';
 import { authMiddleware } from './middleware/auth.js';
@@ -20,6 +21,7 @@ import { healthRouter } from './routes/health.js';
 import { tradesRouter } from './routes/trades.js';
 import { positionsRouter } from './routes/positions.js';
 import { strategiesRouter } from './routes/strategies.js';
+import { v2StrategiesRouter } from './routes/v2-strategies.js';
 import { riskRouter } from './routes/risk.js';
 import { agentsRouter } from './routes/agents.js';
 import { backtestRouter } from './routes/backtest.js';
@@ -73,9 +75,21 @@ import { watchdogRouter } from './routes/watchdog.js';
 import { startWatchdog } from './services/watchdog/watchdog.js';
 import { scoutRouter } from './routes/scout.js';
 import { tradevisorAgentRouter } from './routes/tradevisor-agent.js';
-import { solanaAgentRouter } from './routes/solana-agent.js';
-import { startSolanaScanner } from './services/solana-bot/orchestrator.js';
+import { calibrationRouter } from './routes/calibration.js';
+import { tradesExplorerRouter } from './routes/trades-explorer.js';
+import { startCalibrationScheduler } from './services/ai/calibration/index.js';
+import { postMortemRouter } from './routes/post-mortem.js';
+import { startPostMortemScheduler } from './services/ai/post-mortem/scheduler.js';
+// Solana DEX/memecoin v2 hot path was shelved on 2026-05-04 (task A3).
+// Code archived under `_archive/v2-shelved-solana/`. Restore tag: `pre-v2-shelve-solana`.
+import { solanaShelvedRouter } from './routes/solana-shelved.js';
 import { startArbAgent } from './services/ai/arb-agent.js';
+import { banditRouter } from './routes/bandit.js';
+import { initBandit } from './services/orchestrator/bandit-runner.js';
+import { heatRouter } from './routes/heat.js';
+import { regimeRouter } from './routes/regime.js';
+import { killSwitchesRouter } from './routes/kill-switches.js';
+import { eventsSseRouter } from './routes/events-sse.js';
 
 const app: Express = express();
 const PORT = parseInt(process.env.PORT ?? '4000', 10);
@@ -181,6 +195,9 @@ app.use('/api/v1/portfolio', devAuth, portfolioRouter);
 app.use('/api/v1/trades', devAuth, tradesRouter);
 app.use('/api/v1/positions', devAuth, positionsRouter);
 app.use('/api/v1/strategies', devAuth, strategiesRouter);
+// V2 strategies (bandit-managed lab outputs: pead, regime_trend, …) — distinct
+// from the legacy CRUD `strategiesRouter` above.
+app.use('/api/v1/v2-strategies', devAuth, v2StrategiesRouter);
 app.use('/api/v1/risk', devAuth, riskRouter);
 app.use('/api/v1/agents', devAuth, agentsRouter);
 app.use('/api/v1/backtest', devAuth, backtestRouter);
@@ -227,7 +244,35 @@ app.use('/api/v1/launch-coach', devAuth, launchCoachRouter);
 app.use('/api/v1/watchdog', devAuth, watchdogRouter);
 app.use('/api/v1/scout', devAuth, scoutRouter);
 app.use('/api/v1/tradevisor-agent', devAuth, tradevisorAgentRouter);
-app.use('/api/v1/solana-agent', devAuth, solanaAgentRouter);
+app.use('/api/v1/calibration', devAuth, calibrationRouter);
+app.use('/api/v1/explorer', devAuth, tradesExplorerRouter);
+app.use('/api/v1/post-mortem', devAuth, postMortemRouter);
+
+// --- APEX Bandit Allocator (Phase C — multi-armed bandit over v2 strategies) ---
+app.use('/api/v1/bandit', devAuth, banditRouter);
+
+// --- Kill Switches (Master / Portfolio / Strategy) ---
+// Master kill is admin-only at the route layer (requireRole inside the router).
+app.use('/api/v1/kill-switches', devAuth, killSwitchesRouter);
+
+// --- Server-Sent Events (real-time stream for the dashboard) ---
+// Single long-lived response per browser tab. Producers (TradeVisor reasoner,
+// outcome writer, bandit runner, regime detector, kill-switch module,
+// stock-/crypto-agent fills) emit through `lib/events-bus.ts` and this route
+// fans them out as `text/event-stream` frames. Concurrent connections capped
+// at 50 inside the route.
+app.use('/api/v1/events', devAuth, eventsSseRouter);
+
+// --- Portfolio Heat (open-risk budgets: total / per-sector / per-factor) ---
+app.use('/api/v1/heat', devAuth, heatRouter);
+
+// --- Market Regime (calm / trending / volatile / crisis) ---
+// Drives reasoner context, bandit recompute tagging, sizing crisis gate,
+// and heat budget scaling.
+app.use('/api/v1/regime', devAuth, regimeRouter);
+
+// Solana v2 agent — shelved 2026-05-04 (task A3). Stub returns 410 Gone.
+app.use('/api/v1/solana-agent', solanaShelvedRouter);
 
 // --- Stock Intelligence (14-Engine Equities/Options/Macro) ---
 app.use('/api/v1/stocks-intel', devAuth, stockTradingRouter);
@@ -247,6 +292,11 @@ app.post('/api/v1/safety/system', devAuth, (req, res) => { setSystemEnabled(req.
 
 // --- Trade Journal ---
 app.use('/api/v1/journal', devAuth, journalRouter);
+
+// --- Unified Exit Monitor (D5) ---
+import { exitsRouter } from './routes/exits.js';
+import { startExitMonitor } from './services/exits/index.js';
+app.use('/api/v1/exits', devAuth, exitsRouter);
 
 // --- Cross-Exchange Arbitrage ---
 app.use('/api/v1/arbitrage', devAuth, arbitrageRouter);
@@ -337,6 +387,15 @@ server.listen(PORT, HOST, () => {
     } catch { /* encryption lib or api-keys not available yet */ }
   })();
 
+  // Init bandit allocator — loads weights file (or cold-starts equal weights)
+  // and schedules the weekly cron. Phase D sizing reads via getBanditWeight().
+  void initBandit().catch((err: unknown) => {
+    logger.warn(
+      { err: err instanceof Error ? err.message : err },
+      '[Startup] initBandit failed — sizing will fall back to equal weights',
+    );
+  });
+
   // Auto-start the AI trading engine — runs 24/7 with zero intervention
   initEngine();
 
@@ -366,15 +425,12 @@ server.listen(PORT, HOST, () => {
     }).catch(() => { /* module not ready */ });
   }
 
-  // ── Solana DEX bot v2 (Phase 3) ──
-  // Enabled with ENABLE_SOLANA_BOT=true. Independent of the deleted in-house
-  // sniper (which lives behind ENABLE_SOLANA_SNIPER=true and remains off).
-  // Internally gated by SOLANA_AGENT_MODE (shadow/gate) — see services/ai/solana-agent.
+  // ── Solana DEX bot v2 — SHELVED 2026-05-04 (task A3) ──
+  // Hot path produced -91% drawdown / 18% WR in shadow and was removed from v2 scope.
+  // Code lives in `_archive/v2-shelved-solana/`. Restore tag: `pre-v2-shelve-solana`.
+  // ENABLE_SOLANA_BOT is now a no-op until/unless v3 brings it back.
   if (process.env['ENABLE_SOLANA_BOT'] === 'true') {
-    try { startSolanaScanner(); logger.info('[Startup] Solana DEX bot v2 scanner STARTED'); }
-    catch (err) { logger.warn({ err: err instanceof Error ? err.message : err }, '[Startup] Solana scanner start failed'); }
-  } else {
-    logger.info('[Startup] Solana DEX bot v2 DISABLED (set ENABLE_SOLANA_BOT=true to enable)');
+    logger.warn('[Startup] ENABLE_SOLANA_BOT=true ignored — Solana hot path shelved for v2 (see _archive/v2-shelved-solana/)');
   }
 
   // ── PHASE 1 STABILIZATION: All engines disabled by default ──
@@ -438,6 +494,12 @@ server.listen(PORT, HOST, () => {
     logger.info('[Startup] Stock engine DISABLED (set ENABLE_STOCKS=true to enable)');
   }
 
+  // D5 unified exit monitor — runs alongside the legacy stock-agent
+  // position-monitor (defense-in-depth). Set ENABLE_EXIT_MONITOR=false
+  // to disable. Safe to start regardless of ENABLE_STOCKS — the loop
+  // simply finds no positions when stocks are off.
+  startExitMonitor();
+
   if (process.env.ENABLE_TRADEVISOR === 'true') {
     setOnTradevisorSignal(async (result) => {
       if (result.action !== 'buy' && result.action !== 'sell') return;
@@ -463,6 +525,11 @@ server.listen(PORT, HOST, () => {
             price: result.currentPrice,
             score: result.confluenceScore,
             grade: result.grade,
+            // Legacy Tradevisor-engine-driven signals don't pass through the
+            // TradeVisor reasoning agent (which is webhook-only today), so we
+            // mint a fresh UUID for ledger attribution. When this code path
+            // is migrated to the agent gate, swap to the agent decision id.
+            decisionId: randomUUID(),
           };
           if (result.action === 'buy') {
             await executeEquitySignal(sig);
@@ -531,6 +598,17 @@ server.listen(PORT, HOST, () => {
   } else {
     logger.info('[Startup] Token Factory DISABLED (set ENABLE_TOKEN_FACTORY=true to enable)');
   }
+
+  // Nightly calibration job — runs at 03:00 ET. Idempotent on restart.
+  if (process.env['DISABLE_CALIBRATION'] !== 'true') {
+    startCalibrationScheduler({ runOnStart: false });
+  } else {
+    logger.info('[Startup] Calibration scheduler DISABLED (DISABLE_CALIBRATION=true)');
+  }
+
+  // Nightly post-mortem + prompt-evolution loop — runs at 02:30 ET.
+  // Gated on ENABLE_POST_MORTEM=true so disabled by default for safety.
+  startPostMortemScheduler();
 
   // Watchdog runs last so all other engines have initialized first.
   startWatchdog();

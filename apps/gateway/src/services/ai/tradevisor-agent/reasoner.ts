@@ -13,11 +13,16 @@
  * circuit breakers, etc.
  */
 import Anthropic from '@anthropic-ai/sdk';
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { readFileSync, statSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { logger } from '../../../lib/logger.js';
 import type { SignalContext, Decision, DecisionVerdict } from './types.js';
 import { randomUUID } from 'crypto';
+import { retrieveSimilarTrades } from '../../memory/rag.js';
+import { formatRagContext } from '../../memory/rag-format.js';
+import { isAvailable as isMemoryAvailable } from '../../memory/db.js';
+import { renderActiveForPrompt } from '../post-mortem/heuristics-store.js';
 
 // ── Load SOUL.md once at module init ────────────────────────────────────
 let SOUL_PROMPT = '';
@@ -34,6 +39,70 @@ for (const p of candidatePaths) {
 }
 if (!SOUL_PROMPT) {
   SOUL_PROMPT = 'You are APEX, the trading intelligence agent for TradeWorks built by Strange Digital Group. Be precise, quantitative, and risk-aware.';
+}
+
+// ── Load calibration summary at module init (READ-ONLY injection) ─────
+// The nightly calibration job writes apps/gateway/data/calibration-summary.md.
+// We surface it to the reasoner as a top-of-prompt block so it can
+// self-correct (e.g. avoid over-confident sizes, skip volatile regime
+// approves with no Scout corroboration, etc.). Stale beyond 7 days → skip.
+const CALIBRATION_MAX_AGE_DAYS = 7;
+let CALIBRATION_CONTEXT: string | null = null;
+
+function loadCalibrationContext(): string | null {
+  // Walk up from src/services/ai/tradevisor-agent/ to apps/gateway/
+  const here = dirname(fileURLToPath(import.meta.url));
+  const tvAgent = here;                                  // .../tradevisor-agent
+  const aiDir = dirname(tvAgent);                        // .../ai
+  const services = dirname(aiDir);                       // .../services
+  const srcOrDist = dirname(services);                   // .../src or .../dist
+  const gatewayRoot = dirname(srcOrDist);                // .../apps/gateway
+  const summaryPath = resolve(gatewayRoot, 'data', 'calibration-summary.md');
+
+  try {
+    const stat = statSync(summaryPath);
+    const ageDays = (Date.now() - stat.mtimeMs) / (1000 * 60 * 60 * 24);
+    if (ageDays > CALIBRATION_MAX_AGE_DAYS) {
+      logger.warn(
+        { summaryPath, ageDays: ageDays.toFixed(1) },
+        '[TVAgent] calibration summary stale (> 7 days) — skipping injection',
+      );
+      return null;
+    }
+    const content = readFileSync(summaryPath, 'utf-8').trim();
+    if (!content) return null;
+    logger.info(
+      { summaryPath, ageDays: ageDays.toFixed(2), bytes: Buffer.byteLength(content, 'utf-8') },
+      '[TVAgent] calibration summary loaded',
+    );
+    return content;
+  } catch {
+    // No calibration file yet — first run, normal.
+    return null;
+  }
+}
+CALIBRATION_CONTEXT = loadCalibrationContext();
+
+// ── Load active learned heuristics at module init ───────────────────────
+// Heuristics are extracted nightly by the post-mortem loop, reviewed and
+// approved via /api/v1/post-mortem/approve, then stored in
+// openclaw-finance/learned_heuristics.md. We inject only the Active list
+// (not Pending or Rejected). Empty string when no active heuristics yet.
+let LEARNED_HEURISTICS: string = '';
+try {
+  LEARNED_HEURISTICS = renderActiveForPrompt();
+  if (LEARNED_HEURISTICS) {
+    logger.info(
+      { bytes: Buffer.byteLength(LEARNED_HEURISTICS, 'utf-8') },
+      '[TVAgent] learned heuristics loaded',
+    );
+  }
+} catch (err) {
+  logger.warn(
+    { err: err instanceof Error ? err.message : err },
+    '[TVAgent] learned heuristics load failed — continuing without them',
+  );
+  LEARNED_HEURISTICS = '';
 }
 
 // ── Reasoner-specific instructions (appended to SOUL) ──────────────────
@@ -84,6 +153,23 @@ const FULL_SYSTEM_PROMPT = SOUL_PROMPT + REASONER_INSTRUCTIONS;
 function buildUserPrompt(ctx: SignalContext): string {
   const s = ctx.signal;
   const lines: string[] = [];
+  if (CALIBRATION_CONTEXT) {
+    // READ-ONLY injection of nightly calibration stats. The reasoner uses these
+    // for self-correction but does not modify them.
+    lines.push('## HISTORICAL CALIBRATION (read-only — derived from your past approvals + outcomes)');
+    lines.push(CALIBRATION_CONTEXT);
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+  }
+  if (LEARNED_HEURISTICS) {
+    // Active heuristics extracted from prior losing-trade clusters (post-mortem).
+    // These are the agent's own playbook — apply them on top of SOUL.md rules.
+    lines.push(LEARNED_HEURISTICS);
+    lines.push('');
+    lines.push('---');
+    lines.push('');
+  }
   lines.push(`SIGNAL: ${s.action.toUpperCase()} ${s.symbol} @ $${s.price} (${s.assetClass})`);
   lines.push(`Source: ${s.sourceLabel ?? 'webhook'}, grade=${s.grade} (score=${s.score}), tf=${s.timeframe}, exchange=${s.exchange}`);
 
@@ -171,8 +257,113 @@ function parseDecision(raw: string): { verdict: DecisionVerdict; reasoning: stri
   }
 }
 
+// ── RAG (similar past trades) prompt augmentation ──────────────────────
+//
+// `RAG_ENABLED` flag:
+//   - 'true'  → always try retrieval (still graceful on failure).
+//   - 'false' → never retrieve.
+//   - unset   → auto-detect via memory DB health probe (cached).
+//
+// Resolved lazily so tests / env edits take effect at first call.
+type RagState = 'on' | 'off' | 'auto';
+function ragSetting(): RagState {
+  const raw = (process.env['RAG_ENABLED'] ?? 'auto').toLowerCase();
+  if (raw === 'true' || raw === '1' || raw === 'on') return 'on';
+  if (raw === 'false' || raw === '0' || raw === 'off') return 'off';
+  return 'auto';
+}
+
+let ragAutoCachedAt = 0;
+let ragAutoEnabled = false;
+const RAG_AUTO_TTL_MS = 60_000;
+async function isRagEnabled(): Promise<boolean> {
+  const setting = ragSetting();
+  if (setting === 'off') return false;
+  if (setting === 'on') return true;
+  const now = Date.now();
+  if (now - ragAutoCachedAt < RAG_AUTO_TTL_MS) return ragAutoEnabled;
+  ragAutoEnabled = await isMemoryAvailable().catch(() => false);
+  ragAutoCachedAt = now;
+  return ragAutoEnabled;
+}
+
+/**
+ * Build a compact embedding query string from the signal context. Kept short
+ * so the embedding captures the trade's *shape* (symbol/action/strategy/regime)
+ * rather than free-form prose.
+ */
+function buildRagQueryText(ctx: SignalContext): string {
+  const s = ctx.signal;
+  const parts: string[] = [
+    `${s.action} ${s.symbol}`,
+    `grade=${s.grade}`,
+    `score=${s.score}`,
+    `tf=${s.timeframe}`,
+    `regime=${ctx.macro.regime}`,
+  ];
+  if (ctx.scout?.rationale) {
+    parts.push(`scout: ${ctx.scout.rationale.slice(0, 200)}`);
+  }
+  return parts.join(' | ');
+}
+
+async function maybeBuildRagBlock(ctx: SignalContext): Promise<string | null> {
+  try {
+    if (!(await isRagEnabled())) return null;
+    const queryText = buildRagQueryText(ctx);
+    const trades = await retrieveSimilarTrades(queryText, {
+      k: 10,
+      minSimilarity: 0.5,
+      onlyClosed: true,
+    });
+    if (trades.length === 0) return null;
+    return formatRagContext(trades);
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      '[TVAgent] RAG retrieval failed — proceeding without similar-trade context',
+    );
+    return null;
+  }
+}
+
 // ── Public entry: reason about a signal, return a Decision ──────────────
 const MODEL = process.env['TRADEVISOR_AGENT_MODEL'] ?? 'claude-sonnet-4-6';
+
+// Fail mode: 'closed' (default, safe) vetoes when the reasoner can't run.
+// 'open' is the legacy escape hatch that auto-approves on failure.
+// Override via env: TRADEVISOR_FAIL_MODE=open
+const FAIL_MODE: 'open' | 'closed' =
+  process.env['TRADEVISOR_FAIL_MODE'] === 'open' ? 'open' : 'closed';
+
+// Rolling 10-minute window of failure timestamps. If we see >5 failures in
+// the window, log an error indicating manual intervention is required.
+const FAILURE_WINDOW_MS = 10 * 60 * 1000;
+const FAILURE_THRESHOLD = 5;
+const failureTimestamps: number[] = [];
+
+function recordFailure(reasonTag: string): void {
+  const now = Date.now();
+  // Drop entries older than the window
+  while (failureTimestamps.length > 0 && now - (failureTimestamps[0] as number) > FAILURE_WINDOW_MS) {
+    failureTimestamps.shift();
+  }
+  failureTimestamps.push(now);
+  if (failureTimestamps.length > FAILURE_THRESHOLD) {
+    logger.error(
+      { failureCount: failureTimestamps.length, windowMs: FAILURE_WINDOW_MS, reasonTag },
+      '[TVAgent] failure rate exceeded threshold — manual intervention required',
+    );
+  }
+}
+
+function failClosedReasoning(why: string): { reasoning: string; confidence: number; adjustedSize: number } {
+  return {
+    reasoning: `VETO (fail-closed): ${why}. Configure ANTHROPIC_API_KEY and verify the reasoner, or set TRADEVISOR_FAIL_MODE=open to override.`,
+    confidence: 0.0,
+    adjustedSize: 0,
+  };
+}
 
 export async function reasonAboutSignal(ctx: SignalContext): Promise<Decision> {
   const apiKey = process.env['ANTHROPIC_API_KEY'];
@@ -185,16 +376,32 @@ export async function reasonAboutSignal(ctx: SignalContext): Promise<Decision> {
     createdAt: new Date().toISOString(),
   };
 
-  // No API key → fail OPEN (approve with default sizing). The agent shouldn't
-  // be a single point of failure that blocks all trading.
+  // No API key → fail CLOSED by default (veto). Set TRADEVISOR_FAIL_MODE=open
+  // to restore the legacy auto-approve behavior.
   if (!apiKey) {
-    logger.warn('[TVAgent] ANTHROPIC_API_KEY not set — failing OPEN (auto-approve)');
+    if (FAIL_MODE === 'open') {
+      logger.warn('[TVAgent] ANTHROPIC_API_KEY not set — failing OPEN (auto-approve, legacy override)');
+      recordFailure('no-api-key');
+      return {
+        ...baseDecision,
+        verdict: 'approve',
+        reasoning: 'Reasoner skipped — no Anthropic API key configured. Defaulted to APPROVE per fail-open policy.',
+        confidence: 0.5,
+        adjustedSize: null,
+        adjustedStopPct: -5,
+        modelUsed: 'none',
+        reasoningLatencyMs: 0,
+      };
+    }
+    logger.warn('[TVAgent] ANTHROPIC_API_KEY not set — failing CLOSED (veto)');
+    recordFailure('no-api-key');
+    const failed = failClosedReasoning('no Anthropic API key configured');
     return {
       ...baseDecision,
-      verdict: 'approve',
-      reasoning: 'Reasoner skipped — no Anthropic API key configured. Defaulted to APPROVE per fail-open policy.',
-      confidence: 0.5,
-      adjustedSize: null,
+      verdict: 'veto',
+      reasoning: failed.reasoning,
+      confidence: failed.confidence,
+      adjustedSize: failed.adjustedSize,
       adjustedStopPct: -5,
       modelUsed: 'none',
       reasoningLatencyMs: 0,
@@ -203,7 +410,14 @@ export async function reasonAboutSignal(ctx: SignalContext): Promise<Decision> {
 
   try {
     const client = new Anthropic({ apiKey });
-    const userPrompt = buildUserPrompt(ctx);
+    const corePrompt = buildUserPrompt(ctx);
+    const ragBlock = await maybeBuildRagBlock(ctx);
+    // Order: RAG (similar trades) → calibration (inside corePrompt) → signal.
+    // Each section starts with its own `##` header so Claude can distinguish
+    // them. RAG is prepended; calibration is already injected by buildUserPrompt.
+    const userPrompt = ragBlock
+      ? `${ragBlock}\n\n---\n\n${corePrompt}`
+      : corePrompt;
     const resp = await client.messages.create({
       model: MODEL,
       max_tokens: 800,
@@ -215,13 +429,29 @@ export async function reasonAboutSignal(ctx: SignalContext): Promise<Decision> {
     const latencyMs = Date.now() - startedAt;
 
     if (!parsed) {
-      logger.warn({ rawSnippet: text.slice(0, 300) }, '[TVAgent] reasoner returned unparseable output — failing OPEN');
+      if (FAIL_MODE === 'open') {
+        logger.warn({ rawSnippet: text.slice(0, 300) }, '[TVAgent] reasoner returned unparseable output — failing OPEN (legacy override)');
+        recordFailure('unparseable');
+        return {
+          ...baseDecision,
+          verdict: 'approve',
+          reasoning: `Claude output unparseable, defaulted to APPROVE. Raw: ${text.slice(0, 200)}`,
+          confidence: 0.3,
+          adjustedSize: null,
+          adjustedStopPct: -5,
+          modelUsed: MODEL,
+          reasoningLatencyMs: latencyMs,
+        };
+      }
+      logger.warn({ rawSnippet: text.slice(0, 300) }, '[TVAgent] reasoner returned unparseable output — failing CLOSED (veto)');
+      recordFailure('unparseable');
+      const failed = failClosedReasoning(`Claude output was unparseable (raw: ${text.slice(0, 200)})`);
       return {
         ...baseDecision,
-        verdict: 'approve',
-        reasoning: `Claude output unparseable, defaulted to APPROVE. Raw: ${text.slice(0, 200)}`,
-        confidence: 0.3,
-        adjustedSize: null,
+        verdict: 'veto',
+        reasoning: failed.reasoning,
+        confidence: failed.confidence,
+        adjustedSize: failed.adjustedSize,
         adjustedStopPct: -5,
         modelUsed: MODEL,
         reasoningLatencyMs: latencyMs,
@@ -240,13 +470,30 @@ export async function reasonAboutSignal(ctx: SignalContext): Promise<Decision> {
     };
   } catch (err) {
     const latencyMs = Date.now() - startedAt;
-    logger.warn({ err: err instanceof Error ? err.message : err, latencyMs }, '[TVAgent] reasoner threw — failing OPEN');
+    const errMsg = err instanceof Error ? err.message : String(err);
+    if (FAIL_MODE === 'open') {
+      logger.warn({ err: errMsg, latencyMs }, '[TVAgent] reasoner threw — failing OPEN (legacy override)');
+      recordFailure('threw');
+      return {
+        ...baseDecision,
+        verdict: 'approve',
+        reasoning: `Reasoner threw: ${errMsg}. Defaulted to APPROVE.`,
+        confidence: 0.3,
+        adjustedSize: null,
+        adjustedStopPct: -5,
+        modelUsed: MODEL,
+        reasoningLatencyMs: latencyMs,
+      };
+    }
+    logger.warn({ err: errMsg, latencyMs }, '[TVAgent] reasoner threw — failing CLOSED (veto)');
+    recordFailure('threw');
+    const failed = failClosedReasoning(`reasoner threw an exception (${errMsg})`);
     return {
       ...baseDecision,
-      verdict: 'approve',
-      reasoning: `Reasoner threw: ${err instanceof Error ? err.message : String(err)}. Defaulted to APPROVE.`,
-      confidence: 0.3,
-      adjustedSize: null,
+      verdict: 'veto',
+      reasoning: failed.reasoning,
+      confidence: failed.confidence,
+      adjustedSize: failed.adjustedSize,
       adjustedStopPct: -5,
       modelUsed: MODEL,
       reasoningLatencyMs: latencyMs,

@@ -2,35 +2,36 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   ArrowLeftRight,
   BarChart3,
-  Zap,
   Wallet,
   Settings,
   ChevronLeft,
   ChevronRight,
   X,
-  TrendingUp,
   Brain,
   Sparkles,
   MessageCircle,
   Coins,
   Layers,
-  Trophy,
-  Rocket,
+  Activity,
 } from 'lucide-react';
 import { useUIStore } from '@/stores/ui-store';
 import { useEffect } from 'react';
 
+// Nav entries removed 2026-05-04 (task E5a). Restore tag: pre-v2-ui-cleanup.
+//   - Solana Memes (task A3 — _archive/v2-shelved-solana/)
+//   - Launch Coach, Kalshi, Arb Intel, Sports (task E5a — _archive/v2-shelved-ui/)
+//
+// `Strategies` re-added 2026-05-04 (task E3) — links to the v2 strategy lab
+// (pead, regime_trend, vol_rank_options, sector_rotation, funding_basis,
+// range_grid_stables) backed by `/api/v1/v2-strategies`.
 const navItems = [
   { to: '/', icon: Brain, label: 'Command Center' },
   { to: '/apex', icon: MessageCircle, label: 'APEX Chat' },
   { to: '/crypto', icon: Coins, label: 'Crypto' },
-  { to: '/solana', icon: Zap, label: 'Solana Memes' },
-  { to: '/launch-coach', icon: Rocket, label: 'Launch Coach' },
-  { to: '/polymarket', icon: TrendingUp, label: 'Kalshi' },
-  { to: '/arb-intel', icon: Layers, label: 'Arb Intel' },
   { to: '/stocks', icon: BarChart3, label: 'Stocks' },
-  { to: '/sports', icon: Trophy, label: 'Sports' },
+  { to: '/strategies', icon: Layers, label: 'Strategies' },
   { to: '/trades', icon: ArrowLeftRight, label: 'Trades' },
+  { to: '/explorer', icon: Activity, label: 'Explorer' },
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
   { to: '/intelligence', icon: Sparkles, label: 'APEX Intel' },
   { to: '/wallets', icon: Wallet, label: 'Wallets' },
