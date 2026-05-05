@@ -73,6 +73,8 @@ import { watchdogRouter } from './routes/watchdog.js';
 import { startWatchdog } from './services/watchdog/watchdog.js';
 import { scoutRouter } from './routes/scout.js';
 import { tradevisorAgentRouter } from './routes/tradevisor-agent.js';
+import { solanaAgentRouter } from './routes/solana-agent.js';
+import { startSolanaScanner } from './services/solana-bot/orchestrator.js';
 import { startArbAgent } from './services/ai/arb-agent.js';
 
 const app: Express = express();
@@ -225,6 +227,7 @@ app.use('/api/v1/launch-coach', devAuth, launchCoachRouter);
 app.use('/api/v1/watchdog', devAuth, watchdogRouter);
 app.use('/api/v1/scout', devAuth, scoutRouter);
 app.use('/api/v1/tradevisor-agent', devAuth, tradevisorAgentRouter);
+app.use('/api/v1/solana-agent', devAuth, solanaAgentRouter);
 
 // --- Stock Intelligence (14-Engine Equities/Options/Macro) ---
 app.use('/api/v1/stocks-intel', devAuth, stockTradingRouter);
@@ -361,6 +364,17 @@ server.listen(PORT, HOST, () => {
       }).catch(() => { /* pumpfun not loaded */ });
       logger.info('[Startup] Wallet Discovery engine STARTED');
     }).catch(() => { /* module not ready */ });
+  }
+
+  // ── Solana DEX bot v2 (Phase 3) ──
+  // Enabled with ENABLE_SOLANA_BOT=true. Independent of the deleted in-house
+  // sniper (which lives behind ENABLE_SOLANA_SNIPER=true and remains off).
+  // Internally gated by SOLANA_AGENT_MODE (shadow/gate) — see services/ai/solana-agent.
+  if (process.env['ENABLE_SOLANA_BOT'] === 'true') {
+    try { startSolanaScanner(); logger.info('[Startup] Solana DEX bot v2 scanner STARTED'); }
+    catch (err) { logger.warn({ err: err instanceof Error ? err.message : err }, '[Startup] Solana scanner start failed'); }
+  } else {
+    logger.info('[Startup] Solana DEX bot v2 DISABLED (set ENABLE_SOLANA_BOT=true to enable)');
   }
 
   // ── PHASE 1 STABILIZATION: All engines disabled by default ──
