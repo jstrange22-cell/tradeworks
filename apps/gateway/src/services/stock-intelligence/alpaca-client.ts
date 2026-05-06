@@ -210,3 +210,85 @@ export async function closePosition(symbol: string): Promise<AlpacaOrderResult> 
     return { ok: false, error: msg };
   }
 }
+
+/**
+ * Fetch a single Alpaca order by id. Returns a result object (never throws)
+ * so callers can poll for fill status without try/catch noise. Used by the
+ * fill-price reconciliation path in stock-agent.ts — market orders return
+ * `pending_new` on submit and only carry `filled_avg_price` once filled,
+ * so we poll briefly after submission to capture the real fill price.
+ */
+export async function getOrder(orderId: string): Promise<AlpacaOrderResult> {
+  const creds = getCredentials();
+  if (!creds) {
+    return { ok: false, error: 'no_credentials' };
+  }
+
+  const baseUrl = getBaseUrl();
+  const url = `${baseUrl}/v2/orders/${encodeURIComponent(orderId)}`;
+
+  try {
+    const resp = await fetch(url, {
+      method: 'GET',
+      headers: buildHeaders(creds),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      return { ok: false, error: errText.slice(0, 200) || resp.statusText, httpStatus: resp.status };
+    }
+
+    const data = await resp.json() as {
+      id?: string;
+      client_order_id?: string;
+      status?: string;
+      filled_qty?: string;
+      filled_avg_price?: string;
+    };
+
+    return {
+      ok: true,
+      orderId: data.id,
+      clientOrderId: data.client_order_id,
+      status: data.status,
+      filledQty: data.filled_qty,
+      filledAvgPrice: data.filled_avg_price,
+      httpStatus: resp.status,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: msg };
+  }
+}
+
+/**
+ * Poll a submitted order for fill status, returning the first `filled` (or
+ * `partially_filled`) snapshot we see — or null if the order hasn't filled
+ * within the budget. Caller should use this fire-and-forget so the entry
+ * path stays sub-second:
+ *
+ *   void pollOrderUntilFilled(orderId).then((r) => {
+ *     if (r?.ok && r.filledAvgPrice) reconcileEntryPrice(...);
+ *   });
+ *
+ * Defaults: 8 attempts, 1.5 s spacing → ~12 s total budget. Market orders
+ * during RTH typically fill in <2 s on Alpaca paper, so this is generous.
+ */
+export async function pollOrderUntilFilled(
+  orderId: string,
+  attempts = 8,
+  intervalMs = 1500,
+): Promise<AlpacaOrderResult | null> {
+  for (let i = 0; i < attempts; i++) {
+    const r = await getOrder(orderId);
+    if (r.ok && (r.status === 'filled' || r.status === 'partially_filled') && r.filledAvgPrice) {
+      return r;
+    }
+    if (r.ok && (r.status === 'canceled' || r.status === 'rejected' || r.status === 'expired')) {
+      // No point continuing — order will never fill.
+      return r;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return null;
+}

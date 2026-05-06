@@ -21,7 +21,11 @@
 
 import { randomUUID } from 'crypto';
 import { logger } from '../../lib/logger.js';
-import { submitOrder as alpacaSubmitOrder, closePosition as alpacaClosePosition } from './alpaca-client.js';
+import {
+  submitOrder as alpacaSubmitOrder,
+  closePosition as alpacaClosePosition,
+  pollOrderUntilFilled as alpacaPollOrderUntilFilled,
+} from './alpaca-client.js';
 import {
   MAX_EQUITY_POSITIONS, MAX_OPTION_POSITIONS,
   type EquityPosition, type OptionPosition, type PaperLedgerState,
@@ -135,6 +139,111 @@ function passesGates(signal: StockAgentSignal, book: 'equity' | 'option'): boole
   if (cooldownHit(cooldownKey)) return false;
 
   return true;
+}
+
+// ── Phase 6: Alpaca Fill-Price Reconciliation ───────────────────────────
+
+/**
+ * Poll Alpaca for the broker's filled_avg_price on a just-submitted equity
+ * order, then rewrite the local position's entryPrice + currentPrice and
+ * adjust paperCashUsd so the local ledger reflects what actually happened
+ * at the broker. Designed to run fire-and-forget after executeEquitySignal
+ * persists the position with the webhook price as a placeholder.
+ *
+ * Reasons this is necessary:
+ *   1. TradingView webhooks carry a snapshot price assembled bar-close —
+ *      Alpaca fills at a real intra-bar quote, often 5-50 bps different.
+ *   2. Smoke-test webhooks can carry intentionally fake prices (e.g. INTC
+ *      $35.50 when the real market is $111). Without reconciliation, the
+ *      ledger booked a +213% phantom win on close.
+ *   3. Cash debit needs to match the fill: if we reserved $100 based on
+ *      webhook price but the fill was $103, the ledger drifts negative
+ *      against Alpaca over time.
+ *
+ * Errors are swallowed at the caller — failure to reconcile is a soft
+ * degradation, not a stop-the-world condition. The position keeps running
+ * with the webhook price baseline.
+ */
+async function reconcileEquityFillPrice(
+  positionId: string,
+  alpacaOrderId: string,
+  webhookPrice: number,
+  shares: number,
+): Promise<void> {
+  const result = await alpacaPollOrderUntilFilled(alpacaOrderId);
+  if (!result || !result.ok || !result.filledAvgPrice) {
+    // Order didn't fill within the poll budget — could be after-hours, halt,
+    // or partial fill. Leave the local ledger on webhook price and let the
+    // existing price-refresh loop catch up.
+    logger.info(
+      { alpacaOrderId, status: result?.status, positionId },
+      '[StockAgent] fill-price reconciliation skipped — order not filled in budget',
+    );
+    return;
+  }
+
+  const fillPrice = Number.parseFloat(result.filledAvgPrice);
+  if (!Number.isFinite(fillPrice) || fillPrice <= 0) return;
+
+  const state = getLedger();
+  const pos = state.equityPositions.find((p) => p.id === positionId);
+  if (!pos) {
+    // Position already closed during poll window — nothing to reconcile.
+    logger.info(
+      { positionId, alpacaOrderId },
+      '[StockAgent] reconcile target gone — position already closed',
+    );
+    return;
+  }
+
+  // Cash adjustment: refund the placeholder debit, then re-debit at the real
+  // fill price. Net effect is `(webhookPrice - fillPrice) * shares` returned
+  // to (or removed from) cash. Capped to avoid silly underflow.
+  const placeholderCost = Math.round(shares * webhookPrice * 100) / 100;
+  const realCost = Math.round(shares * fillPrice * 100) / 100;
+  const cashDelta = placeholderCost - realCost;
+  state.paperCashUsd = Math.round((state.paperCashUsd + cashDelta) * 100) / 100;
+
+  // Also re-anchor the stop-loss to the fill price so a 5% stop stays a 5%
+  // stop relative to what we actually paid. Without this, a fill 30% above
+  // the webhook price would leave the stop ~25% above fill — which would
+  // immediately trigger.
+  const FLAT_STOP_PCT = 0.05;
+  pos.entryPrice = fillPrice;
+  pos.currentPrice = fillPrice;
+  pos.stopLossPrice = Math.round(fillPrice * (1 - FLAT_STOP_PCT) * 100) / 100;
+  pos.lastPriceAt = new Date().toISOString();
+
+  persist();
+
+  logger.info(
+    {
+      positionId,
+      alpacaOrderId,
+      symbol: pos.symbol,
+      webhookPrice,
+      fillPrice,
+      cashDelta,
+      newStopLoss: pos.stopLossPrice,
+    },
+    `[StockAgent] reconciled ${pos.symbol} entry: webhook=$${webhookPrice.toFixed(2)} → fill=$${fillPrice.toFixed(2)} (cash Δ ${cashDelta >= 0 ? '+' : ''}$${cashDelta.toFixed(2)})`,
+  );
+
+  // SSE: cockpit re-renders with the corrected entry price.
+  emitAppEvent('execution-filled', {
+    execution: {
+      decisionId: pos.decisionId ?? null,
+      assetClass: 'equity',
+      symbol: pos.symbol,
+      side: 'buy',
+      quantity: pos.shares,
+      fillPrice,
+      fillStatus: 'filled',
+      broker: 'alpaca_paper',
+      filledAt: pos.lastPriceAt,
+      reconciled: true,
+    },
+  });
 }
 
 // ── Equity Execution ────────────────────────────────────────────────────
@@ -300,6 +409,21 @@ export async function executeEquitySignal(signal: StockAgentSignal): Promise<boo
   state.stats.totalTrades += 1;
   persist();
   markCooldown(`equity_${symbol}_${signal.action}`);
+
+  // Phase 6 reconciliation: the position record above uses `signal.price` as
+  // the entry — that's the TradingView webhook snapshot, which can drift from
+  // Alpaca's actual market fill (especially during volatile open/close, or
+  // when the webhook was assembled minutes earlier on a slower timeframe).
+  // Fire-and-forget poll Alpaca for the broker's filled_avg_price and rewrite
+  // the local entryPrice + cash debit so the cockpit P&L matches reality.
+  if (alpacaResult.ok && alpacaResult.orderId) {
+    void reconcileEquityFillPrice(positionId, alpacaResult.orderId, signal.price, shares).catch((err) => {
+      logger.warn(
+        { err: err instanceof Error ? err.message : err, symbol, positionId },
+        '[StockAgent] reconcileEquityFillPrice threw — local ledger keeps webhook price',
+      );
+    });
+  }
 
   // TODO(memory): wire to the pgvector memory DB. The module landed (A5) at
   // services/memory/index.ts, but insertExecution requires the parent decision
