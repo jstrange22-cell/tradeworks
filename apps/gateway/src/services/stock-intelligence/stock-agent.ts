@@ -21,6 +21,7 @@
 
 import { randomUUID } from 'crypto';
 import { logger } from '../../lib/logger.js';
+import { submitOrder as alpacaSubmitOrder, closePosition as alpacaClosePosition } from './alpaca-client.js';
 import {
   MAX_EQUITY_POSITIONS, MAX_OPTION_POSITIONS,
   type EquityPosition, type OptionPosition, type PaperLedgerState,
@@ -250,9 +251,35 @@ export async function executeEquitySignal(signal: StockAgentSignal): Promise<boo
 
   const stopLossPrice = stopPrice;
 
+  // Phase 6: Submit to Alpaca paper API. Always-on when ALPACA_PAPER=true
+  // (the default) so paper fills go through the real broker — gives us
+  // realistic slippage/halts/market-hours behavior. Alpaca paper is itself
+  // paper; no real money risk. ENABLE_LIVE_EQUITIES still gates the LIVE
+  // endpoint inside the alpaca-client.
+  //
+  // We submit BEFORE writing the local ledger so the position record can
+  // capture the Alpaca order id alongside our internal id. If Alpaca
+  // rejects (market closed, bad symbol, halt, insufficient buying power),
+  // we fall through to local-only with a warning — same fidelity as before.
+  const positionId = randomUUID();
+  const alpacaResult = await alpacaSubmitOrder({
+    symbol,
+    qty: shares,
+    side: 'buy',
+    clientOrderId: positionId, // Alpaca enforces unique 128-char limit; UUID fits
+    type: 'market',
+    timeInForce: 'day',
+  });
+  if (!alpacaResult.ok) {
+    logger.warn(
+      { symbol, error: alpacaResult.error, httpStatus: alpacaResult.httpStatus },
+      '[StockAgent] Alpaca submit failed — proceeding with local-only paper fill',
+    );
+  }
+
   const nowIso = new Date().toISOString();
   const position: EquityPosition = {
-    id: randomUUID(),
+    id: positionId,
     symbol,
     shares,
     entryPrice: signal.price,
@@ -265,6 +292,7 @@ export async function executeEquitySignal(signal: StockAgentSignal): Promise<boo
     highWaterPct: 0,
     trailingArmed: false,
     lastPriceAt: nowIso,
+    alpacaOrderId: alpacaResult.ok ? alpacaResult.orderId ?? null : null,
   };
 
   state.equityPositions.push(position);
@@ -489,6 +517,20 @@ export async function closeEquityPosition(
   const pnlPct = position.entryPrice > 0
     ? ((exit - position.entryPrice) / position.entryPrice) * 100
     : 0;
+
+  // Phase 6: liquidate the corresponding Alpaca paper position. Best-effort
+  // — if Alpaca says 404 (position never made it through on the entry side)
+  // or rejects, we still close the local ledger entry. The local exit is
+  // authoritative for our internal P&L; Alpaca syncs as a side effect.
+  if (position.alpacaOrderId) {
+    const alpacaCloseResult = await alpacaClosePosition(position.symbol);
+    if (!alpacaCloseResult.ok) {
+      logger.warn(
+        { symbol: position.symbol, alpacaOrderId: position.alpacaOrderId, error: alpacaCloseResult.error },
+        '[StockAgent] Alpaca close failed — local ledger still closes',
+      );
+    }
+  }
 
   const closed: EquityClosedTrade = {
     ...position,

@@ -155,6 +155,8 @@ export interface EquityPosition {
   highWaterPct?: number;        // highest pnlPct ever seen (drives trailing TP)
   trailingArmed?: boolean;      // true once pnlPct crosses +3%
   lastPriceAt?: string;         // ISO timestamp of last price refresh
+  // ── Phase 6 Alpaca paper integration (null when Alpaca rejected or unset) ──
+  alpacaOrderId?: string | null; // Alpaca's server-side order id (separate from local position.id)
 }
 
 export interface OptionPosition {
