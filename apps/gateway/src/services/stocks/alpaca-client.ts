@@ -324,19 +324,41 @@ export async function getAssets(params?: {
 
 // ── Utilities ────────────────────────────────────────────────────────────
 
+/**
+ * Is the US equity regular session open right now?
+ *
+ * DST-safe: uses `Intl.DateTimeFormat` with the `America/New_York` timezone,
+ * which handles EST/EDT transitions automatically. Previous version
+ * hardcoded UTC-4 (EDT) — broke for ~5 months/year in EST.
+ *
+ * Limitations:
+ *   - Does NOT account for half-days (early close 1:00 PM ET on holidays)
+ *   - Does NOT account for full market holidays (NYSE calendar)
+ *   For tighter accuracy, swap to Alpaca's GET /v2/clock endpoint, which
+ *   returns the canonical "is_open" flag + next_open / next_close.
+ */
 export function isMarketOpen(): boolean {
   const now = new Date();
-  const day = now.getUTCDay();
-  // Weekend check (Sat=6, Sun=0)
-  if (day === 0 || day === 6) return false;
+  // Use the en-US locale `weekday` long form — robust to runtime locale.
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'long',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(now);
+  const weekday = parts.find((p) => p.type === 'weekday')?.value ?? '';
+  const hourStr = parts.find((p) => p.type === 'hour')?.value ?? '0';
+  const minStr = parts.find((p) => p.type === 'minute')?.value ?? '0';
 
-  // US market hours: 9:30 AM - 4:00 PM ET
-  // Convert to ET (UTC-4 in EDT, UTC-5 in EST)
-  const etHour = now.getUTCHours() - 4; // Approximate EDT
-  const etMin = now.getUTCMinutes();
-  const etTime = etHour * 60 + etMin;
+  if (weekday === 'Saturday' || weekday === 'Sunday') return false;
 
-  return etTime >= 570 && etTime <= 960; // 9:30=570, 16:00=960
+  const hour = parseInt(hourStr, 10);
+  const minute = parseInt(minStr, 10);
+  const etTime = hour * 60 + minute;
+
+  return etTime >= 9 * 60 + 30 && etTime <= 16 * 60; // 9:30 → 16:00 ET
 }
 
 export function getAlpacaConfig() {

@@ -258,6 +258,24 @@ export async function executeEquitySignal(signal: StockAgentSignal): Promise<boo
   if (!passesGates(signal, 'equity')) return false;
 
   const symbol = signal.ticker.toUpperCase();
+
+  // Market-hours guard: if NYSE regular session is closed, do NOT open a
+  // local position. Alpaca's paper API rejects market orders outside RTH
+  // (extended_hours=true is reserved for limit orders), and our previous
+  // "fall back to local-only" path was creating phantom positions in the
+  // local ledger with no broker counterpart — which then drift in P&L.
+  // ALLOW_AFTER_HOURS_PAPER overrides the gate for testing.
+  if (process.env['ALLOW_AFTER_HOURS_PAPER'] !== 'true') {
+    const { isMarketOpen } = await import('../stocks/alpaca-client.js');
+    if (!isMarketOpen()) {
+      logger.info(
+        { symbol, action: signal.action, score: signal.score },
+        '[StockAgent] market closed — equity signal deferred (set ALLOW_AFTER_HOURS_PAPER=true to override)',
+      );
+      return false;
+    }
+  }
+
   const state = getLedger();
 
   // Dedup: one equity position per symbol.
@@ -637,15 +655,26 @@ export async function closeEquityPosition(
   }
 
   const exit = exitPrice > 0 ? exitPrice : position.currentPrice;
+  // Provisional P&L based on the caller-supplied exit. Recomputed below
+  // against Alpaca's real fill price when available; pnlUsd is only used
+  // here for the reconciliation log delta.
   const pnlUsd = (exit - position.entryPrice) * position.shares;
-  const pnlPct = position.entryPrice > 0
-    ? ((exit - position.entryPrice) / position.entryPrice) * 100
-    : 0;
 
-  // Phase 6: liquidate the corresponding Alpaca paper position. Best-effort
-  // — if Alpaca says 404 (position never made it through on the entry side)
-  // or rejects, we still close the local ledger entry. The local exit is
-  // authoritative for our internal P&L; Alpaca syncs as a side effect.
+  // Phase 6: liquidate the corresponding Alpaca paper position and
+  // RECONCILE the local exit price with Alpaca's actual fill (mirrors the
+  // entry-side reconciliation). Order of operations:
+  //   1) DELETE /v2/positions/{symbol} → Alpaca returns the close order id
+  //      in `pending_new`. The fill price isn't on this response.
+  //   2) Poll GET /v2/orders/{id} until status='filled' (or partial). Use
+  //      Alpaca's `filled_avg_price` as the canonical exit, replacing our
+  //      provisional `exit` (which was the SELL signal's webhook price or
+  //      the last-known currentPrice — both can drift from real fills).
+  //   3) Recompute P&L + cash credit against the real fill price.
+  // 404 from DELETE = position never reached Alpaca (entry rejected). In
+  // that case we keep the local close at the provisional price so the
+  // ledger doesn't get stuck.
+  let realExit = exit;
+  let exitReconciled = false;
   if (position.alpacaOrderId) {
     const alpacaCloseResult = await alpacaClosePosition(position.symbol);
     if (!alpacaCloseResult.ok) {
@@ -653,28 +682,60 @@ export async function closeEquityPosition(
         { symbol: position.symbol, alpacaOrderId: position.alpacaOrderId, error: alpacaCloseResult.error },
         '[StockAgent] Alpaca close failed — local ledger still closes',
       );
+    } else if (alpacaCloseResult.orderId) {
+      // Try the response's filled_avg_price first (DELETE sometimes returns
+      // a filled snapshot directly when the close is instant).
+      let candidate = alpacaCloseResult.filledAvgPrice;
+      if (!candidate) {
+        const polled = await alpacaPollOrderUntilFilled(alpacaCloseResult.orderId);
+        candidate = polled?.filledAvgPrice;
+      }
+      const parsed = candidate ? Number.parseFloat(candidate) : NaN;
+      if (Number.isFinite(parsed) && parsed > 0) {
+        realExit = parsed;
+        exitReconciled = true;
+      }
     }
+  }
+
+  // Recompute P&L against the (possibly reconciled) real exit price.
+  const realPnlUsd = (realExit - position.entryPrice) * position.shares;
+  const realPnlPct = position.entryPrice > 0
+    ? ((realExit - position.entryPrice) / position.entryPrice) * 100
+    : 0;
+
+  if (exitReconciled && Math.abs(realExit - exit) > 0.005) {
+    logger.info(
+      {
+        symbol: position.symbol,
+        provisionalExit: exit,
+        realExit,
+        delta: realExit - exit,
+        pnlDelta: realPnlUsd - pnlUsd,
+      },
+      `[StockAgent] reconciled ${position.symbol} exit: provisional=$${exit.toFixed(2)} → fill=$${realExit.toFixed(2)} (P&L Δ ${(realPnlUsd - pnlUsd).toFixed(2)})`,
+    );
   }
 
   const closed: EquityClosedTrade = {
     ...position,
-    exitPrice: exit,
+    exitPrice: realExit,
     exitAt: new Date().toISOString(),
-    pnlUsd,
-    pnlPct,
+    pnlUsd: realPnlUsd,
+    pnlPct: realPnlPct,
   };
 
   state.equityPositions.splice(idx, 1);
   state.equityClosed.push(closed);
-  state.paperCashUsd += position.shares * exit;
-  if (pnlUsd >= 0) state.stats.wins += 1;
+  state.paperCashUsd += position.shares * realExit;
+  if (realPnlUsd >= 0) state.stats.wins += 1;
   else state.stats.losses += 1;
 
   persist();
 
   logger.info(
-    { symbol: position.symbol, reason, exit, pnlUsd: pnlUsd.toFixed(2), pnlPct: pnlPct.toFixed(2) },
-    `[StockAgent] PAPER SELL ${position.symbol} @ $${exit.toFixed(2)} pnl=$${pnlUsd.toFixed(2)} (${reason})`,
+    { symbol: position.symbol, reason, exit: realExit, pnlUsd: realPnlUsd.toFixed(2), pnlPct: realPnlPct.toFixed(2), reconciled: exitReconciled },
+    `[StockAgent] PAPER SELL ${position.symbol} @ $${realExit.toFixed(2)} pnl=$${realPnlUsd.toFixed(2)} (${reason})`,
   );
 
   // SSE fan-out — same shape as the BUY emit so the dashboard's positions
@@ -687,13 +748,14 @@ export async function closeEquityPosition(
       symbol: position.symbol,
       side: 'sell',
       quantity: position.shares,
-      fillPrice: exit,
+      fillPrice: realExit,
       fillStatus: 'filled',
       broker: 'alpaca_paper',
       filledAt: closed.exitAt,
-      pnlUsd,
-      pnlPct,
+      pnlUsd: realPnlUsd,
+      pnlPct: realPnlPct,
       reason,
+      reconciled: exitReconciled,
     },
   });
 
@@ -707,13 +769,13 @@ export async function closeEquityPosition(
     symbol: position.symbol,
     side: 'long',
     entryPrice: position.entryPrice,
-    exitPrice: exit,
+    exitPrice: realExit,
     qty: position.shares,
     stopPrice: position.stopLossPrice ?? null,
     openedAt: position.entryAt,
     closedAt: closed.exitAt,
     reason,
-    notes: `signalSource=${position.signalSource} score=${position.signalScore}`,
+    notes: `signalSource=${position.signalSource} score=${position.signalScore}${exitReconciled ? ' (reconciled)' : ''}`,
   });
 }
 
