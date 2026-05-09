@@ -68,6 +68,9 @@ interface EquityPositionRow {
   entryAt: string;
   signalSource: string;
   signalScore: number;
+  stopLossPrice: number;
+  trailingArmed: boolean;
+  alpacaOrderId?: string;
 }
 
 interface OptionPositionRow {
@@ -86,10 +89,24 @@ interface OptionPositionRow {
   signalScore: number;
 }
 
+interface ClosedEquityRow {
+  id: string;
+  symbol: string;
+  shares: number;
+  entryPrice: number;
+  exitPrice: number;
+  pnlUsd: number;
+  pnlPct: number;
+  exitAt: string;
+  signalSource: string;
+}
+
 interface TradevisorLedger {
   paperCashUsd: number;
   equityPositions: EquityPositionRow[];
   optionPositions: OptionPositionRow[];
+  equityClosed: ClosedEquityRow[];
+  optionClosed: ClosedEquityRow[];
   equityCount: number;
   optionCount: number;
   maxEquityPositions: number;
@@ -97,6 +114,10 @@ interface TradevisorLedger {
   equityValueUsd: number;
   optionValueUsd: number;
   totalValueUsd: number;
+  closedPnlUsd: number;
+  unrealizedPnlUsd: number;
+  totalPnlUsd: number;
+  winRate: number;
   stats: { totalTrades: number; wins: number; losses: number };
 }
 
@@ -161,7 +182,19 @@ export function StocksPage() {
   });
   const scan = (scanData as { data: { opportunities: number; topOpps: Array<{ engine: string; ticker: string; action: string; confidence: number; reasoning: string; domain: string }> } } | undefined)?.data;
 
-  const pnl = p?.totalPnlUsd ?? 0;
+  // Primary metrics: TradeVisor ledger (real Alpaca-backed paper trading).
+  // Fallback to orchestrator `p` when tv is not yet loaded.
+  const tvPnl = tv?.totalPnlUsd ?? p?.totalPnlUsd ?? 0;
+  const tvTotal = tv?.totalValueUsd ?? p?.totalValue ?? 10_000;
+  const tvCash = tv?.paperCashUsd ?? p?.cashUsd ?? 10_000;
+  const tvAtRisk = tv ? (tv.equityValueUsd + tv.optionValueUsd) : (p?.positionsValue ?? 0);
+  const tvOpenCount = tv ? tv.equityCount + tv.optionCount : (p?.openPositions?.length ?? 0);
+  const tvTrades = tv?.stats.totalTrades ?? p?.totalTrades ?? 0;
+  const tvWins = tv?.stats.wins ?? p?.wins ?? 0;
+  const tvLosses = tv?.stats.losses ?? p?.losses ?? 0;
+  const tvWinRate = tv?.winRate ?? (tvTrades > 0 ? (tvWins / tvTrades) * 100 : 0);
+
+  const pnl = tvPnl;
   const pnlColor = pnl >= 0 ? 'text-emerald-400' : 'text-red-400';
 
   const TABS: Array<{ key: Tab; label: string; icon: React.ReactNode }> = [
@@ -209,15 +242,15 @@ export function StocksPage() {
         </div>
         <div className="mt-2 grid grid-cols-3 gap-2 text-center">
           <div className="rounded-lg bg-slate-900/40 p-2">
-            <div className="text-sm font-bold text-white">${(p?.totalValue ?? 10000).toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+            <div className="text-sm font-bold text-white">${tvTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
             <div className="text-[9px] text-slate-500">Total Balance</div>
           </div>
           <div className="rounded-lg bg-slate-900/40 p-2">
-            <div className="text-sm font-bold text-amber-400">${(p?.positionsValue ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
-            <div className="text-[9px] text-slate-500">At Risk ({p?.openPositions?.length ?? 0} positions)</div>
+            <div className="text-sm font-bold text-amber-400">${tvAtRisk.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+            <div className="text-[9px] text-slate-500">At Risk ({tvOpenCount} positions)</div>
           </div>
           <div className="rounded-lg bg-slate-900/40 p-2">
-            <div className="text-sm font-bold text-emerald-400">${(p?.cashUsd ?? 10000).toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+            <div className="text-sm font-bold text-emerald-400">${tvCash.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
             <div className="text-[9px] text-slate-500">Available</div>
           </div>
         </div>
@@ -341,23 +374,25 @@ export function StocksPage() {
               <span className="text-sm font-bold text-slate-400">Not Running</span>
             </>
           )}
-          <span className="ml-auto text-xs text-slate-500">{p?.openPositions?.length ?? 0} open positions</span>
+          <span className="ml-auto text-xs text-slate-500">{tvOpenCount} open positions</span>
         </div>
-        {p && p.openPositions.length > 0 && (
+        {tv && tv.equityPositions.length > 0 && (
           <div className="space-y-1 max-h-40 overflow-y-auto overflow-x-auto">
-            {p.openPositions.slice(0, 8).map((pos, i) => {
-              const eng = ENGINE_LABELS[pos.opportunity.engine] ?? { name: pos.opportunity.engine, color: 'text-slate-300', bg: 'bg-slate-600' };
+            {tv.equityPositions.slice(0, 8).map((pos) => {
+              const pnlUsd = (pos.currentPrice - pos.entryPrice) * pos.shares;
+              const pnlPct = ((pos.currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+              const source = pos.signalSource?.replace('tradevisor_', '') ?? 'tv';
               return (
-                <div key={i} className="flex items-center justify-between rounded-lg bg-slate-900/40 px-2 py-1.5 md:px-3 gap-2 min-w-0">
+                <div key={pos.id} className="flex items-center justify-between rounded-lg bg-slate-900/40 px-2 py-1.5 md:px-3 gap-2 min-w-0">
                   <div className="flex items-center gap-1.5 min-w-0">
-                    <span className={`text-[9px] px-1 py-0.5 rounded font-bold shrink-0 ${eng.bg} ${eng.color}`}>{eng.name}</span>
-                    <span className="text-xs font-semibold text-white shrink-0">{pos.opportunity.ticker}</span>
-                    <span className="text-[10px] text-slate-500 hidden sm:inline">{pos.opportunity.domain}</span>
+                    <span className="text-[9px] px-1 py-0.5 rounded font-bold shrink-0 bg-sky-500/20 text-sky-400">{source}</span>
+                    <span className="text-xs font-semibold text-white shrink-0">{pos.symbol}</span>
+                    <span className="text-[10px] text-slate-500 hidden sm:inline">×{pos.shares}</span>
                   </div>
                   <div className="flex items-center gap-2 md:gap-3 shrink-0">
-                    <span className="text-xs text-slate-400">${pos.size.toFixed(0)}</span>
-                    <span className={`text-xs font-mono ${pos.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {pos.pnl >= 0 ? '+' : ''}${pos.pnl.toFixed(2)}
+                    <span className="text-xs text-slate-400">${pos.currentPrice.toFixed(2)}</span>
+                    <span className={`text-xs font-mono ${pnlUsd >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {pnlUsd >= 0 ? '+' : ''}${pnlUsd.toFixed(2)} ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%)
                     </span>
                   </div>
                 </div>
@@ -369,9 +404,9 @@ export function StocksPage() {
 
       {/* Stats Row */}
       <div className="grid grid-cols-2 gap-2 md:grid-cols-5 md:gap-3">
-        <StatCard label="Portfolio" value={`$${(p?.totalValue ?? 10000).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} color="text-slate-100" icon={<DollarSign className="h-4 w-4" />} />
-        <StatCard label="P&L" value={`${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`} color={pnlColor} icon={pnl >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />} />
-        <StatCard label="Trades" value={String(p?.totalTrades ?? 0)} subtitle={`${p?.wins ?? 0}W / ${p?.losses ?? 0}L`} color="text-blue-400" icon={<Target className="h-4 w-4" />} />
+        <StatCard label="Portfolio" value={`$${tvTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} color="text-slate-100" icon={<DollarSign className="h-4 w-4" />} />
+        <StatCard label="P&L" value={`${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`} subtitle={tv ? `${tv.unrealizedPnlUsd >= 0 ? '+' : ''}$${tv.unrealizedPnlUsd.toFixed(2)} unrlzd` : undefined} color={pnlColor} icon={pnl >= 0 ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />} />
+        <StatCard label="Trades" value={String(tvTrades)} subtitle={`${tvWins}W / ${tvLosses}L · ${tvWinRate.toFixed(0)}% WR`} color="text-blue-400" icon={<Target className="h-4 w-4" />} />
         <StatCard label="Engines" value={String(s?.enginesActive ?? 14)} subtitle={`${s?.scanCycles ?? 0} cycles`} color="text-indigo-400" icon={<Zap className="h-4 w-4" />} />
         <StatCard label="Regime" value={(s?.regime ?? 'unknown').replace('_', ' ')} color={REGIME_COLORS[s?.regime ?? ''] ?? 'text-slate-400'} icon={<Shield className="h-4 w-4" />} />
       </div>
@@ -452,43 +487,53 @@ export function StocksPage() {
         </div>
       )}
 
-      {/* Positions Tab */}
+      {/* Positions Tab — TradeVisor equity positions */}
       {activeTab === 'positions' && (
         <div className="space-y-4">
           <div className="rounded-xl border border-slate-700/50 bg-slate-800/50 overflow-hidden">
-            <div className="border-b border-slate-700/30 px-3 py-2.5 md:px-4">
-              <h2 className="text-xs font-semibold text-slate-300">Open Positions ({p?.openPositions?.length ?? 0})</h2>
+            <div className="border-b border-slate-700/30 px-3 py-2.5 md:px-4 flex items-center justify-between">
+              <h2 className="text-xs font-semibold text-slate-300">Open Positions ({tvOpenCount})</h2>
+              {tv && (
+                <span className="text-[10px] text-slate-500">
+                  Unrealized {tv.unrealizedPnlUsd >= 0 ? '+' : ''}${tv.unrealizedPnlUsd.toFixed(2)}
+                </span>
+              )}
             </div>
-            {p && p.openPositions.length > 0 ? (
+            {tv && tv.equityPositions.length > 0 ? (
               <div className="divide-y divide-slate-700/30 overflow-x-auto">
-                {p.openPositions.map((pos, i) => {
-                  const eng = ENGINE_LABELS[pos.opportunity.engine] ?? { name: pos.opportunity.engine, color: 'text-slate-300', bg: 'bg-slate-600' };
+                {tv.equityPositions.map((pos) => {
+                  const pnlUsd = (pos.currentPrice - pos.entryPrice) * pos.shares;
+                  const pnlPct = ((pos.currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+                  const posValue = pos.shares * pos.currentPrice;
+                  const source = pos.signalSource?.replace('tradevisor_', '') ?? 'tv';
                   return (
-                    <div key={i} className="px-3 py-3 md:px-4 min-w-0">
+                    <div key={pos.id} className="px-3 py-3 md:px-4 min-w-0">
                       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-1">
                         <div className="flex flex-wrap items-center gap-1.5">
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${eng.bg} ${eng.color}`}>{eng.name}</span>
-                          <span className="text-sm font-semibold text-white">{pos.opportunity.ticker}</span>
-                          <span className="text-[10px] text-slate-500">{pos.opportunity.domain}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-sky-500/20 text-sky-400">{source}</span>
+                          <span className="text-sm font-semibold text-white">{pos.symbol}</span>
+                          <span className="text-[10px] text-slate-500">×{pos.shares} @ ${pos.entryPrice.toFixed(2)}</span>
                         </div>
                         <div className="flex items-center gap-3">
-                          <span className="text-xs text-slate-400">${pos.size.toFixed(0)}</span>
-                          <span className={`text-sm font-mono font-bold ${pos.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                            {pos.pnl >= 0 ? '+' : ''}${pos.pnl.toFixed(2)}
+                          <span className="text-xs text-slate-400">${posValue.toFixed(0)}</span>
+                          <span className={`text-sm font-mono font-bold ${pnlUsd >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {pnlUsd >= 0 ? '+' : ''}${pnlUsd.toFixed(2)} ({pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(1)}%)
                           </span>
                         </div>
                       </div>
-                      <p className="text-[10px] text-slate-500">{pos.opportunity.reasoning.slice(0, 100)}</p>
                       <div className="flex flex-wrap gap-3 mt-1 text-[9px] text-slate-600">
-                        <span>Conf: {pos.opportunity.confidence}%</span>
-                        <span>Opened: {new Date(pos.openedAt).toLocaleString()}</span>
+                        <span>Now ${pos.currentPrice.toFixed(2)}</span>
+                        <span>SL ${pos.stopLossPrice.toFixed(2)}</span>
+                        {pos.trailingArmed && <span className="text-amber-500">Trailing Armed</span>}
+                        <span>Score {pos.signalScore}</span>
+                        <span>Opened {new Date(pos.entryAt).toLocaleString()}</span>
                       </div>
                     </div>
                   );
                 })}
               </div>
             ) : (
-              <div className="p-8 text-center text-slate-500 text-xs">No open positions — engines will trade on next scan</div>
+              <div className="p-8 text-center text-slate-500 text-xs">No open positions — waiting for next TradeVisor signal</div>
             )}
           </div>
         </div>
@@ -522,30 +567,39 @@ export function StocksPage() {
         </div>
       )}
 
-      {/* Activity Tab */}
+      {/* Activity Tab — closed TradeVisor trades */}
       {activeTab === 'activity' && (
         <div className="rounded-xl border border-slate-700/50 bg-slate-800/50 overflow-hidden">
           <div className="border-b border-slate-700/30 px-4 py-2.5 flex items-center gap-2">
             <Clock className="h-4 w-4 text-slate-400" />
-            <h2 className="text-xs font-semibold text-slate-300">Recent Trades</h2>
+            <h2 className="text-xs font-semibold text-slate-300">
+              Closed Trades ({tv?.equityClosed.length ?? 0})
+            </h2>
+            {tv && (
+              <span className="ml-auto text-[10px] text-slate-500">
+                Realized {tv.closedPnlUsd >= 0 ? '+' : ''}${tv.closedPnlUsd.toFixed(2)}
+              </span>
+            )}
           </div>
-          {p && p.recentTrades.length > 0 ? (
+          {tv && tv.equityClosed.length > 0 ? (
             <div className="divide-y divide-slate-700/30 max-h-96 overflow-y-auto">
-              {p.recentTrades.map((t, i) => {
-                const eng = ENGINE_LABELS[t.opportunity.engine] ?? { name: t.opportunity.engine, color: 'text-slate-300', bg: 'bg-slate-600' };
+              {tv.equityClosed.map((t, i) => {
+                const isWin = t.pnlUsd >= 0;
+                const source = t.signalSource?.replace('tradevisor_', '') ?? 'tv';
                 return (
                   <div key={i} className="flex items-center justify-between px-3 py-2 md:px-4 gap-2 min-w-0">
                     <div className="flex items-center gap-1.5 min-w-0">
                       <span className={`text-[9px] px-1 py-0.5 rounded font-bold shrink-0 ${
-                        t.status === 'closed_win' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
-                      }`}>{t.status === 'closed_win' ? 'WIN' : 'LOSS'}</span>
-                      <span className={`text-[10px] ${eng.color} hidden sm:inline`}>{eng.name}</span>
-                      <span className="text-xs text-white">{t.opportunity.ticker}</span>
+                        isWin ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
+                      }`}>{isWin ? 'WIN' : 'LOSS'}</span>
+                      <span className="text-[9px] px-1 py-0.5 rounded bg-sky-500/10 text-sky-400 hidden sm:inline">{source}</span>
+                      <span className="text-xs font-semibold text-white shrink-0">{t.symbol}</span>
+                      <span className="text-[10px] text-slate-500 hidden sm:inline">×{t.shares}</span>
                     </div>
                     <div className="flex items-center gap-2 md:gap-3 shrink-0">
-                      <span className="text-[10px] text-slate-500 hidden sm:inline">{t.closeReason}</span>
-                      <span className={`text-xs font-mono ${t.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}
+                      <span className="text-[10px] text-slate-500 hidden sm:inline">{new Date(t.exitAt).toLocaleDateString()}</span>
+                      <span className={`text-xs font-mono ${isWin ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {t.pnlUsd >= 0 ? '+' : ''}${t.pnlUsd.toFixed(2)} ({t.pnlPct >= 0 ? '+' : ''}{t.pnlPct.toFixed(1)}%)
                       </span>
                     </div>
                   </div>

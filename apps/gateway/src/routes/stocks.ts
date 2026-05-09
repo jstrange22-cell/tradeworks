@@ -260,18 +260,45 @@ stocksRouter.get('/portfolio', (_req, res) => {
     const optionValue = ledger.optionPositions.reduce(
       (sum, p) => sum + p.contracts * p.currentMid * 100, 0,
     );
+    const totalValueUsd = ledger.paperCashUsd + equityValue + optionValue;
+
+    // P&L breakdown — computed from the ledger so the dashboard can show
+    // real performance without needing a stored starting capital.
+    const closedPnlUsd =
+      ledger.equityClosed.reduce((sum, p) => sum + (p.pnlUsd ?? 0), 0) +
+      ledger.optionClosed.reduce((sum, p) => sum + (p.pnlUsd ?? 0), 0);
+    const unrealizedPnlUsd =
+      ledger.equityPositions.reduce(
+        (sum, p) => sum + (p.currentPrice - p.entryPrice) * p.shares, 0,
+      ) +
+      ledger.optionPositions.reduce(
+        (sum, p) => sum + (p.currentMid - p.entryMid) * p.contracts * 100, 0,
+      );
+    const totalPnlUsd = closedPnlUsd + unrealizedPnlUsd;
+
+    // Win rate
+    const closedCount = (ledger.equityClosed.length + ledger.optionClosed.length);
+    const winCount = ledger.stats.wins;
+    const winRate = closedCount > 0 ? (winCount / closedCount) * 100 : 0;
+
     res.json({
       data: {
         paperCashUsd: ledger.paperCashUsd,
         equityPositions: ledger.equityPositions,
         optionPositions: ledger.optionPositions,
+        equityClosed: ledger.equityClosed.slice(0, 30),
+        optionClosed: ledger.optionClosed.slice(0, 30),
         equityCount: ledger.equityPositions.length,
         optionCount: ledger.optionPositions.length,
         maxEquityPositions: MAX_EQUITY_POSITIONS,
         maxOptionPositions: MAX_OPTION_POSITIONS,
         equityValueUsd: equityValue,
         optionValueUsd: optionValue,
-        totalValueUsd: ledger.paperCashUsd + equityValue + optionValue,
+        totalValueUsd,
+        closedPnlUsd,
+        unrealizedPnlUsd,
+        totalPnlUsd,
+        winRate,
         stats: ledger.stats,
       },
     });
