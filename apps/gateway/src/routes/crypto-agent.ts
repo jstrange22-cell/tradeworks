@@ -107,6 +107,50 @@ import { resolve as dexResolve, join as dexJoin } from 'node:path';
 const DEX_DATA_DIR = dexResolve('data/dex');
 try { dexMkdirSync(DEX_DATA_DIR, { recursive: true }); } catch { /* exists */ }
 
+// ── CEX State Reader (read-only — CEX engine owns its own writes) ────────
+interface CexPosition { qty: number; avgEntry: number; currentPrice: number; openedAt?: string }
+interface CexTrade { symbol: string; side: string; qty: number; price: number; pnlUsd: number; reason: string; timestamp: string }
+interface CexState {
+  cashUsd: number;
+  positions: Array<[string, CexPosition]>;
+  trades: CexTrade[];
+  totalPnlUsd: number;
+  wins: number;
+  losses: number;
+}
+
+function readCexState(): CexState | null {
+  try {
+    const file = dexJoin(dexResolve('data/cex'), 'paper-state.json');
+    if (!dexExistsSync(file)) return null;
+    return JSON.parse(dexReadFileSync(file, 'utf-8')) as CexState;
+  } catch { return null; }
+}
+
+function computeCexStats(cex: CexState, priceMap: Map<string, number>) {
+  const positions = Array.isArray(cex.positions) ? cex.positions : [];
+  let positionsValue = 0;
+  let costBasis = 0;
+  const openPositions = positions.map(([symbol, pos]) => {
+    const price = priceMap.get(symbol) ?? pos.currentPrice ?? pos.avgEntry;
+    const value = pos.qty * price;
+    const pnl = (price - pos.avgEntry) * pos.qty;
+    const pnlPct = pos.avgEntry > 0 ? ((price - pos.avgEntry) / pos.avgEntry) * 100 : 0;
+    positionsValue += value;
+    costBasis += pos.qty * pos.avgEntry;
+    return { symbol, qty: pos.qty, avgEntry: pos.avgEntry, currentPrice: price, value, pnlUsd: pnl, pnlPct };
+  });
+  const unrealizedPnl = positionsValue - costBasis;
+  const realizedPnl = cex.totalPnlUsd ?? 0;
+  const totalPnl = realizedPnl + unrealizedPnl;
+  const totalValue = cex.cashUsd + positionsValue;
+  const tradeCount = Array.isArray(cex.trades) ? cex.trades.length : 0;
+  const wins = cex.wins ?? 0;
+  const losses = cex.losses ?? 0;
+  const winRate = (wins + losses) > 0 ? Math.round((wins / (wins + losses)) * 100) : 0;
+  return { openPositions, positionsValue, totalValue, totalPnl, realizedPnl, unrealizedPnl, tradeCount, wins, losses, winRate };
+}
+
 function persistDEXState(): void {
   try {
     dexWriteFileSync(dexJoin(DEX_DATA_DIR, 'paper-state.json'), JSON.stringify({
@@ -327,17 +371,51 @@ cryptoAgentRouter.get('/status', async (_req, res) => {
   const cb = getCircuitBreakerStatus();
   const prices = await fetchCryptoPrices();
   const regime = await getRegime();
-
-  // Calculate paper portfolio value
-  let positionsValue = 0;
   const priceMap = new Map(prices.map(p => [p.symbol, p.price]));
-  for (const [, pos] of paperPortfolio.positions) {
-    const price = priceMap.get(pos.symbol) ?? pos.currentPrice;
-    pos.currentPrice = price;
-    positionsValue += pos.qty * price;
+
+  // Primary paper stats come from the CEX engine (the active trading engine).
+  // DEX portfolio is used for TV-signalled non-blue-chip trades only.
+  const cex = readCexState();
+  let paperCashUsd: number;
+  let paperPositionsValue: number;
+  let paperTotalValue: number;
+  let paperPnlUsd: number;
+  let paperTrades: number;
+  let paperWins: number;
+  let paperLosses: number;
+  let paperWinRate: number;
+  let paperCapital: number;
+
+  if (cex) {
+    const stats = computeCexStats(cex, priceMap);
+    paperCashUsd = Math.round(cex.cashUsd * 100) / 100;
+    paperPositionsValue = Math.round(stats.positionsValue * 100) / 100;
+    paperTotalValue = Math.round(stats.totalValue * 100) / 100;
+    paperPnlUsd = Math.round(stats.totalPnl * 100) / 100;
+    paperTrades = stats.tradeCount;
+    paperWins = stats.wins;
+    paperLosses = stats.losses;
+    paperWinRate = stats.winRate;
+    paperCapital = 10_000; // CEX engine starts with $10K
+  } else {
+    // Fallback to DEX portfolio
+    let positionsValue = 0;
+    for (const [, pos] of paperPortfolio.positions) {
+      const price = priceMap.get(pos.symbol) ?? pos.currentPrice;
+      pos.currentPrice = price;
+      positionsValue += pos.qty * price;
+    }
+    const totalValue = paperPortfolio.cashUsd + positionsValue;
+    paperCashUsd = Math.round(paperPortfolio.cashUsd * 100) / 100;
+    paperPositionsValue = Math.round(positionsValue * 100) / 100;
+    paperTotalValue = Math.round(totalValue * 100) / 100;
+    paperPnlUsd = Math.round((totalValue - PAPER_STARTING_CAPITAL) * 100) / 100;
+    paperTrades = paperPortfolio.trades.length;
+    paperWins = paperPortfolio.wins;
+    paperLosses = paperPortfolio.losses;
+    paperWinRate = paperPortfolio.trades.length > 0 ? Math.round((paperPortfolio.wins / paperPortfolio.trades.length) * 100) : 0;
+    paperCapital = PAPER_STARTING_CAPITAL;
   }
-  const totalValue = paperPortfolio.cashUsd + positionsValue;
-  const paperPnl = totalValue - PAPER_STARTING_CAPITAL;
 
   res.json({
     data: {
@@ -352,16 +430,16 @@ cryptoAgentRouter.get('/status', async (_req, res) => {
       totalCycles: engineState.cycleCount,
       lastCycleAt: engineState.lastCycleAt,
       priceCount: prices.length,
-      // Paper portfolio
-      paperCapital: PAPER_STARTING_CAPITAL,
-      paperCashUsd: Math.round(paperPortfolio.cashUsd * 100) / 100,
-      paperPositionsValue: Math.round(positionsValue * 100) / 100,
-      paperTotalValue: Math.round(totalValue * 100) / 100,
-      paperPnlUsd: Math.round(paperPnl * 100) / 100,
-      paperTrades: paperPortfolio.trades.length,
-      paperWins: paperPortfolio.wins,
-      paperLosses: paperPortfolio.losses,
-      paperWinRate: paperPortfolio.trades.length > 0 ? Math.round((paperPortfolio.wins / paperPortfolio.trades.length) * 100) : 0,
+      // Paper portfolio (sourced from CEX engine)
+      paperCapital,
+      paperCashUsd,
+      paperPositionsValue,
+      paperTotalValue,
+      paperPnlUsd,
+      paperTrades,
+      paperWins,
+      paperLosses,
+      paperWinRate,
       // Intelligence
       regime: regime.regime,
       regimeMultiplier: regime.multiplier,
@@ -494,6 +572,44 @@ cryptoAgentRouter.get('/paper', async (_req, res) => {
   const priceMap = new Map(prices.map(p => [p.symbol, p.price]));
   const regime = await getRegime();
 
+  // Primary source: CEX engine (active, profitable trading engine)
+  const cex = readCexState();
+
+  if (cex) {
+    const stats = computeCexStats(cex, priceMap);
+    const startingCapital = 10_000;
+    const totalPnlPct = Math.round((stats.totalPnl / startingCapital) * 10000) / 100;
+    const recentTrades = Array.isArray(cex.trades) ? cex.trades.slice(-20).reverse() : [];
+
+    res.json({
+      data: {
+        startingCapital,
+        cashUsd: Math.round(cex.cashUsd * 100) / 100,
+        positionsValue: Math.round(stats.positionsValue * 100) / 100,
+        totalValue: Math.round(stats.totalValue * 100) / 100,
+        peakValueUsd: Math.round(stats.totalValue * 100) / 100,
+        totalPnlUsd: Math.round(stats.totalPnl * 100) / 100,
+        totalPnlPct,
+        trades: stats.tradeCount,
+        closedTrades: stats.tradeCount,
+        wins: stats.wins,
+        losses: stats.losses,
+        winRate: stats.winRate,
+        openPositions: stats.openPositions,
+        recentTrades,
+        recentClosedTrades: recentTrades,
+        regime: regime.regime,
+        regimeMultiplier: regime.multiplier,
+        tradingViewSignalCount: tradingViewSignals.length,
+        derivedPnlMatch: true,
+        schemaVersion: 2,
+        source: 'cex',
+      },
+    });
+    return;
+  }
+
+  // Fallback: DEX portfolio
   let positionsValue = 0;
   const openPositions = [];
   for (const [symbol, pos] of paperPortfolio.positions) {
@@ -509,8 +625,6 @@ cryptoAgentRouter.get('/paper', async (_req, res) => {
   const totalValue = paperPortfolio.cashUsd + positionsValue;
   const totalPnl = totalValue - PAPER_STARTING_CAPITAL;
 
-  // Stats derived from closedTrades (canonical source of truth — legacy counters
-  // were corruption-prone and are retained for audit only).
   const derivedWins = paperPortfolio.closedTrades.filter(t => t.pnlUsd > 0).length;
   const derivedLosses = paperPortfolio.closedTrades.filter(t => t.pnlUsd <= 0).length;
   const derivedPnlSum = paperPortfolio.closedTrades.reduce((s, t) => s + t.pnlUsd, 0);
@@ -526,13 +640,11 @@ cryptoAgentRouter.get('/paper', async (_req, res) => {
       peakValueUsd: Math.round(paperPortfolio.peakValueUsd * 100) / 100,
       totalPnlUsd: Math.round(totalPnl * 100) / 100,
       totalPnlPct: Math.round((totalPnl / PAPER_STARTING_CAPITAL) * 10000) / 100,
-      // Primary stats come from closedTrades
       trades: paperPortfolio.trades.length,
       closedTrades: paperPortfolio.closedTrades.length,
       wins: derivedWins,
       losses: derivedLosses,
       winRate,
-      // Legacy counters exposed for audit
       legacyWins: paperPortfolio.wins,
       legacyLosses: paperPortfolio.losses,
       legacyPnlUsd: Math.round(paperPortfolio.totalPnlUsd * 100) / 100,
@@ -545,6 +657,7 @@ cryptoAgentRouter.get('/paper', async (_req, res) => {
       tradingViewSignalCount: tradingViewSignals.length,
       derivedPnlMatch: Math.abs(totalPnl - paperPortfolio.totalPnlUsd) < 1.0,
       schemaVersion: paperPortfolio.schemaVersion,
+      source: 'dex',
     },
   });
 });
