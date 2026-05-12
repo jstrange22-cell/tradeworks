@@ -159,8 +159,8 @@ interface CexTrade {
   timestamp: string;
 }
 
-// $100K stock paper capital + $10K CEX paper capital (actual VPS starting values)
-const PAPER_INITIAL_CAPITAL = 110_000;
+// Note: initial capital is derived dynamically as equity - totalPnl so it stays
+// accurate regardless of how much the two systems were seeded with.
 
 portfolioRouter.get('/', (_req, res) => {
   try {
@@ -173,11 +173,13 @@ portfolioRouter.get('/', (_req, res) => {
     let cexTrades: CexTrade[] = [];
     let cexWins = 0;
     let cexLosses = 0;
+    let cexRealizedPnl = 0;
 
     try {
       const cexFilePath = resolve('./data/cex/paper-state.json');
       const raw = JSON.parse(readFileSync(cexFilePath, 'utf-8')) as Record<string, unknown>;
       cexCashUsd = typeof raw.cashUsd === 'number' ? raw.cashUsd : 0;
+      cexRealizedPnl = typeof raw.totalPnlUsd === 'number' ? raw.totalPnlUsd : 0;
       // positions stored as Map-like array: [[symbol, posObj], ...]
       if (Array.isArray(raw.positions)) {
         cexPositions = (raw.positions as [string, CexPosObj][])
@@ -236,7 +238,11 @@ portfolioRouter.get('/', (_req, res) => {
       .reduce((sum, t) => sum + (t.pnlUsd ?? 0), 0);
     const weeklyPnl = stockRealizedWeek + cexRealizedWeek + stockUnrealized + cexUnrealized;
 
-    const totalPnl = equity - PAPER_INITIAL_CAPITAL;
+    // Total P&L = sum of all realised stock trades + unrealised stock + CEX realised + CEX unrealised
+    const stockRealizedPnl = ledger.equityClosed.reduce((s, t) => s + (t.pnlUsd ?? 0), 0);
+    const totalPnl = stockRealizedPnl + stockUnrealized + cexRealizedPnl + cexUnrealized;
+    // Initial capital: what the system started with (derived so it stays accurate)
+    const initialCapital = Math.max(0, equity - totalPnl);
 
     // ── 5. Win rate & trade count ─────────────────────────────────────────
     const stockWins = ledger.equityClosed.filter(t => t.pnlUsd > 0).length;
@@ -280,13 +286,13 @@ portfolioRouter.get('/', (_req, res) => {
     const openPositions = [...equityOpenPositions, ...cexOpenPositions];
 
     // ── 7. Equity curve ───────────────────────────────────────────────────
-    const equityCurve = buildRealEquityCurve(ledger, PAPER_INITIAL_CAPITAL);
+    const equityCurve = buildRealEquityCurve(ledger, initialCapital);
 
     res.json({
       equity,
-      initialCapital: PAPER_INITIAL_CAPITAL,
+      initialCapital,
       dailyPnl,
-      dailyPnlPercent: PAPER_INITIAL_CAPITAL > 0 ? (dailyPnl / PAPER_INITIAL_CAPITAL) * 100 : 0,
+      dailyPnlPercent: initialCapital > 0 ? (dailyPnl / initialCapital) * 100 : 0,
       weeklyPnl,
       totalPnl,
       winRate,
@@ -302,7 +308,7 @@ portfolioRouter.get('/', (_req, res) => {
     console.warn('[Portfolio] Paper ledger read failed:', err instanceof Error ? err.message : err);
     res.json({
       equity: 0,
-      initialCapital: PAPER_INITIAL_CAPITAL,
+      initialCapital: 0,
       dailyPnl: 0,
       dailyPnlPercent: 0,
       weeklyPnl: 0,

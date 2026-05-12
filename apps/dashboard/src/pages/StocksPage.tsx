@@ -182,17 +182,18 @@ export function StocksPage() {
   });
   const scan = (scanData as { data: { opportunities: number; topOpps: Array<{ engine: string; ticker: string; action: string; confidence: number; reasoning: string; domain: string }> } } | undefined)?.data;
 
-  // Primary metrics: TradeVisor ledger (real Alpaca-backed paper trading).
-  // Fallback to orchestrator `p` when tv is not yet loaded.
-  const tvPnl = tv?.totalPnlUsd ?? p?.totalPnlUsd ?? 0;
-  const tvTotal = tv?.totalValueUsd ?? p?.totalValue ?? 10_000;
-  const tvCash = tv?.paperCashUsd ?? p?.cashUsd ?? 10_000;
-  const tvAtRisk = tv ? (tv.equityValueUsd + tv.optionValueUsd) : (p?.positionsValue ?? 0);
-  const tvOpenCount = tv ? tv.equityCount + tv.optionCount : (p?.openPositions?.length ?? 0);
-  const tvTrades = tv?.stats.totalTrades ?? p?.totalTrades ?? 0;
-  const tvWins = tv?.stats.wins ?? p?.wins ?? 0;
-  const tvLosses = tv?.stats.losses ?? p?.losses ?? 0;
-  const tvWinRate = tv?.winRate ?? (tvTrades > 0 ? (tvWins / tvTrades) * 100 : 0);
+  // Primary metrics: TradeVisor ledger only (real paper trading data).
+  // Do NOT fall back to the 14-engine orchestrator (`p`) — its portfolio data
+  // is synthetic and would show wildly inflated numbers while tv is loading.
+  const tvPnl = tv?.totalPnlUsd ?? 0;
+  const tvTotal = tv?.totalValueUsd ?? 0;
+  const tvCash = tv?.paperCashUsd ?? 0;
+  const tvAtRisk = tv ? (tv.equityValueUsd + tv.optionValueUsd) : 0;
+  const tvOpenCount = tv ? tv.equityCount + tv.optionCount : 0;
+  const tvTrades = tv?.stats.totalTrades ?? 0;
+  const tvWins = tv?.stats.wins ?? 0;
+  const tvLosses = tv?.stats.losses ?? 0;
+  const tvWinRate = tv?.winRate ?? 0;
 
   const pnl = tvPnl;
   const pnlColor = pnl >= 0 ? 'text-emerald-400' : 'text-red-400';
