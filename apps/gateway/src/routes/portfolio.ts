@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Router, type Router as RouterType } from 'express';
 import {
   getDefaultPortfolio,
@@ -13,7 +15,10 @@ import {
   type AgentLog as DbAgentLog,
   type TradingCycle as DbTradingCycle,
 } from '@tradeworks/db';
-import { fetchAllExchangeBalances } from './balances.js';
+// fetchAllExchangeBalances kept for future live-balance sidebar
+// import { fetchAllExchangeBalances } from './balances.js';
+import { loadPaperLedger } from '../services/stock-intelligence/stock-orchestrator.js';
+import type { PaperLedgerState } from '../services/stock-intelligence/stock-models.js';
 
 // getRiskHistory is available for future use (e.g., building real drawdown history)
 void getRiskHistory;
@@ -131,90 +136,173 @@ function mapDbCycle(c: DbTradingCycle) {
 
 // --- Computation helpers ---
 
-function computeDailyPnl(
-  positions: PositionResponse[],
-  trades: TradeResponse[],
-  initialCapital: number,
-): { pnl: number; percent: number } {
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const todayTrades = trades.filter(t => new Date(t.executedAt) >= todayStart);
-  const realizedToday = todayTrades.reduce((sum, t) => sum + t.pnl, 0);
-  const unrealizedToday = positions.reduce((sum, p) => sum + p.unrealizedPnl, 0);
-  const pnl = realizedToday + unrealizedToday;
-  return { pnl, percent: initialCapital > 0 ? (pnl / initialCapital) * 100 : 0 };
-}
-
 // --- Routes ---
 
-portfolioRouter.get('/', async (_req, res) => {
+// ── Interface for CEX paper-state.json positions ─────────────────────────
+
+interface CexPosObj {
+  symbol: string;
+  qty: number;
+  avgEntry: number;
+  currentPrice?: number;
+  openedAt?: string;
+  decisionId?: string;
+}
+
+interface CexTrade {
+  symbol: string;
+  side: string;
+  qty: number;
+  price: number;
+  pnlUsd?: number;
+  reason?: string;
+  timestamp: string;
+}
+
+// $100K stock paper capital + $10K CEX paper capital (actual VPS starting values)
+const PAPER_INITIAL_CAPITAL = 110_000;
+
+portfolioRouter.get('/', (_req, res) => {
   try {
-    const portfolio = await getDefaultPortfolio();
-    if (!portfolio) throw new Error('No portfolio');
+    // ── 1. Load stock paper ledger ────────────────────────────────────────
+    const ledger = loadPaperLedger();
 
-    const initialCapital = parseFloat(portfolio.initialCapital);
-    const currentCapital = parseFloat(portfolio.currentCapital);
+    // ── 2. Load CEX paper state ───────────────────────────────────────────
+    let cexCashUsd = 0;
+    let cexPositions: CexPosObj[] = [];
+    let cexTrades: CexTrade[] = [];
+    let cexWins = 0;
+    let cexLosses = 0;
 
-    const dbPositions = await getOpenPositions(portfolio.id);
-    const dbTrades = await getTradesByPortfolio(portfolio.id, 100);
+    try {
+      const cexFilePath = resolve('./data/cex/paper-state.json');
+      const raw = JSON.parse(readFileSync(cexFilePath, 'utf-8')) as Record<string, unknown>;
+      cexCashUsd = typeof raw.cashUsd === 'number' ? raw.cashUsd : 0;
+      // positions stored as Map-like array: [[symbol, posObj], ...]
+      if (Array.isArray(raw.positions)) {
+        cexPositions = (raw.positions as [string, CexPosObj][])
+          .map(([, posObj]) => posObj)
+          .filter(Boolean);
+      }
+      if (Array.isArray(raw.trades)) {
+        cexTrades = raw.trades as CexTrade[];
+      }
+      cexWins = typeof raw.wins === 'number' ? raw.wins : 0;
+      cexLosses = typeof raw.losses === 'number' ? raw.losses : 0;
+    } catch {
+      // CEX state file not yet available — proceed with stock data only
+    }
 
-    const positionsMapped = dbPositions.map(mapDbPosition);
-    const tradesMapped = dbTrades.map(mapDbTrade);
+    // ── 3. Compute total equity ───────────────────────────────────────────
+    const stockOpenValue = ledger.equityPositions.reduce(
+      (sum, p) => sum + p.shares * p.currentPrice,
+      0,
+    );
+    const cexOpenValue = cexPositions.reduce(
+      (sum, p) => sum + p.qty * (p.currentPrice ?? p.avgEntry),
+      0,
+    );
+    const equity = ledger.paperCashUsd + stockOpenValue + cexCashUsd + cexOpenValue;
 
-    const unrealizedPnl = positionsMapped.reduce((sum, p) => sum + p.unrealizedPnl, 0);
-    const equity = currentCapital + unrealizedPnl;
-    const daily = computeDailyPnl(positionsMapped, tradesMapped, initialCapital);
-    const totalPnl = equity - initialCapital;
-    const winningTrades = tradesMapped.filter(t => t.pnl > 0).length;
-    const closedTrades = tradesMapped.filter(t => t.pnl !== 0).length;
+    // ── 4. P&L calculations ───────────────────────────────────────────────
+    const now = Date.now();
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const weekStart = new Date(now - 7 * 86_400_000);
 
-    portfolioState.mode = portfolio.paperTrading ? 'paper' : 'live';
+    const stockRealizedToday = ledger.equityClosed
+      .filter(t => new Date(t.exitAt) >= todayStart)
+      .reduce((sum, t) => sum + t.pnlUsd, 0);
+    const cexRealizedToday = cexTrades
+      .filter(t => t.side === 'sell' && new Date(t.timestamp) >= todayStart)
+      .reduce((sum, t) => sum + (t.pnlUsd ?? 0), 0);
+
+    const stockUnrealized = ledger.equityPositions.reduce(
+      (sum, p) => sum + (p.currentPrice - p.entryPrice) * p.shares,
+      0,
+    );
+    const cexUnrealized = cexPositions.reduce(
+      (sum, p) => sum + ((p.currentPrice ?? p.avgEntry) - p.avgEntry) * p.qty,
+      0,
+    );
+
+    const dailyPnl = stockRealizedToday + cexRealizedToday + stockUnrealized + cexUnrealized;
+
+    const stockRealizedWeek = ledger.equityClosed
+      .filter(t => new Date(t.exitAt) >= weekStart)
+      .reduce((sum, t) => sum + t.pnlUsd, 0);
+    const cexRealizedWeek = cexTrades
+      .filter(t => t.side === 'sell' && new Date(t.timestamp) >= weekStart)
+      .reduce((sum, t) => sum + (t.pnlUsd ?? 0), 0);
+    const weeklyPnl = stockRealizedWeek + cexRealizedWeek + stockUnrealized + cexUnrealized;
+
+    const totalPnl = equity - PAPER_INITIAL_CAPITAL;
+
+    // ── 5. Win rate & trade count ─────────────────────────────────────────
+    const stockWins = ledger.equityClosed.filter(t => t.pnlUsd > 0).length;
+    const stockLosses = ledger.equityClosed.filter(t => t.pnlUsd <= 0).length;
+    const totalWins = stockWins + cexWins;
+    const totalLosses = stockLosses + cexLosses;
+    const totalClosed = totalWins + totalLosses;
+    const winRate = totalClosed > 0 ? (totalWins / totalClosed) * 100 : 0;
+    const totalTrades = ledger.equityClosed.length +
+      cexTrades.filter(t => t.side === 'sell').length;
+
+    // ── 6. Open positions ─────────────────────────────────────────────────
+    const equityOpenPositions: PositionResponse[] = ledger.equityPositions.map(p => ({
+      id: p.id,
+      instrument: p.symbol,
+      market: 'equities',
+      side: 'long',
+      quantity: p.shares,
+      averageEntry: p.entryPrice,
+      currentPrice: p.currentPrice,
+      unrealizedPnl: (p.currentPrice - p.entryPrice) * p.shares,
+      realizedPnl: 0,
+      strategyId: p.signalSource ?? null,
+      openedAt: p.entryAt,
+    }));
+
+    const cexOpenPositions: PositionResponse[] = cexPositions.map(p => ({
+      id: `cex_${p.symbol}`,
+      instrument: p.symbol,
+      market: 'crypto',
+      side: 'long',
+      quantity: p.qty,
+      averageEntry: p.avgEntry,
+      currentPrice: p.currentPrice ?? p.avgEntry,
+      unrealizedPnl: ((p.currentPrice ?? p.avgEntry) - p.avgEntry) * p.qty,
+      realizedPnl: 0,
+      strategyId: 'cex_paper',
+      openedAt: p.openedAt ?? new Date().toISOString(),
+    }));
+
+    const openPositions = [...equityOpenPositions, ...cexOpenPositions];
+
+    // ── 7. Equity curve ───────────────────────────────────────────────────
+    const equityCurve = buildRealEquityCurve(ledger, PAPER_INITIAL_CAPITAL);
 
     res.json({
       equity,
-      initialCapital,
-      dailyPnl: daily.pnl,
-      dailyPnlPercent: daily.percent,
-      weeklyPnl: totalPnl * 0.72,
+      initialCapital: PAPER_INITIAL_CAPITAL,
+      dailyPnl,
+      dailyPnlPercent: PAPER_INITIAL_CAPITAL > 0 ? (dailyPnl / PAPER_INITIAL_CAPITAL) * 100 : 0,
+      weeklyPnl,
       totalPnl,
-      winRate: closedTrades > 0 ? (winningTrades / closedTrades) * 100 : 0,
-      totalTrades: tradesMapped.length,
-      openPositions: positionsMapped,
-      recentTrades: tradesMapped,
-      equityCurve: generateEquityCurve(equity, initialCapital),
-      paperTrading: portfolio.paperTrading,
+      winRate,
+      totalTrades,
+      openPositions,
+      recentTrades: [],
+      equityCurve,
+      paperTrading: true,
       circuitBreaker: portfolioState.circuitBreakerActive,
     });
-  } catch {
-    // No DB — try live exchange balances before returning zeros
-    try {
-      const live = await fetchAllExchangeBalances();
-      if (live.totalValueUsd > 0) {
-        res.json({
-          equity: live.totalValueUsd,
-          initialCapital: live.totalValueUsd,
-          dailyPnl: 0,
-          dailyPnlPercent: 0,
-          weeklyPnl: 0,
-          totalPnl: 0,
-          winRate: 0,
-          totalTrades: 0,
-          openPositions: [],
-          recentTrades: [],
-          equityCurve: generateEquityCurve(live.totalValueUsd, live.totalValueUsd),
-          paperTrading: portfolioState.mode === 'paper',
-          circuitBreaker: portfolioState.circuitBreakerActive,
-          liveBalances: live.exchanges,
-        });
-        return;
-      }
-    } catch {
-      // Exchange fetch also failed — fall through to zeros
-    }
-
+  } catch (err) {
+    // Paper ledger read failed — return honest zeros rather than crashing
+    console.warn('[Portfolio] Paper ledger read failed:', err instanceof Error ? err.message : err);
     res.json({
       equity: 0,
-      initialCapital: 0,
+      initialCapital: PAPER_INITIAL_CAPITAL,
       dailyPnl: 0,
       dailyPnlPercent: 0,
       weeklyPnl: 0,
@@ -224,7 +312,7 @@ portfolioRouter.get('/', async (_req, res) => {
       openPositions: [],
       recentTrades: [],
       equityCurve: [],
-      paperTrading: portfolioState.mode === 'paper',
+      paperTrading: true,
       circuitBreaker: portfolioState.circuitBreakerActive,
       noData: true,
     });
@@ -469,6 +557,43 @@ portfolioRouter.post('/circuit-breaker', (req, res) => {
 });
 
 // --- Helpers ---
+
+/**
+ * Build a real equity curve from closed stock trades.
+ * Accumulates P&L chronologically from initialCapital.
+ * Fills forward for any day with no closes.
+ */
+function buildRealEquityCurve(
+  ledger: PaperLedgerState,
+  initialCapital: number,
+): Array<{ date: string; equity: number }> {
+  const sorted = [...ledger.equityClosed].sort(
+    (a, b) => new Date(a.exitAt).getTime() - new Date(b.exitAt).getTime(),
+  );
+
+  // Accumulate P&L by date
+  const byDate: Record<string, number> = {};
+  let running = initialCapital;
+  for (const trade of sorted) {
+    const date = trade.exitAt.split('T')[0];
+    running += trade.pnlUsd;
+    byDate[date] = running;
+  }
+
+  // Fill 30-day window, carrying the last known equity forward
+  const points: Array<{ date: string; equity: number }> = [];
+  const dayMs = 86_400_000;
+  const nowMs = Date.now();
+  let lastKnown = initialCapital;
+
+  for (let i = 30; i >= 0; i--) {
+    const date = new Date(nowMs - i * dayMs).toISOString().split('T')[0];
+    if (byDate[date] !== undefined) lastKnown = byDate[date];
+    points.push({ date, equity: Math.round(lastKnown * 100) / 100 });
+  }
+
+  return points;
+}
 
 function generateEquityCurve(currentEquity: number, initialCapital?: number): Array<{ date: string; equity: number }> {
   const base = initialCapital ?? portfolioState.initialCapital;

@@ -207,7 +207,9 @@ export const DEFAULT_STRATEGY_EXIT_CONFIG: StrategyExitConfigMap = {
   funding_basis: {
     timeStopDays: null,
     atrTrailMultiple: 1.5,
-    profitTargetPct: null,
+    // 8% TP mirrors the CEX paper agent's own 8% threshold — positions that
+    // run through a bull move will actually close via the exit monitor.
+    profitTargetPct: 8,
     rLadderEnabled: false,
     atrTrailEnabled: false,
     // Hedged carry strategy — flipping flat on regime crisis would defeat
@@ -217,7 +219,7 @@ export const DEFAULT_STRATEGY_EXIT_CONFIG: StrategyExitConfigMap = {
   range_grid: {
     timeStopDays: null,
     atrTrailMultiple: 1.5,
-    profitTargetPct: null,
+    profitTargetPct: 8,
     rLadderEnabled: false,
     atrTrailEnabled: false,
     regimeExitEnabled: false,
@@ -227,7 +229,10 @@ export const DEFAULT_STRATEGY_EXIT_CONFIG: StrategyExitConfigMap = {
     // so behaviour stays the same for any open position tagged 'tradevisor'.
     timeStopDays: 7,
     atrTrailMultiple: 1.5,
-    profitTargetPct: null,
+    // Hard TP at 8% so straight-up bull moves actually realize — the ATR
+    // trailing stop only arms at +3% and needs a 1% pullback to fire,
+    // which may never come on a gap-up day.
+    profitTargetPct: 8,
     rLadderEnabled: true,
     atrTrailEnabled: true,
     regimeExitEnabled: true,
@@ -235,7 +240,7 @@ export const DEFAULT_STRATEGY_EXIT_CONFIG: StrategyExitConfigMap = {
   unknown: {
     timeStopDays: 30,
     atrTrailMultiple: 1.5,
-    profitTargetPct: null,
+    profitTargetPct: 8,
     rLadderEnabled: false,
     atrTrailEnabled: false,
     regimeExitEnabled: true,

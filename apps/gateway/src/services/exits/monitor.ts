@@ -589,24 +589,82 @@ async function dispatchCexExit(
   position: OpenPosition,
   decision: ExitDecision,
 ): Promise<boolean> {
-  // The crypto-agent owns the live CEX paper portfolio in-memory. We
-  // don't expose a force-close helper from there yet, so the monitor
-  // writes the outcome row directly. The agent's next tick will
-  // reconcile its position map by observing the persisted state.
+  const exitPrice = decision.exitPrice ?? position.entryPrice;
+  const closedAt = new Date().toISOString();
+
+  // Write outcome row to DB (best-effort — non-fatal if DB is down)
   await triggerExit({
     decisionId: position.decisionId,
     assetClass: 'crypto-cex',
     symbol: position.symbol,
     side: position.side,
     entryPrice: position.entryPrice,
-    exitPrice: decision.exitPrice ?? position.entryPrice,
+    exitPrice,
     qty: position.qty,
     stopPrice: position.stopPrice,
     openedAt: position.openedAt,
-    closedAt: new Date().toISOString(),
+    closedAt,
     reason: decision.reason ?? 'manual',
     notes: decision.notes ?? null,
   });
+
+  // Also update data/cex/paper-state.json so the position is actually removed.
+  // The crypto-agent has no reconcile loop, so without this the position stays
+  // open in the file forever and the cockpit keeps showing it as open equity.
+  try {
+    const { readFileSync, writeFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const cexFile = resolve('./data/cex/paper-state.json');
+    const raw = JSON.parse(readFileSync(cexFile, 'utf-8')) as {
+      cashUsd: number;
+      positions: [string, { qty: number; avgEntry: number }][];
+      trades: unknown[];
+      wins: number;
+      losses: number;
+      totalPnlUsd: number;
+    };
+
+    const idx = raw.positions.findIndex(([k]) => k === position.symbol);
+    if (idx !== -1) {
+      const [, posObj] = raw.positions[idx];
+      const pnl = (exitPrice - posObj.avgEntry) * posObj.qty;
+
+      raw.cashUsd = (raw.cashUsd ?? 0) + posObj.qty * exitPrice;
+      raw.totalPnlUsd = (raw.totalPnlUsd ?? 0) + pnl;
+      if (pnl >= 0) raw.wins = (raw.wins ?? 0) + 1;
+      else raw.losses = (raw.losses ?? 0) + 1;
+
+      (raw.trades as unknown[]).push({
+        symbol: position.symbol,
+        side: 'sell',
+        qty: posObj.qty,
+        price: exitPrice,
+        pnlUsd: pnl,
+        reason: decision.reason ?? 'exit_monitor',
+        timestamp: closedAt,
+        decisionId: position.decisionId,
+      });
+
+      raw.positions.splice(idx, 1);
+      writeFileSync(cexFile, JSON.stringify(raw, null, 2));
+
+      logger.info(
+        { symbol: position.symbol, exitPrice, pnl: pnl.toFixed(2), reason: decision.reason },
+        '[ExitMonitor] CEX position closed and removed from state file',
+      );
+    } else {
+      logger.warn(
+        { symbol: position.symbol },
+        '[ExitMonitor] dispatchCexExit: symbol not found in CEX state positions',
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : err, symbol: position.symbol },
+      '[ExitMonitor] dispatchCexExit: failed to update CEX state file',
+    );
+  }
+
   return true;
 }
 
