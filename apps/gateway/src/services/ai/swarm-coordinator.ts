@@ -119,6 +119,13 @@ async function scoutAgent(): Promise<{ findings: number; summary: string }> {
   };
 }
 
+// Top CEX coins that actually trade through the TradeVisor gate. Used as a
+// fallback research target when the coin discovery service is empty (e.g. on
+// first boot or when CoinGecko is rate-limited).
+const TOP_CEX_RESEARCH_TARGETS = [
+  'BTC', 'ETH', 'SOL', 'AVAX', 'XRP', 'LINK', 'DOT', 'ATOM', 'NEAR', 'SUI',
+];
+
 async function cryptoAgent(): Promise<{ findings: number; summary: string }> {
   // Quant role for crypto: analyzes coin discovery + fires background AI research
   // so TradeVisor gate has Claude-generated context when a trade signal fires.
@@ -127,13 +134,13 @@ async function cryptoAgent(): Promise<{ findings: number; summary: string }> {
     const discovered = getDiscoveredCoins();
     const highScore = discovered.filter(c => c.discoveryScore >= 60);
 
-    // Fire-and-forget: call Claude Haiku to produce per-coin rationale. Results
-    // are cached in apex-coin-researcher.ts and consumed by context.ts →
-    // fetchScout() so ctx.scout.rationale is populated when the gate evaluates
-    // any matching crypto signal in the next ~15 min window.
-    if (highScore.length > 0) {
-      batchResearchCoins(
-        highScore.slice(0, 5).map(c => ({
+    // Build the research batch:
+    //   Priority 1 — High-score discovered coins (e.g. from CoinGecko trending)
+    //   Priority 2 — Top CEX coins when discovery is empty (first boot or
+    //                CoinGecko rate-limited), so the gate always has context
+    //                for the most-traded assets.
+    const researchBatch: Parameters<typeof batchResearchCoins>[0] = highScore.length > 0
+      ? highScore.slice(0, 5).map(c => ({
           symbol: c.symbol,
           name: c.name,
           discoveryScore: c.discoveryScore,
@@ -141,20 +148,27 @@ async function cryptoAgent(): Promise<{ findings: number; summary: string }> {
           volume24h: c.volume24h,
           marketCap: c.marketCap,
           sources: c.sources,
-        })),
-      ).catch(err => {
-        logger.warn(
-          { err: err instanceof Error ? err.message : err },
-          '[Swarm] background coin research failed',
-        );
-      });
-    }
+        }))
+      : TOP_CEX_RESEARCH_TARGETS.slice(0, 5).map(sym => ({
+          symbol: sym,
+          discoveryScore: 70, // well-established liquid asset
+          sources: ['top-cex-liquid'],
+        }));
+
+    // Fire-and-forget: results are cached in apex-coin-researcher.ts and read
+    // by context.ts → fetchScout() when the gate evaluates any matching signal.
+    batchResearchCoins(researchBatch).catch(err => {
+      logger.warn(
+        { err: err instanceof Error ? err.message : err },
+        '[Swarm] background coin research failed',
+      );
+    });
 
     return {
       findings: highScore.length,
       summary: highScore.length > 0
         ? `Quant: ${highScore.length} high-score coins: ${highScore.map(c => `${c.symbol}(${c.discoveryScore})`).join(', ')}`
-        : 'Quant: no high-conviction crypto signals',
+        : 'Quant: no discovery coins — researching top CEX targets',
     };
   } catch {
     return { findings: 0, summary: 'Quant: crypto analysis idle' };
