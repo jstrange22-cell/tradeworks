@@ -22,7 +22,7 @@ import {
   type LearningReport,
   type TradeOutcome,
 } from './self-learning.js';
-import { batchResearchCoins } from './apex-coin-researcher.js';
+import { batchResearchCoins, batchResearchStocks } from './apex-coin-researcher.js';
 import { logger } from '../../lib/logger.js';
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -197,6 +197,36 @@ async function stocksAgent(): Promise<{ findings: number; summary: string }> {
   try {
     const { scanForSwingTrades } = await import('../stocks/swing-scanner.js');
     const result = await scanForSwingTrades();
+
+    // Fire-and-forget: Claude Haiku research for each actionable swing signal.
+    // Results cached in apex-coin-researcher.ts and read by context.ts →
+    // fetchScout() so ctx.scout.rationale is per-stock instead of the global
+    // watchlist rationale that the scout reranker produces.
+    if (result.signals.length > 0) {
+      batchResearchStocks(
+        result.signals.map(s => ({
+          symbol: s.symbol,
+          confidence: s.confidence,
+          action: s.action,
+          reasons: s.reasons,
+          riskReward: s.riskReward,
+          indicators: {
+            rsi14: s.indicators.rsi14,
+            macdCrossover: s.indicators.macdCrossover,
+            volumeRatio: s.indicators.volumeRatio,
+            atr14: s.indicators.atr14,
+            priceVsEma200: s.indicators.priceVsEma200,
+            bbPosition: s.indicators.bbPosition,
+          },
+        })),
+      ).catch(err => {
+        logger.warn(
+          { err: err instanceof Error ? err.message : err },
+          '[Swarm] background stock research failed',
+        );
+      });
+    }
+
     return {
       findings: result.signals.length,
       summary: result.signals.length > 0

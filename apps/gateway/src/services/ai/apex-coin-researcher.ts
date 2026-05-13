@@ -1,18 +1,17 @@
 /**
- * APEX Coin Researcher
+ * APEX Researcher — per-asset Claude Haiku intelligence for gate context.
  *
- * Calls Claude Haiku to produce a one-sentence research rationale for each
- * high-conviction coin discovered by the APEX swarm. Rationale is stored in
- * memory (1-hour TTL) and consumed by the TradeVisor gate's context gatherer
- * so the gate can see why APEX flagged this coin before approving or vetoing
- * a trade.
+ * Covers both crypto (coin discovery) and stocks (swing scanner signals).
+ * Each researched asset gets a one-sentence AI rationale stored in a 1-hour
+ * TTL cache. The TradeVisor gate's context gatherer reads this cache so
+ * ctx.scout.rationale is specific to the asset being evaluated instead of a
+ * generic global watchlist summary.
  *
- * Cost estimate: ~$0.08–0.15/day at ≤5 coins × 4 swarm scans × 150 tokens.
- * That is <$5/month. The gate approval lift from coin context is expected to
- * reduce bad-entry approvals by ≥10%, more than recovering the cost.
+ * Crypto path:  swarm-coordinator.ts → cryptoAgent()  → batchResearchCoins()
+ * Stock path:   swarm-coordinator.ts → stocksAgent()  → batchResearchStocks()
+ * Consumed by:  tradevisor-agent/context.ts → fetchScout()
  *
- * Called from: swarm-coordinator.ts → cryptoAgent()
- * Consumed by: tradevisor-agent/context.ts → fetchScout() fallback
+ * Cost estimate: ~$0.15–0.30/day combined (Haiku, cached 1h, ≤10 assets/scan).
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -130,6 +129,96 @@ export async function batchResearchCoins(coins: CoinResearchInput[]): Promise<vo
   await Promise.allSettled(uncached.map((c) => researchCoin(c)));
 }
 
+// ── Stock research ────────────────────────────────────────────────────────
+
+/** Subset of SwingSignal used for Haiku research — avoid a circular import. */
+export interface StockResearchInput {
+  symbol: string;
+  confidence: number;           // 0-100
+  action: 'buy' | 'sell' | 'hold';
+  reasons: string[];
+  riskReward: number;
+  indicators: {
+    rsi14: number;
+    macdCrossover: boolean;
+    volumeRatio: number;
+    atr14: number;
+    priceVsEma200: number;
+    bbPosition: number;
+  };
+}
+
+/**
+ * Research a single stock swing setup via Claude Haiku. Uses the same shared
+ * cache as crypto so `getResearchRationale()` returns either.
+ */
+async function researchStock(signal: StockResearchInput): Promise<string> {
+  const key = signal.symbol.toUpperCase();
+  const cached = getCoinRationale(key); // same cache — key namespace is fine
+  if (cached) return cached;
+
+  const prompt = buildStockPrompt(signal);
+
+  try {
+    const resp = await getClient().messages.create({
+      model: HAIKU_MODEL,
+      max_tokens: 150,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const raw = resp.content[0]?.type === 'text' ? resp.content[0].text.trim() : '';
+    const rationale = raw.slice(0, 200);
+
+    if (rationale) {
+      rationaleCache.set(key, { rationale, researchedAt: Date.now() });
+      logger.info(
+        { symbol: signal.symbol, confidence: signal.confidence, rationale },
+        '[ApexResearcher] stock researched',
+      );
+    }
+
+    return rationale;
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : err, symbol: signal.symbol },
+      '[ApexResearcher] stock Haiku call failed — skipping',
+    );
+    return '';
+  }
+}
+
+/**
+ * Research a batch of stock swing signals concurrently (fire-and-forget).
+ * Only researches buy/sell signals; skips holds and already-cached symbols.
+ */
+export async function batchResearchStocks(signals: StockResearchInput[]): Promise<void> {
+  if (!process.env['ANTHROPIC_API_KEY']) return;
+
+  // Only research actionable signals that aren't already cached
+  const uncached = signals
+    .filter((s) => s.action !== 'hold' && !getCoinRationale(s.symbol))
+    .slice(0, MAX_BATCH);
+
+  if (uncached.length === 0) return;
+
+  logger.info(
+    { count: uncached.length, symbols: uncached.map((s) => s.symbol) },
+    '[ApexResearcher] starting stock batch research',
+  );
+
+  await Promise.allSettled(uncached.map((s) => researchStock(s)));
+}
+
+// ── Shared lookup (works for both crypto and stocks) ─────────────────────
+
+/**
+ * Return cached rationale for any asset (crypto or stock), or null if not
+ * yet researched or expired. Sync — safe to call from synchronous paths.
+ */
+export function getResearchRationale(symbol: string): string | null {
+  return getCoinRationale(symbol); // delegates to the existing cache function
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 function buildPrompt(coin: CoinResearchInput): string {
@@ -153,6 +242,27 @@ function buildPrompt(coin: CoinResearchInput): string {
   parts.push(
     'Write ONE sentence (max 150 chars) explaining why this coin is worth watching right now. ' +
     'Be specific and quantitative. No JSON. No prefix. Just the sentence.',
+  );
+  return parts.join('\n');
+}
+
+function buildStockPrompt(s: StockResearchInput): string {
+  const parts: string[] = [];
+  parts.push(`You are a quantitative equity analyst writing a one-sentence briefing for a trading system.`);
+  parts.push(`Stock: ${s.symbol}`);
+  parts.push(`Signal: ${s.action.toUpperCase()} (confidence ${s.confidence}%, R:R ${s.riskReward.toFixed(2)})`);
+  parts.push(`RSI-14: ${s.indicators.rsi14.toFixed(1)}`);
+  parts.push(`Volume ratio vs 20d avg: ${s.indicators.volumeRatio.toFixed(2)}x`);
+  parts.push(`MACD crossover: ${s.indicators.macdCrossover ? 'YES' : 'no'}`);
+  parts.push(`Price vs EMA-200: ${s.indicators.priceVsEma200 >= 0 ? '+' : ''}${s.indicators.priceVsEma200.toFixed(1)}%`);
+  parts.push(`Bollinger position: ${(s.indicators.bbPosition * 100).toFixed(0)}% (0=lower band, 100=upper)`);
+  if (s.reasons.length > 0) {
+    parts.push(`Technical reasons: ${s.reasons.join('; ')}`);
+  }
+  parts.push('');
+  parts.push(
+    'Write ONE sentence (max 150 chars) explaining why this stock setup is worth taking right now. ' +
+    'Be specific about the technical setup. No JSON. No prefix. Just the sentence.',
   );
   return parts.join('\n');
 }

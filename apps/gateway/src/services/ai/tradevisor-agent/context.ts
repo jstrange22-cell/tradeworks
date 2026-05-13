@@ -13,7 +13,7 @@ import { logger } from '../../../lib/logger.js';
 import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import { getSector } from '../../stock-intelligence/sector-map.js';
-import { getCoinRationale } from '../apex-coin-researcher.js';
+import { getCoinRationale, getResearchRationale } from '../apex-coin-researcher.js';
 import type {
   IncomingSignal,
   SignalContext,
@@ -140,6 +140,9 @@ function fetchScout(symbol: string): ScoutContext | null {
       return null;
     }
     const entry = stocks[idx]!;
+    // Prefer per-stock APEX rationale (from swing-scanner signal research) over
+    // the global one-liner the scout reranker produces for the whole watchlist.
+    const apexRationale = getResearchRationale(symbol);
     return {
       rank: idx + 1,
       totalStocks: stocks.length,
@@ -147,8 +150,8 @@ function fetchScout(symbol: string): ScoutContext | null {
       rs20d: entry.rs20d ?? 0,
       atrExpansion: entry.atrExpansion ?? 1,
       reason: entry.reason ?? '',
-      refreshSource: wl.refreshSource,
-      rationale: wl.rationale ?? '',
+      refreshSource: apexRationale ? 'claude-reranked' : wl.refreshSource,
+      rationale: apexRationale ?? wl.rationale ?? '',
     };
   } catch (err) {
     logger.debug({ err: err instanceof Error ? err.message : err }, '[TVAgent] scout fetch failed');
