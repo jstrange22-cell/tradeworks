@@ -22,6 +22,7 @@ import {
   type LearningReport,
   type TradeOutcome,
 } from './self-learning.js';
+import { batchResearchCoins } from './apex-coin-researcher.js';
 import { logger } from '../../lib/logger.js';
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -119,11 +120,36 @@ async function scoutAgent(): Promise<{ findings: number; summary: string }> {
 }
 
 async function cryptoAgent(): Promise<{ findings: number; summary: string }> {
-  // Quant role for crypto: analyzes sniper data + crypto agent performance
+  // Quant role for crypto: analyzes coin discovery + fires background AI research
+  // so TradeVisor gate has Claude-generated context when a trade signal fires.
   try {
     const { getDiscoveredCoins } = await import('../coin-discovery-service.js');
     const discovered = getDiscoveredCoins();
     const highScore = discovered.filter(c => c.discoveryScore >= 60);
+
+    // Fire-and-forget: call Claude Haiku to produce per-coin rationale. Results
+    // are cached in apex-coin-researcher.ts and consumed by context.ts →
+    // fetchScout() so ctx.scout.rationale is populated when the gate evaluates
+    // any matching crypto signal in the next ~15 min window.
+    if (highScore.length > 0) {
+      batchResearchCoins(
+        highScore.slice(0, 5).map(c => ({
+          symbol: c.symbol,
+          name: c.name,
+          discoveryScore: c.discoveryScore,
+          priceChange24h: c.change24h,
+          volume24h: c.volume24h,
+          marketCap: c.marketCap,
+          sources: c.sources,
+        })),
+      ).catch(err => {
+        logger.warn(
+          { err: err instanceof Error ? err.message : err },
+          '[Swarm] background coin research failed',
+        );
+      });
+    }
+
     return {
       findings: highScore.length,
       summary: highScore.length > 0

@@ -13,6 +13,7 @@ import { logger } from '../../../lib/logger.js';
 import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import { getSector } from '../../stock-intelligence/sector-map.js';
+import { getCoinRationale } from '../apex-coin-researcher.js';
 import type {
   IncomingSignal,
   SignalContext,
@@ -120,7 +121,24 @@ function fetchScout(symbol: string): ScoutContext | null {
     };
     const stocks = wl.entries.filter((e) => e.kind === 'stock');
     const idx = stocks.findIndex((e) => e.ticker.toUpperCase() === symbol.toUpperCase());
-    if (idx === -1) return null;
+    if (idx === -1) {
+      // Not in the stock scout file. For crypto signals, check the APEX coin
+      // researcher cache so ctx.scout.rationale is populated at the gate.
+      const cryptoRationale = getCoinRationale(symbol);
+      if (cryptoRationale) {
+        return {
+          rank: 0,
+          totalStocks: 0,
+          rs5d: 0,
+          rs20d: 0,
+          atrExpansion: 1,
+          reason: 'APEX coin research',
+          refreshSource: 'claude-reranked',
+          rationale: cryptoRationale,
+        };
+      }
+      return null;
+    }
     const entry = stocks[idx]!;
     return {
       rank: idx + 1,
