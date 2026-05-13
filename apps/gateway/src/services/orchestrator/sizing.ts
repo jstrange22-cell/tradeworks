@@ -42,10 +42,10 @@ import type { SizingInputs, SizingResult } from './sizing-types.js';
 
 // ── Constants ───────────────────────────────────────────────────────────
 
-const BASE_RISK_PER_TRADE_PCT = 0.005;   // 0.5% of strategy budget at neutral Kelly
+const BASE_RISK_PER_TRADE_PCT = 0.025;   // 2.5% of strategy budget at neutral Kelly (was 0.5% — produced $50 risk/$1K positions on $100K; now produces $250 risk/$5K positions)
 const KELLY_FRACTION_CAP = 0.5;          // half-Kelly safety cap
 const KELLY_RISK_BOOST = 1.0;            // risk = base × (1 + KELLY_RISK_BOOST × kelly_fraction)
-const POSITION_CAP_PCT = 0.05;           // no single position > 5% of equity
+const POSITION_CAP_PCT = 0.10;           // no single position > 10% of equity (was 5% — now allows prime signals up to $10K on $100K account)
 const MIN_RISK_USD = 5;                  // skip trades smaller than $5 of risk
 const DEFAULT_PORTFOLIO_BUDGET_PCT = 0.10; // 10% of equity when vol-target is missing
 const NEUTRAL_WIN_RATE = 0.5;

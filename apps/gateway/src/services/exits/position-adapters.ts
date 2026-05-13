@@ -125,10 +125,11 @@ export async function loadCexPositions(): Promise<OpenPosition[]> {
         qty: p.qty,
         qtyAtEntry: p.qty,
         entryPrice: p.avgEntry,
-        // CEX persistence doesn't track stops — synthesise a -5% stop so
-        // the hard-stop rule still has a basis to fire on. v3 should
-        // capture the stop at trade time and round-trip it via the JSON.
-        stopPrice: p.avgEntry * 0.95,
+        // CEX persistence doesn't track stops — synthesise a -8% stop so
+        // the hard-stop rule still has a basis to fire on. Matches the -8%
+        // inline stop in crypto-agent.ts and the +8% profit target for
+        // symmetric R:R. v3 should capture the stop at trade time.
+        stopPrice: p.avgEntry * 0.92,
         openedAt: p.openedAt,
         strategy: inferStrategyFromSignalSource(undefined),
         atrAtEntry: null,

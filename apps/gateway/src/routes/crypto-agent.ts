@@ -1459,10 +1459,10 @@ setInterval(async () => {
 
   // ── Multi-layer exit stack (mirrors stock position-monitor) ──
   //   1. Time stop: close after 48h (crypto runs 24/7 — 2 days is enough)
-  //   2. Hard stop: close at -5% from entry
+  //   2. Hard stop: close at -8% from entry (raised from -5% — symmetric with +8% TP)
   //   3. Trailing TP: arm at +3%, close on -1% drawdown from high water
   const HOLD_LIMIT_MS = 48 * 60 * 60_000;
-  const HARD_STOP_PCT = -5;
+  const HARD_STOP_PCT = -8;
   const TRAIL_ARM_PCT = 3;
   const TRAIL_GIVEBACK_PCT = 1;
 
@@ -2063,7 +2063,7 @@ async function runCEXScanCycle(): Promise<void> {
       const pnlPct = ((pos.currentPrice - pos.avgEntry) / pos.avgEntry) * 100;
       if (pnlPct >= 8) {
         recordCEXTrade(symbol, 'sell', pos.qty, pos.currentPrice, `TP hit +${pnlPct.toFixed(1)}%`);
-      } else if (pnlPct <= -5) {
+      } else if (pnlPct <= -8) {
         recordCEXTrade(symbol, 'sell', pos.qty, pos.currentPrice, `SL hit ${pnlPct.toFixed(1)}%`);
       }
     }
@@ -2146,7 +2146,7 @@ export function startCEXEngine(): void {
         if (pos.avgEntry <= 0) continue;
         const pnlPct = ((pos.currentPrice - pos.avgEntry) / pos.avgEntry) * 100;
         if (pnlPct >= 8) recordCEXTrade(symbol, 'sell', pos.qty, pos.currentPrice, `TP hit +${pnlPct.toFixed(1)}%`);
-        else if (pnlPct <= -5) recordCEXTrade(symbol, 'sell', pos.qty, pos.currentPrice, `SL hit ${pnlPct.toFixed(1)}%`);
+        else if (pnlPct <= -8) recordCEXTrade(symbol, 'sell', pos.qty, pos.currentPrice, `SL hit ${pnlPct.toFixed(1)}%`);
       }
     }
   }, 60_000); // Price refresh every 1 min
